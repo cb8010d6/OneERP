@@ -1,0 +1,87 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node / Package
+node_modules/
+**/node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+tmp/
+.tmp/
+
+# Next.js
+.next/
+out/
+
+# NestJS / TypeScript
+*.tsbuildinfo
+
+# Expo / React Native
+.expo/
+.expo-shared/
+*.expo.*
+
+# Tauri / Rust
+target/
+
+# Prisma
+**/prisma/dev.db
+**/prisma/dev.db-journal
+
+# Caches
+.cache/
+.turbo/
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Local helper artifacts
+*.local
+
+# Reference codebases not tracked in this repo
+
+# Project-generated artifacts
+apps/api/generated/
+apps/api/.nestcli-generated/
+apps/web/.next/
+apps/mobile/.expo/
+
+# Python caches from reference tooling
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Package manager caches
+.pnpm-store/
+
+# Workspace temp files
+.tmp_*.txt
+
+# Nested git backups (should never be committed)
+**/.git.inner.backup/
+
+
+.git.backup-*

@@ -1,0 +1,618 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 核心模块: 多公司与统一认证
+// ==========================================
+
+model Company {
+  id          String   @id @default(uuid())
+  name        String // 公司名称
+  taxId       String? // 税号
+  address     String? // 公司地址
+  phone       String? // 联系电话
+  legalPerson String? // 法定代表人
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserCompanyRole[]
+  departments Department[]
+  orders      Order[]
+  warehouses  Warehouse[]
+  locations   StockLocation[]
+  materials   Material[]
+  partners    Partner[]
+  products    Product[]
+  categories  ProductCategory[]
+  boms        Bom[]
+  fileRecords FileRecord[]
+  workflows   Workflow[]
+  customFields CustomFieldDefinition[]
+  auditLogs   AuditLog[]
+  accounts    Account[]
+  journals    Journal[]
+  journalEntries JournalEntry[]
+  eventDlqRecords EventDlq[]
+}
+
+enum PartnerType {
+  CUSTOMER
+  SUPPLIER
+  BOTH
+}
+
+enum ProductType {
+  STOCKABLE
+  CONSUMABLE
+  SERVICE
+}
+
+enum CustomFieldType {
+  STRING
+  NUMBER
+  REF
+}
+
+enum JournalType {
+  GENERAL
+  CASH
+  BANK
+  SALES
+  PURCHASE
+  INVENTORY
+}
+
+enum EntryPostingStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  companies  UserCompanyRole[]
+  orders     Order[]           @relation("UserOrders")
+  FileRecord FileRecord[]
+  WorkReport WorkReport[]
+  auditLogs  AuditLog[]
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String // "ADMIN", "SALES", "MANAGER" 等
+  permissions String[] // JSON or Array 存放详细权限点，例如 ["order:read", "order:write"]
+
+  users UserCompanyRole[]
+}
+
+// 用户在特定公司下的角色关联表
+model UserCompanyRole {
+  id        String @id @default(uuid())
+  userId    String
+  companyId String
+  roleId    String
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+  role    Role    @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, companyId])
+}
+
+model Department {
+  id        String @id @default(uuid())
+  name      String
+  companyId String
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+model Partner {
+  id        String      @id @default(uuid())
+  code      String?
+  name      String
+  type      PartnerType @default(CUSTOMER)
+  contact   String?
+  phone     String?
+  email     String?
+  taxId     String?
+  address   String?
+  customAttributes Json?
+  isActive  Boolean     @default(true)
+  companyId String
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+  orders  Order[]
+  journalEntryLines JournalEntryLine[]
+
+  @@unique([companyId, code])
+  @@index([companyId, type])
+}
+
+// ==========================================
+// 销售与订单引擎
+// ==========================================
+
+model Order {
+  id           String    @id @default(uuid())
+  orderNo      String    @unique
+  partnerId    String
+  salesId      String // 挂单销售员
+  companyId    String
+  status       String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
+  totalAmount  Float     @default(0)
+  aiSummary    Json? // 存放 AI 抓取的客户需求 JSON 结构
+  customAttributes Json?
+  expectedDate DateTime? // 预计交付日期
+  notes        String? // 备注
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  partner     Partner     @relation(fields: [partnerId], references: [id])
+  salesPerson User        @relation("UserOrders", fields: [salesId], references: [id])
+  company     Company     @relation(fields: [companyId], references: [id])
+  items       OrderItem[]
+  workOrders  WorkOrder[]
+  invoices    Invoice[]
+}
+
+model OrderItem {
+  id         String @id @default(uuid())
+  orderId    String
+  productId  String // 关联的产品/模型名称
+  quantity   Int
+  unitPrice  Float
+  totalPrice Float
+  customAttributes Json?
+
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+// ==========================================
+// 智能仓储与物料管理
+// ==========================================
+
+model Warehouse {
+  id        String @id @default(uuid())
+  name      String // "原料库", "成品库", "零件半成品库"
+  type      String // "MATERIAL", "FINISHED", "PART"
+  companyId String
+
+  company              Company                @relation(fields: [companyId], references: [id])
+  locations            StockLocation[]
+}
+
+model StockLocation {
+  id          String   @id @default(uuid())
+  name        String
+  code        String?
+  usage       String   @default("INTERNAL") // INTERNAL / VIRTUAL / CUSTOMER / SUPPLIER
+  isActive    Boolean  @default(true)
+  companyId   String
+  warehouseId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company              Company                @relation(fields: [companyId], references: [id])
+  warehouse            Warehouse?             @relation(fields: [warehouseId], references: [id])
+  quants               StockQuant[]
+  outgoingTransactions InventoryTransaction[] @relation("StockMoveSourceLocation")
+  incomingTransactions InventoryTransaction[] @relation("StockMoveDestinationLocation")
+
+  @@unique([companyId, code])
+  @@index([companyId, warehouseId])
+}
+
+model Material {
+  id          String  @id @default(uuid())
+  sku         String  @unique
+  name        String
+  category    String // 例如：管材，板材，标准件
+  description String?
+  unit        String  @default("pcs")
+  minStock    Float   @default(0)
+  unitPrice   Float   @default(0)
+  companyId   String? // 可选，如果为null则为系统预设物料
+
+  company               Company?               @relation(fields: [companyId], references: [id])
+  quants                StockQuant[]
+  inventoryTransactions InventoryTransaction[]
+  products              Product[]
+  bomLines              BomLine[]
+}
+
+model ProductCategory {
+  id        String   @id @default(uuid())
+  name      String
+  code      String?
+  parentId  String?
+  companyId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company  Company           @relation(fields: [companyId], references: [id])
+  parent   ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children ProductCategory[] @relation("CategoryTree")
+  products Product[]
+
+  @@unique([companyId, code])
+  @@index([companyId, parentId])
+}
+
+model Product {
+  id          String      @id @default(uuid())
+  sku         String
+  name        String
+  type        ProductType @default(STOCKABLE)
+  categoryId  String?
+  materialId  String?
+  uom         String      @default("pcs")
+  description String?
+  customAttributes Json?
+  isActive    Boolean     @default(true)
+  companyId   String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  company  Company          @relation(fields: [companyId], references: [id])
+  category ProductCategory? @relation(fields: [categoryId], references: [id])
+  material Material?        @relation(fields: [materialId], references: [id])
+  boms     Bom[]
+
+  @@unique([companyId, sku])
+  @@index([companyId, categoryId])
+}
+
+model Bom {
+  id        String   @id @default(uuid())
+  code      String?
+  productId String
+  version   String?
+  isDefault Boolean  @default(true)
+  companyId String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company   @relation(fields: [companyId], references: [id])
+  product Product   @relation(fields: [productId], references: [id])
+  lines   BomLine[]
+
+  @@unique([companyId, code])
+  @@index([companyId, productId])
+}
+
+model CustomFieldDefinition {
+  id                   String          @id @default(uuid())
+  modelName            String
+  fieldName            String
+  label                String
+  type                 CustomFieldType
+  required             Boolean         @default(false)
+  referenceModel       String?
+  referenceLabelField  String?
+  referenceValueField  String?
+  referenceRelationField String?
+  companyId            String
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, modelName, fieldName])
+  @@index([companyId, modelName])
+}
+
+model BomLine {
+  id         String  @id @default(uuid())
+  bomId      String
+  materialId String
+  quantity   Float
+  scrapRate  Float   @default(0)
+  note       String?
+
+  bom      Bom      @relation(fields: [bomId], references: [id])
+  material Material @relation(fields: [materialId], references: [id])
+
+  @@index([bomId])
+  @@index([materialId])
+}
+
+model StockQuant {
+  id          String @id @default(uuid())
+  locationId  String
+  materialId  String
+  batchNo     String
+  quantity    Float
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  location StockLocation @relation(fields: [locationId], references: [id])
+  material Material      @relation(fields: [materialId], references: [id])
+
+  @@unique([locationId, materialId, batchNo])
+  @@index([materialId])
+}
+
+// ==========================================
+// 附加模块: 文件、流转、制造与财务
+// ==========================================
+
+model FileRecord {
+  id         String   @id @default(uuid())
+  fileName   String
+  fileSize   Int
+  mimeType   String
+  objectKey  String // MinIO object name
+  companyId  String
+  uploaderId String
+  createdAt  DateTime @default(now())
+
+  company  Company @relation(fields: [companyId], references: [id])
+  uploader User    @relation(fields: [uploaderId], references: [id])
+}
+
+model InventoryTransaction {
+  id                String   @id @default(uuid())
+  type              String // "INBOUND", "OUTBOUND", "TRANSFER"
+  materialId        String
+  sourceLocationId  String?
+  destLocationId    String?
+  quantity          Float
+  batchNo           String?
+  operatorId        String
+  companyId         String
+  referenceNo       String? // 关联单号（订单号/采购号等）
+  note              String?
+  createdAt         DateTime @default(now())
+
+  material        Material       @relation(fields: [materialId], references: [id])
+  sourceLocation  StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation    StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
+
+  @@index([companyId, materialId])
+  @@index([sourceLocationId])
+  @@index([destLocationId])
+}
+
+model Workflow {
+  id          String   @id @default(uuid())
+  modelName   String
+  companyId   String?
+  name        String
+  statusField String   @default("status")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company     Company?              @relation(fields: [companyId], references: [id])
+  states      WorkflowState[]
+  transitions WorkflowTransition[]
+
+  @@unique([companyId, modelName])
+  @@index([modelName])
+}
+
+model WorkflowState {
+  id         String   @id @default(uuid())
+  workflowId String
+  value      String
+  label      String
+  isInitial  Boolean  @default(false)
+  isFinal    Boolean  @default(false)
+  sort       Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  workflow Workflow             @relation(fields: [workflowId], references: [id])
+  from     WorkflowTransition[] @relation("WorkflowTransitionFrom")
+  to       WorkflowTransition[] @relation("WorkflowTransitionTo")
+
+  @@unique([workflowId, value])
+  @@index([workflowId, sort])
+}
+
+model WorkflowTransition {
+  id          String   @id @default(uuid())
+  workflowId  String
+  fromStateId String
+  toStateId   String
+  action      String
+  label       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workflow  Workflow      @relation(fields: [workflowId], references: [id])
+  fromState WorkflowState @relation("WorkflowTransitionFrom", fields: [fromStateId], references: [id])
+  toState   WorkflowState @relation("WorkflowTransitionTo", fields: [toStateId], references: [id])
+
+  @@unique([workflowId, fromStateId, action])
+  @@index([workflowId, action])
+}
+
+model WorkOrder {
+  id          String   @id @default(uuid())
+  workOrderNo String   @unique
+  orderId     String
+  productId   String
+  plannedQty  Int
+  actualQty   Int      @default(0)
+  status      String // "PENDING", "IN_PROGRESS", "COMPLETED"
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  order   Order        @relation(fields: [orderId], references: [id])
+  reports WorkReport[]
+}
+
+model WorkReport {
+  id          String   @id @default(uuid())
+  workOrderId String
+  workerId    String
+  goodQty     Int
+  defectQty   Int
+  reportDate  DateTime @default(now())
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+  worker    User      @relation(fields: [workerId], references: [id])
+}
+
+model Invoice {
+  id         String    @id @default(uuid())
+  invoiceNo  String    @unique
+  orderId    String
+  amount     Float
+  status     String // "UNPAID", "PARTIAL", "PAID"
+  postingStatus EntryPostingStatus @default(DRAFT)
+  companyId  String
+  dueDate    DateTime?
+  issuedDate DateTime  @default(now())
+
+  order    Order     @relation(fields: [orderId], references: [id])
+  payments Payment[]
+}
+
+model Payment {
+  id          String   @id @default(uuid())
+  invoiceId   String
+  amount      Float
+  paymentDate DateTime @default(now())
+  method      String // "BANK_TRANSFER", "CASH", "WECHAT", "ALIPAY"
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  code      String
+  name      String
+  type      String // ASSET, LIABILITY, EQUITY, REVENUE, EXPENSE
+  parentId  String?
+  companyId String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parent   Account?  @relation("AccountTree", fields: [parentId], references: [id])
+  children Account[] @relation("AccountTree")
+  company  Company   @relation(fields: [companyId], references: [id])
+  lines    JournalEntryLine[]
+
+  @@unique([companyId, code])
+  @@index([companyId, parentId])
+}
+
+model Journal {
+  id        String      @id @default(uuid())
+  code      String
+  name      String
+  type      JournalType @default(GENERAL)
+  companyId String
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  company Company        @relation(fields: [companyId], references: [id])
+  entries JournalEntry[]
+
+  @@unique([companyId, code])
+  @@index([companyId, type])
+}
+
+model JournalEntry {
+  id            String             @id @default(uuid())
+  entryNo       String
+  date          DateTime
+  ref           String?
+  description   String?
+  journalId     String
+  companyId     String
+  postingStatus EntryPostingStatus @default(DRAFT)
+  createdBy     String?
+  postedAt      DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  journal Journal            @relation(fields: [journalId], references: [id])
+  company Company            @relation(fields: [companyId], references: [id])
+  lines   JournalEntryLine[]
+
+  @@unique([companyId, entryNo])
+  @@index([companyId, journalId, date])
+}
+
+model JournalEntryLine {
+  id             String   @id @default(uuid())
+  journalEntryId String
+  lineNo         Int
+  accountId      String
+  partnerId      String?
+  debit          Float    @default(0)
+  credit         Float    @default(0)
+  memo           String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+  partner      Partner?     @relation(fields: [partnerId], references: [id])
+
+  @@unique([journalEntryId, lineNo])
+  @@index([accountId])
+  @@index([partnerId])
+}
+
+model EventDlq {
+  id          String   @id @default(uuid())
+  eventName   String
+  payload     Json
+  error       String
+  attempts    Int      @default(1)
+  maxAttempts Int      @default(5)
+  nextRetryAt DateTime?
+  status      String   @default("PENDING")
+  companyId   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company? @relation(fields: [companyId], references: [id])
+
+  @@index([status, nextRetryAt])
+  @@index([eventName])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String?
+  details   Json?
+  companyId String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+}
