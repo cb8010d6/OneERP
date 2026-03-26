@@ -72,7 +72,7 @@
 
 #### 2.1 数据库结构 (Prisma Schema)
 
-- [ ] `StockLocation` (库位)：必须支持自引用树形结构 `parentId`，以便表示 `华南仓 / 货架区 / A01层`。
+- [x] `StockLocation` (库位)：支持自引用树形结构 `parentId`，以便表示 `华南仓 / 货架区 / A01层`。
 - [ ] `StockPicking` (出入库行为单) 及对应的 `StockMove` (移动明细流水)。
 - [ ] **核心台账 (`StockQuant`)**：用于记录 `productId + locationId + lotNumber(批次)` 维度下的绝对实物数量与预扣留数量（Reserved Qty）。
 
@@ -83,9 +83,9 @@
 
 #### 2.3 高性能报表引擎 (Kysely)
 
-- [ ] 针对出入库流水，避免使用深层 Prisma 嵌套分页。通过我们此前已经封装的 `KyselyService` 专属连接池，编写原生的 Postgres 聚合 SQL：
+- [x] 针对出入库流水，避免使用深层 Prisma 嵌套分页。通过我们此前已经封装的 `KyselyService` 专属连接池，编写原生的 Postgres 聚合 SQL：
   `SELECT productId, locationId, SUM(quantity) as net_qty FROM stock_moves WHERE ... GROUP BY productId, locationId`
-- [ ] 将其打包暴露为 `GET /api/v1/inventory/realtime-ledger` 接口用于高频数据大屏读取。
+- [x] 将其打包暴露为 `GET /api/v1/inventory/realtime-ledger` 接口用于高频数据大屏读取。
 
 ---
 

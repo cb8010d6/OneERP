@@ -8,6 +8,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { KyselyService } from '../core/prisma/kysely.service';
 import {
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
@@ -21,6 +22,7 @@ export class InventoryService {
   constructor(
     private prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly kyselyService: KyselyService,
   ) {}
 
   async getCompanyStocks(companyId: string, pagination: PaginationDto) {
@@ -530,6 +532,83 @@ export class InventoryService {
       reversedLines,
       message: '采购入库冲销完成',
     };
+  }
+
+  /**
+   * 实时库存台账 (Realtime Stock Ledger)
+   * 使用 Kysely 原生聚合 SQL，高性能计算每个物料×库位的实时库存情况。
+   * 用于大屏看板和报表接口 GET /inventory/realtime-ledger
+   */
+  async getRealtimeLedger(companyId: string) {
+    return this.kyselyService.withTenant(async (db) => {
+      const rows = await db
+        .selectFrom('StockQuant as sq')
+        .innerJoin('Material as m', 'm.id', 'sq.materialId')
+        .innerJoin('StockLocation as l', 'l.id', 'sq.locationId')
+        .leftJoin('Warehouse as w', 'w.id', 'l.warehouseId')
+        .select([
+          'sq.materialId',
+          'm.sku as materialSku',
+          'm.name as materialName',
+          'm.unit as unit',
+          'm.category as category',
+          'm.minStock as minStock',
+          'm.unitPrice as unitPrice',
+          'sq.locationId',
+          'l.name as locationName',
+          'l.code as locationCode',
+          'l.usage as locationUsage',
+          'w.name as warehouseName',
+        ])
+        .select((eb) => [
+          eb.fn.sum('sq.quantity').as('totalQty'),
+          eb.fn.count('sq.id').as('batchCount'),
+        ])
+        .where('l.companyId', '=', companyId)
+        .groupBy([
+          'sq.materialId',
+          'm.sku',
+          'm.name',
+          'm.unit',
+          'm.category',
+          'm.minStock',
+          'm.unitPrice',
+          'sq.locationId',
+          'l.name',
+          'l.code',
+          'l.usage',
+          'w.name',
+        ])
+        .orderBy('m.category')
+        .orderBy('m.name')
+        .execute();
+
+      return rows.map((row) => {
+        const qty = Number(row.totalQty ?? 0);
+        const minStock = Number(row.minStock ?? 0);
+        const unitPrice = Number(row.unitPrice ?? 0);
+
+        return {
+          materialId: row.materialId as string,
+          materialSku: row.materialSku as string,
+          materialName: row.materialName as string,
+          unit: row.unit as string,
+          category: row.category as string,
+          locationId: row.locationId as string,
+          locationName: row.locationName as string,
+          locationCode: (row.locationCode as string | null) ?? null,
+          locationUsage: row.locationUsage as string,
+          warehouseName: (row.warehouseName as string | null) ?? null,
+          batchCount: Number(row.batchCount ?? 0),
+          totalQty: qty,
+          minStock,
+          unitPrice,
+          stockValue: qty * unitPrice,
+          isLow: minStock > 0 && qty < minStock,
+          isOut: qty <= 0,
+        };
+      });
+    });
   }
 
   private async resolveLocationOwnership(
