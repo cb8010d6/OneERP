@@ -87,10 +87,14 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
       typeof rawValue === 'string' || typeof rawValue === 'number'
         ? rawValue
         : '';
+    
+    // Allow field-level readOnly override from condition evaluation
+    const isReadOnly = (field as any).readOnly ?? readOnly;
+
     const commonProps = {
       id: field.name,
       name: field.name,
-      disabled: readOnly,
+      disabled: isReadOnly,
       className: inputClass,
       value: fieldValue,
       onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
@@ -157,6 +161,29 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
     const field = fieldMap[fieldName];
     if (!field) return null;
 
+    // Optional dependency evaluation logic (simplistic eval parser for demo)
+    const evaluateCondition = (condition?: string) => {
+      if (!condition) return false;
+      if (condition.startsWith('eval:')) {
+        const expression = condition.replace('eval:', '').trim();
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+          const func = new Function('doc', `return ${expression}`);
+          return func(value);
+        } catch (e) {
+          console.error('Failed to evaluate condition:', condition, e);
+          return false;
+        }
+      }
+      return false;
+    };
+
+    if (field.hidden_depends_on && evaluateCondition(field.hidden_depends_on)) {
+      return null;
+    }
+
+    const isReadOnly = readOnly || (field.read_only_depends_on && evaluateCondition(field.read_only_depends_on));
+
     return (
       <div key={field.name} className="space-y-2">
         {field.type !== 'boolean' && (
@@ -165,7 +192,7 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
             {field.required ? <span className="text-rose-500"> *</span> : null}
           </label>
         )}
-        {renderField(field)}
+        {renderField({ ...field, readOnly: isReadOnly } as any)} {/* Assuming readOnly override if needed, though commonProps uses outer readOnly. Let's fix that. */}
       </div>
     );
   };
