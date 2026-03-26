@@ -79,6 +79,12 @@ export class InventoryController {
     return this.inventoryService.getTransactions(companyId);
   }
 
+  @Get('realtime-ledger')
+  @ApiOperation({ summary: '实时库存台账 – Kysely 聚合，支持树形钻取与低库存预警' })
+  async getRealtimeLedger(@CurrentCompany() companyId: string) {
+    return this.inventoryService.getRealtimeLedger(companyId);
+  }
+
   @Post('inbound')
   @ApiOperation({ summary: '新建入库单' })
   async createInbound(

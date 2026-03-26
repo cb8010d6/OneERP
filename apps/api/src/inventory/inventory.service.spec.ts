@@ -70,6 +70,10 @@ describe('InventoryService', () => {
 
   let service: InventoryService;
 
+  const kyselyService = {
+    withTenant: jest.fn(),
+  };
+
   beforeEach(() => {
     jest.clearAllMocks();
     prisma.$transaction.mockImplementation(async (callback: (trx: MockTx) => unknown) =>
@@ -77,7 +81,8 @@ describe('InventoryService', () => {
     );
     service = new InventoryService(
       prisma as unknown as ConstructorParameters<typeof InventoryService>[0],
-      eventEmitter as unknown as ConstructorParameters<typeof InventoryService>[1],
+      kyselyService as unknown as ConstructorParameters<typeof InventoryService>[1],
+      eventEmitter as unknown as ConstructorParameters<typeof InventoryService>[2],
     );
   });
 
