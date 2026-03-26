@@ -1,8 +1,65 @@
 @import "tailwindcss";
 
+/* ============================================================
+   OneERP High-Density Enterprise Theme
+   Optimized for data-rich ERP workflows (Notion/Linear style)
+   ============================================================ */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8f9fb;
+  --foreground: #0f172a;
+
+  /* Brand palette */
+  --color-primary:       #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-light: #eff6ff;
+
+  /* Surface layers */
+  --color-surface-0: #ffffff;
+  --color-surface-1: #f8f9fb;
+  --color-surface-2: #f1f5f9;
+
+  /* Borders */
+  --color-border:       #e2e8f0;
+  --color-border-light: #f1f5f9;
+
+  /* Text hierarchy */
+  --color-text-primary:   #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted:     #94a3b8;
+
+  /* Status semantic colors */
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger:  #dc2626;
+  --color-info:    #0284c7;
+
+  /* High-density spacing scale (smaller than default Tailwind) */
+  --space-xs:  2px;
+  --space-sm:  4px;
+  --space-md:  8px;
+  --space-lg:  12px;
+  --space-xl:  16px;
+  --space-2xl: 24px;
+
+  /* Typography: compact for ERP data density */
+  --font-size-xs:   11px;
+  --font-size-sm:   12px;
+  --font-size-base: 13px;
+  --font-size-md:   14px;
+  --font-size-lg:   16px;
+  --font-size-xl:   18px;
+  --font-size-2xl:  22px;
+
+  /* Component sizing */
+  --input-height:       32px;
+  --input-height-sm:    28px;
+  --button-height:      32px;
+  --row-height:         40px;
+  --row-height-compact: 34px;
+  --header-height:      56px;
+  --sidebar-width:      220px;
+  --sidebar-collapsed:  48px;
 }
 
 @theme inline {
@@ -12,15 +69,295 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ============================================================
+   Base reset for high-density layout
+   ============================================================ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans, 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif);
+  font-size: var(--font-size-base);
+}
+
+/* ============================================================
+   ERP Data Table - high-density rows
+   ============================================================ */
+
+.erp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.erp-table thead th {
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  font-weight: 600;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: var(--space-sm) var(--space-xl);
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.erp-table tbody tr {
+  height: var(--row-height-compact);
+  border-bottom: 1px solid var(--color-border-light);
+  transition: background 0.1s;
+}
+
+.erp-table tbody tr:hover {
+  background: var(--color-primary-light);
+}
+
+.erp-table tbody td {
+  padding: var(--space-sm) var(--space-xl);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  vertical-align: middle;
+}
+
+/* ============================================================
+   Status badges - ERP semantic colors
+   ============================================================ */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px var(--space-md);
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.status-badge--draft     { background: #f1f5f9; color: #64748b; }
+.status-badge--pending   { background: #fef3c7; color: #92400e; }
+.status-badge--progress  { background: #dbeafe; color: #1e40af; }
+.status-badge--shipped   { background: #ede9fe; color: #4c1d95; }
+.status-badge--done      { background: #dcfce7; color: #14532d; }
+.status-badge--cancelled { background: #fee2e2; color: #7f1d1d; }
+.status-badge--warning   { background: #fff7ed; color: #9a3412; }
+.status-badge--danger    { background: #fef2f2; color: #991b1b; }
+
+/* ============================================================
+   High-density form inputs
+   ============================================================ */
+
+.erp-input {
+  height: var(--input-height);
+  padding: 0 var(--space-lg);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  width: 100%;
+}
+
+.erp-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.erp-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* ============================================================
+   ERP Button styles
+   ============================================================ */
+
+.erp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  height: var(--button-height);
+  padding: 0 var(--space-xl);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+.erp-btn--primary {
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.erp-btn--primary:hover {
+  background: var(--color-primary-hover);
+}
+
+.erp-btn--secondary {
+  background: var(--color-surface-0);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.erp-btn--secondary:hover {
+  background: var(--color-surface-2);
+}
+
+.erp-btn--danger {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+.erp-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-secondary);
+}
+
+.erp-btn--ghost:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.erp-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   Low-stock warning animation
+   ============================================================ */
+
+@keyframes stock-warning-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+.stock-low {
+  animation: stock-warning-pulse 1.8s ease-in-out infinite;
+  background: #fef2f2 !important;
+  color: #991b1b !important;
+}
+
+/* ============================================================
+   DataGrid virtual scroller container
+   ============================================================ */
+
+.data-grid-scroll {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.data-grid-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.data-grid-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.data-grid-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+/* ============================================================
+   Workspace tabs strip
+   ============================================================ */
+
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: 0 var(--space-lg);
+  height: 36px;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  transition: background 0.12s;
+  color: var(--color-text-secondary);
+}
+
+.workspace-tab:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.workspace-tab--active {
+  background: var(--color-surface-0);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+/* ============================================================
+   Chatter timeline sidebar
+   ============================================================ */
+
+.chatter-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.chatter-event {
+  position: relative;
+  padding-left: var(--space-2xl);
+}
+
+.chatter-event::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  bottom: -12px;
+  width: 1px;
+  background: var(--color-border);
+}
+
+.chatter-event:last-child::before {
+  display: none;
+}
+
+.chatter-event__dot {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  border: 2px solid var(--color-surface-0);
+}
+
+.chatter-event__meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.chatter-event__content {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  margin-top: 2px;
 }
