@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 /* ============================================================
+<<<<<<< HEAD
    OneERP High-Density Enterprise Theme
    Optimized for data-rich ERP workflows (Notion/Linear style)
    ============================================================ */
@@ -60,26 +61,91 @@
   --header-height:      56px;
   --sidebar-width:      220px;
   --sidebar-collapsed:  48px;
+=======
+ * OneERP – High-Density Enterprise Theme
+ * Compact spacing, crisp typography, neutral palette
+ * ============================================================ */
+
+:root {
+  /* Surface tokens */
+  --background: #f8f9fb;
+  --foreground: #111827;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-subtle: #f3f4f6;
+  --border: #e5e7eb;
+  --border-subtle: #f0f1f3;
+
+  /* Brand tokens */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-subtle: #eff6ff;
+  --primary-foreground: #ffffff;
+
+  /* Status tokens */
+  --success: #16a34a;
+  --success-subtle: #f0fdf4;
+  --warning: #d97706;
+  --warning-subtle: #fffbeb;
+  --danger: #dc2626;
+  --danger-subtle: #fef2f2;
+  --info: #0284c7;
+  --info-subtle: #f0f9ff;
+
+  /* Typography */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-base: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+
+  /* Spacing – compact for ERP data density */
+  --spacing-cell: 6px 10px;
+  --spacing-row: 4px 0;
+
+  /* Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+
+  /* Shadows – very subtle for flat ERP look */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.07), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+>>>>>>> origin/main
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, 'Cascadia Code', monospace;
 }
 
+<<<<<<< HEAD
 /* ============================================================
    Base reset for high-density layout
    ============================================================ */
 
 *, *::before, *::after {
+=======
+/* ---- Reset & Base ---- */
+*,
+*::before,
+*::after {
+>>>>>>> origin/main
   box-sizing: border-box;
 }
 
 html {
   font-size: var(--font-size-base);
+<<<<<<< HEAD
   line-height: 1.5;
+=======
+>>>>>>> origin/main
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -87,6 +153,7 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
+<<<<<<< HEAD
   font-family: var(--font-sans, 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif);
   font-size: var(--font-size-base);
 }
@@ -104,10 +171,29 @@ body {
 .erp-table thead th {
   background: var(--color-surface-2);
   color: var(--color-text-secondary);
+=======
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* ---- ERP Data Grid Compact Overrides ---- */
+.erp-table {
+  font-size: var(--font-size-sm);
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.erp-table th {
+  background: var(--surface-subtle);
+  color: #6b7280;
+>>>>>>> origin/main
   font-weight: 600;
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
+<<<<<<< HEAD
   padding: var(--space-sm) var(--space-xl);
   border-bottom: 1px solid var(--color-border);
   white-space: nowrap;
@@ -360,4 +446,115 @@ body {
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   margin-top: 2px;
+=======
+  padding: var(--spacing-cell);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.erp-table td {
+  padding: var(--spacing-cell);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--font-size-sm);
+  color: var(--foreground);
+}
+
+.erp-table tr:hover td {
+  background: #f9fafb;
+}
+
+/* ---- Status Badge ---- */
+.erp-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
+.erp-badge--draft    { background: #f1f5f9; color: #64748b; }
+.erp-badge--pending  { background: var(--warning-subtle); color: var(--warning); }
+.erp-badge--active   { background: var(--info-subtle); color: var(--info); }
+.erp-badge--success  { background: var(--success-subtle); color: var(--success); }
+.erp-badge--danger   { background: var(--danger-subtle); color: var(--danger); }
+
+/* ---- Sidebar compact nav ---- */
+.erp-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+}
+
+.erp-nav-item:hover {
+  background: var(--surface-subtle);
+  color: #111827;
+}
+
+.erp-nav-item--active {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+.erp-nav-item--active svg {
+  color: var(--primary);
+}
+
+/* ---- Card ---- */
+.erp-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+}
+
+/* ---- Stat number formatting ---- */
+.erp-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ---- Low-stock highlight ---- */
+.erp-stock-critical {
+  background: var(--danger-subtle) !important;
+  color: var(--danger) !important;
+  font-weight: 600;
+}
+
+.erp-stock-warning {
+  background: var(--warning-subtle) !important;
+  color: var(--warning) !important;
+  font-weight: 600;
+}
+
+/* ---- Scrollbar (webkit) ---- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+>>>>>>> origin/main
 }
