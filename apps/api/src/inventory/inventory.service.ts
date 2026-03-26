@@ -7,6 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { KyselyService } from '../core/prisma/kysely.service';
 import {
@@ -17,10 +18,27 @@ import {
   SaleOrderShipmentDto,
 } from './dto/inventory.dto';
 
+// ---- Realtime Ledger Types ----
+export interface StockLedgerRow {
+  locationId: string;
+  locationName: string;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  materialId: string;
+  materialSku: string;
+  materialName: string;
+  materialUnit: string;
+  minStock: number;
+  netQty: number;
+  batchCount: number;
+  isLow: boolean;
+}
+
 @Injectable()
 export class InventoryService {
   constructor(
     private prisma: PrismaService,
+    private readonly kyselyService: KyselyService,
     private readonly eventEmitter: EventEmitter2,
     private readonly kyselyService: KyselyService,
   ) {}
@@ -76,6 +94,70 @@ export class InventoryService {
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
+    });
+  }
+
+  /**
+   * 实时库存台账 – 使用 Kysely 聚合查询，按 location + material 汇总净库存量。
+   * 支持低库存预警标记。
+   */
+  async getRealtimeLedger(companyId: string): Promise<StockLedgerRow[]> {
+    const rows = await this.kyselyService.withTenant(async (trx) => {
+      return trx
+        .selectFrom('StockQuant as sq')
+        .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
+        .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
+        .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
+        .select([
+          'loc.id as locationId',
+          'loc.name as locationName',
+          'loc.warehouseId as warehouseId',
+          'wh.name as warehouseName',
+          'mat.id as materialId',
+          'mat.sku as materialSku',
+          'mat.name as materialName',
+          'mat.unit as materialUnit',
+          'mat.minStock as minStock',
+        ])
+        .select((eb) => [
+          eb.fn.sum<number>('sq.quantity').as('netQty'),
+          eb.fn.count<number>('sq.id').as('batchCount'),
+        ])
+        .where('loc.companyId', '=', companyId)
+        .groupBy([
+          'loc.id',
+          'loc.name',
+          'loc.warehouseId',
+          'wh.name',
+          'mat.id',
+          'mat.sku',
+          'mat.name',
+          'mat.unit',
+          'mat.minStock',
+        ])
+        .orderBy('wh.name', 'asc')
+        .orderBy('loc.name', 'asc')
+        .orderBy('mat.name', 'asc')
+        .execute();
+    });
+
+    return rows.map((row) => {
+      const netQty = Number(row.netQty ?? 0);
+      const minStock = Number(row.minStock ?? 0);
+      return {
+        locationId: String(row.locationId),
+        locationName: String(row.locationName),
+        warehouseId: row.warehouseId ? String(row.warehouseId) : null,
+        warehouseName: row.warehouseName ? String(row.warehouseName) : null,
+        materialId: String(row.materialId),
+        materialSku: String(row.materialSku),
+        materialName: String(row.materialName),
+        materialUnit: String(row.materialUnit),
+        minStock,
+        netQty,
+        batchCount: Number(row.batchCount ?? 0),
+        isLow: minStock > 0 && netQty <= minStock,
+      };
     });
   }
 
