@@ -4,10 +4,36 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AllExceptionsFilter } from './core/filters/all-exceptions.filter';
 
+// CORS 白名单：通过环境变量 CORS_ORIGINS 配置（逗号分隔），未配置时使用开发默认值
+const DEFAULT_CORS_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://localhost:8080',
+];
+const allowedOrigins: string[] = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(',').map((o) => o.trim())
+  : DEFAULT_CORS_ORIGINS;
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  // 开启 CORS 允许跨域请求，移动端、桌面端、Web端都能访问这个 API
-  app.enableCors();
+
+  // 开启 CORS，仅允许白名单域名跨域请求
+  app.enableCors({
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
+      // 允许无 origin 的请求（如服务端调用、Postman、移动端原生请求）
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS 策略拒绝: ${origin} 不在白名单中`));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  });
 
   // 设置全局前缀
   app.setGlobalPrefix('api');
