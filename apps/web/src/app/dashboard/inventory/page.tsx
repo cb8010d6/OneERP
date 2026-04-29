@@ -1,74 +1,99 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/api';
 import {
-  AlertTriangle,
-  BarChart3,
-  Box,
-  Filter,
-  Loader2,
-  RefreshCw,
-  Search,
-  TrendingDown,
+  Package,
   Warehouse,
+  AlertTriangle,
+  RefreshCw,
+  ChevronRight,
+  ChevronDown,
+  Scan,
+  Search,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 interface LedgerRow {
+  locationId: string;
+  locationName: string;
+  warehouseId: string | null;
+  warehouseName: string | null;
   materialId: string;
   materialSku: string;
   materialName: string;
-  unit: string;
-  category: string;
+  materialUnit: string;
+  minStock: number;
+  netQty: number;
+  batchCount: number;
+  isLow: boolean;
+}
+
+interface WarehouseGroup {
+  warehouseId: string | null;
+  warehouseName: string;
+  locations: LocationGroup[];
+  totalRows: number;
+  lowCount: number;
+}
+
+interface LocationGroup {
   locationId: string;
   locationName: string;
-  locationCode: string | null;
-  locationUsage: string;
-  warehouseName: string | null;
-  batchCount: number;
-  totalQty: number;
-  minStock: number;
-  unitPrice: number;
-  stockValue: number;
-  isLow: boolean;
-  isOut: boolean;
+  rows: LedgerRow[];
+  lowCount: number;
 }
 
-type FilterType = 'ALL' | 'LOW' | 'OUT';
+/** Build a two-level tree: Warehouse > Location > rows */
+function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
+  const whMap = new Map<string, WarehouseGroup>();
 
-const FILTER_OPTIONS: { key: FilterType; label: string }[] = [
-  { key: 'ALL', label: '全部库存' },
-  { key: 'LOW', label: '⚠ 低库存预警' },
-  { key: 'OUT', label: '✕ 零库存' },
-];
+  for (const row of rows) {
+    const whKey = row.warehouseId ?? '__NO_WH__';
+    if (!whMap.has(whKey)) {
+      whMap.set(whKey, {
+        warehouseId: row.warehouseId,
+        warehouseName: row.warehouseName ?? '(未分配仓库)',
+        locations: [],
+        totalRows: 0,
+        lowCount: 0,
+      });
+    }
+    const wh = whMap.get(whKey)!;
 
-function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', minimumFractionDigits: 2 }).format(val);
-}
-
-function formatQty(val: number, unit: string) {
-  return `${val.toLocaleString()} ${unit}`;
-}
-
-function QtyCell({ qty, minStock, unit }: { qty: number; minStock: number; unit: string }) {
-  if (qty <= 0) {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 animate-pulse">
-        <AlertTriangle className="h-3 w-3" />
-        {formatQty(qty, unit)}
-      </span>
-    );
+    let loc = wh.locations.find((l) => l.locationId === row.locationId);
+    if (!loc) {
+      loc = { locationId: row.locationId, locationName: row.locationName, rows: [], lowCount: 0 };
+      wh.locations.push(loc);
+    }
+    loc.rows.push(row);
+    if (row.isLow) {
+      loc.lowCount++;
+      wh.lowCount++;
+    }
+    wh.totalRows++;
   }
-  if (minStock > 0 && qty < minStock) {
+
+  return Array.from(whMap.values()).sort((a, b) =>
+    a.warehouseName.localeCompare(b.warehouseName, 'zh-CN'),
+  );
+}
+
+function QtyCell({ row }: { row: LedgerRow }) {
+  if (row.isLow) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-bold bg-amber-100 text-amber-700">
-        <TrendingDown className="h-3 w-3" />
-        {formatQty(qty, unit)}
+      <span className="erp-badge erp-badge--danger flex items-center gap-1">
+        <AlertTriangle className="h-3 w-3" />
+        {row.netQty.toLocaleString()} {row.materialUnit}
       </span>
     );
   }
   return (
-    <span className="text-sm font-mono text-slate-900">{formatQty(qty, unit)}</span>
+    <span className="font-mono tabular-nums text-gray-800">
+      {row.netQty.toLocaleString()} {row.materialUnit}
+    </span>
   );
 }
 
@@ -76,8 +101,14 @@ export default function InventoryPage() {
   const [rows, setRows] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<FilterType>('ALL');
-  const [categoryFilter, setCategoryFilter] = useState('ALL');
+  const [expandedWh, setExpandedWh] = useState<Set<string>>(new Set());
+  const [expandedLoc, setExpandedLoc] = useState<Set<string>>(new Set());
+
+  // Barcode scan mode
+  const [scanMode, setScanMode] = useState(false);
+  const [scanBuffer, setScanBuffer] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const scanInputRef = useRef<HTMLInputElement>(null);
 
   const fetchLedger = useCallback(async () => {
     setLoading(true);
@@ -85,7 +116,7 @@ export default function InventoryPage() {
       const res = await api.get<LedgerRow[]>('/inventory/realtime-ledger');
       setRows(res.data ?? []);
     } catch {
-      setRows([]);
+      toast.error('加载库存台账失败');
     } finally {
       setLoading(false);
     }
@@ -95,223 +126,327 @@ export default function InventoryPage() {
     fetchLedger();
   }, [fetchLedger]);
 
-  const categories = useMemo(() => {
-    const cats = Array.from(new Set(rows.map((r) => r.category).filter(Boolean)));
-    return cats.sort();
-  }, [rows]);
+  // Filter rows by search
+  const filteredRows = useMemo(() => {
+    if (!search.trim()) return rows;
+    const kw = search.toLowerCase();
+    return rows.filter(
+      (r) =>
+        r.materialName.toLowerCase().includes(kw) ||
+        r.materialSku.toLowerCase().includes(kw) ||
+        r.locationName.toLowerCase().includes(kw) ||
+        (r.warehouseName ?? '').toLowerCase().includes(kw),
+    );
+  }, [rows, search]);
 
-  const filtered = useMemo(() => {
-    return rows.filter((row) => {
-      if (filter === 'LOW' && !row.isLow) return false;
-      if (filter === 'OUT' && !row.isOut) return false;
-      if (categoryFilter !== 'ALL' && row.category !== categoryFilter) return false;
-      if (search.trim()) {
-        const q = search.trim().toLowerCase();
-        if (
-          !row.materialSku.toLowerCase().includes(q) &&
-          !row.materialName.toLowerCase().includes(q) &&
-          !row.locationName.toLowerCase().includes(q) &&
-          !(row.warehouseName ?? '').toLowerCase().includes(q)
-        ) {
-          return false;
-        }
+  const tree = useMemo(() => buildTree(filteredRows), [filteredRows]);
+
+  // Auto-expand all warehouses and locations when data first arrives
+  const hasData = rows.length > 0;
+  useEffect(() => {
+    if (!hasData || tree.length === 0) return;
+    const newWh = new Set<string>();
+    const newLoc = new Set<string>();
+    for (const wh of tree) {
+      newWh.add(wh.warehouseId ?? '__NO_WH__');
+      for (const loc of wh.locations) {
+        newLoc.add(loc.locationId);
       }
-      return true;
-    });
-  }, [rows, filter, search, categoryFilter]);
+    }
+    setExpandedWh(newWh);
+    setExpandedLoc(newLoc);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasData]);
 
-  const summary = useMemo(() => {
-    const totalItems = rows.length;
-    const lowCount = rows.filter((r) => r.isLow).length;
-    const outCount = rows.filter((r) => r.isOut).length;
-    const totalValue = rows.reduce((sum, r) => sum + r.stockValue, 0);
-    return { totalItems, lowCount, outCount, totalValue };
-  }, [rows]);
+  const toggleWh = (key: string) => {
+    setExpandedWh((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const toggleLoc = (key: string) => {
+    setExpandedLoc((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  // Summary stats
+  const totalMaterials = useMemo(() => new Set(rows.map((r) => r.materialId)).size, [rows]);
+  const totalLocations = useMemo(() => new Set(rows.map((r) => r.locationId)).size, [rows]);
+  const totalLow = useMemo(() => rows.filter((r) => r.isLow).length, [rows]);
+
+  // Barcode scan handler
+  const handleScanSubmit = useCallback(
+    async (sku: string) => {
+      if (!sku.trim()) return;
+      setScanning(true);
+      try {
+        await api.post('/inventory/scan', { materialSku: sku.trim(), quantity: 1 });
+        toast.success(`扫码出库成功：${sku.trim()}`);
+        await fetchLedger();
+      } catch (err: unknown) {
+        const msg =
+          err && typeof err === 'object' && 'response' in err
+            ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? '出库失败')
+            : '出库失败';
+        toast.error(msg);
+      } finally {
+        setScanning(false);
+        setScanBuffer('');
+        scanInputRef.current?.focus();
+      }
+    },
+    [fetchLedger],
+  );
 
   return (
-    <div className="h-full bg-slate-50/50 p-8 space-y-6">
+    <div className="h-full space-y-5 bg-slate-50/40 p-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-slate-900 flex items-center gap-3">
-            <Warehouse className="h-8 w-8 text-indigo-600" />
-            实时库存台账 (Stock Ledger)
+          <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight text-slate-900">
+            <Package className="h-7 w-7 text-blue-600" />
+            实时库存台账
           </h1>
-          <p className="text-slate-500 mt-1">
-            Kysely 高性能聚合，按物料×库位展示，低库存自动预警。
+          <p className="mt-0.5 text-sm text-slate-500">
+            基于 Kysely 聚合查询，支持层级钻取与低库存预警。
           </p>
         </div>
-        <button
-          onClick={fetchLedger}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 text-sm font-medium shadow-sm"
-        >
-          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          刷新
-        </button>
-      </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="rounded-xl border border-slate-200/60 bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-slate-500 text-xs font-semibold uppercase tracking-wide mb-1">
-            <Box className="h-3.5 w-3.5" /> 库存条目
-          </div>
-          <div className="text-2xl font-black text-slate-900">{summary.totalItems}</div>
-        </div>
-        <div className="rounded-xl border border-amber-200/70 bg-amber-50 p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-amber-600 text-xs font-semibold uppercase tracking-wide mb-1">
-            <AlertTriangle className="h-3.5 w-3.5" /> 低库存预警
-          </div>
-          <div className="text-2xl font-black text-amber-700">{summary.lowCount}</div>
-        </div>
-        <div className="rounded-xl border border-red-200/70 bg-red-50 p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-red-600 text-xs font-semibold uppercase tracking-wide mb-1">
-            <TrendingDown className="h-3.5 w-3.5" /> 零库存
-          </div>
-          <div className="text-2xl font-black text-red-700">{summary.outCount}</div>
-        </div>
-        <div className="rounded-xl border border-emerald-200/70 bg-emerald-50 p-4 shadow-sm">
-          <div className="flex items-center gap-2 text-emerald-600 text-xs font-semibold uppercase tracking-wide mb-1">
-            <BarChart3 className="h-3.5 w-3.5" /> 库存总价值
-          </div>
-          <div className="text-2xl font-black text-emerald-700">{formatMoney(summary.totalValue)}</div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setScanMode((v) => !v);
+              if (!scanMode) {
+                setTimeout(() => scanInputRef.current?.focus(), 100);
+              }
+            }}
+            className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
+              scanMode
+                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Scan className="h-4 w-4" />
+            扫码模式
+          </button>
+          <button
+            type="button"
+            onClick={fetchLedger}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
         </div>
       </div>
 
-      {/* Filters & Search */}
-      <div className="rounded-2xl border border-slate-200/60 bg-white shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 bg-slate-50/40 flex flex-wrap items-center gap-3">
-          {/* Quick filter tabs */}
-          <div className="flex gap-1 border border-slate-200 rounded-lg p-0.5 bg-white">
-            {FILTER_OPTIONS.map((opt) => (
-              <button
-                key={opt.key}
-                onClick={() => setFilter(opt.key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-semibold transition ${
-                  filter === opt.key
-                    ? 'bg-slate-900 text-white'
-                    : 'text-slate-600 hover:bg-slate-100'
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
+      {/* Barcode Scan Panel */}
+      {scanMode && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
+            <Scan className="h-4 w-4" />
+            扫码枪出库模式 – 扫入物料条码后自动扣减 1 件库存
           </div>
-
-          {/* Category filter */}
           <div className="flex items-center gap-2">
-            <Filter className="h-4 w-4 text-slate-400" />
-            <select
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="erp-input w-auto min-w-[120px]"
-            >
-              <option value="ALL">全部分类</option>
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>{cat}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* Search */}
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
             <input
+              ref={scanInputRef}
               type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索物料编码、名称、库位..."
-              className="pl-8 pr-4 py-1.5 w-full rounded-lg border border-slate-200 text-xs outline-none focus:ring-2 focus:ring-blue-100"
+              value={scanBuffer}
+              onChange={(e) => setScanBuffer(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  void handleScanSubmit(scanBuffer);
+                }
+              }}
+              placeholder="将光标聚焦此处，然后扫码..."
+              className="h-9 flex-1 rounded-lg border border-blue-300 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
             />
+            <button
+              type="button"
+              disabled={scanning || !scanBuffer.trim()}
+              onClick={() => void handleScanSubmit(scanBuffer)}
+              className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              确认
+            </button>
           </div>
-          <span className="ml-auto text-xs text-slate-400">共 {filtered.length} 条</span>
+        </div>
+      )}
+
+      {/* Stats Bar */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="erp-card flex items-center gap-3 p-4">
+          <div className="rounded-lg bg-blue-50 p-2 text-blue-600">
+            <Package className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-slate-500">物料品种</div>
+            <div className="erp-stat-value text-xl font-bold text-slate-900">{totalMaterials}</div>
+          </div>
+        </div>
+        <div className="erp-card flex items-center gap-3 p-4">
+          <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600">
+            <Warehouse className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-slate-500">在库库位</div>
+            <div className="erp-stat-value text-xl font-bold text-slate-900">{totalLocations}</div>
+          </div>
+        </div>
+        <div className={`erp-card flex items-center gap-3 p-4 ${totalLow > 0 ? 'border-amber-200 bg-amber-50/60' : ''}`}>
+          <div className={`rounded-lg p-2 ${totalLow > 0 ? 'bg-amber-100 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+            <AlertTriangle className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-slate-500">低库存预警</div>
+            <div className={`erp-stat-value text-xl font-bold ${totalLow > 0 ? 'text-amber-700' : 'text-green-700'}`}>
+              {totalLow}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Search */}
+      <div className="relative w-full max-w-sm">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="按物料名、SKU、库位搜索..."
+          className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+        />
+      </div>
+
+      {/* Ledger Table */}
+      <div className="erp-card overflow-hidden">
+        {/* Table header */}
+        <div className="grid border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500"
+          style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}>
+          <div className="pl-8">物料</div>
+          <div>SKU</div>
+          <div className="text-right">净库存量</div>
+          <div className="text-right">最低库存</div>
+          <div className="text-right">批次数</div>
+          <div className="text-right">状态</div>
         </div>
 
-        {/* Grid */}
-        <div className="min-w-full overflow-x-auto data-grid-scroll">
-          <table className="erp-table w-full">
-            <thead>
-              <tr>
-                <th className="text-left">物料编码 (SKU)</th>
-                <th className="text-left">物料名称</th>
-                <th className="text-left">分类</th>
-                <th className="text-left">库位</th>
-                <th className="text-left">仓库</th>
-                <th className="text-right">当前库存</th>
-                <th className="text-right">安全库存</th>
-                <th className="text-right">批次数</th>
-                <th className="text-right">库存价值</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={9} className="text-center py-12 text-slate-400">
-                    <Loader2 className="h-5 w-5 animate-spin inline-block mr-2" />
-                    正在加载实时台账...
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="text-center py-12 text-slate-400 text-sm">
-                    暂无库存数据，可先通过「入库」操作创建库存。
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((row, index) => (
-                  <tr
-                    key={`${row.materialId}-${row.locationId}-${index}`}
-                    className={row.isOut ? 'bg-red-50/60' : row.isLow ? 'bg-amber-50/40' : ''}
-                  >
-                    <td>
-                      <span className="font-mono text-xs text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
-                        {row.materialSku}
-                      </span>
-                    </td>
-                    <td className="font-medium text-slate-900">{row.materialName}</td>
-                    <td>
-                      <span className="text-xs text-slate-500 bg-slate-50 border border-slate-200 px-1.5 py-0.5 rounded">
-                        {row.category}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="text-slate-700 text-xs">
-                        {row.locationName}
-                        {row.locationCode && (
-                          <span className="ml-1 font-mono text-slate-400">({row.locationCode})</span>
-                        )}
+        {loading ? (
+          <div className="flex items-center justify-center gap-2 py-14 text-sm text-slate-500">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            正在加载台账数据...
+          </div>
+        ) : tree.length === 0 ? (
+          <div className="py-14 text-center text-sm text-slate-500">暂无库存数据</div>
+        ) : (
+          tree.map((wh) => {
+            const whKey = wh.warehouseId ?? '__NO_WH__';
+            const whOpen = expandedWh.has(whKey);
+
+            return (
+              <div key={whKey}>
+                {/* Warehouse row */}
+                <button
+                  type="button"
+                  onClick={() => toggleWh(whKey)}
+                  className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2 text-left hover:bg-slate-100/60"
+                >
+                  {whOpen ? (
+                    <ChevronDown className="h-4 w-4 flex-shrink-0 text-slate-400" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-400" />
+                  )}
+                  <Warehouse className="h-4 w-4 flex-shrink-0 text-slate-500" />
+                  <span className="text-sm font-semibold text-slate-800">{wh.warehouseName}</span>
+                  <span className="ml-1 text-xs text-slate-400">
+                    ({wh.totalRows} 条明细
+                    {wh.lowCount > 0 && (
+                      <span className="ml-1 text-amber-600">, {wh.lowCount} 低库存</span>
+                    )})
+                  </span>
+                </button>
+
+                {whOpen &&
+                  wh.locations.map((loc) => {
+                    const locOpen = expandedLoc.has(loc.locationId);
+                    return (
+                      <div key={loc.locationId}>
+                        {/* Location row */}
+                        <button
+                          type="button"
+                          onClick={() => toggleLoc(loc.locationId)}
+                          className="flex w-full items-center gap-2 border-b border-slate-100 bg-white px-3 py-1.5 pl-8 text-left hover:bg-slate-50/60"
+                        >
+                          {locOpen ? (
+                            <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                          )}
+                          <Package className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
+                          <span className="text-xs font-semibold text-slate-600">{loc.locationName}</span>
+                          <span className="text-xs text-slate-400">
+                            ({loc.rows.length} 种物料
+                            {loc.lowCount > 0 && (
+                              <span className="ml-1 text-amber-600">, {loc.lowCount} 低库存</span>
+                            )})
+                          </span>
+                        </button>
+
+                        {/* Material rows */}
+                        {locOpen &&
+                          loc.rows.map((row) => (
+                            <div
+                              key={`${row.locationId}-${row.materialId}`}
+                              className={`grid items-center border-b border-slate-100 px-3 py-1.5 pl-14 text-xs ${
+                                row.isLow ? 'bg-amber-50/40 hover:bg-amber-50' : 'hover:bg-slate-50/60'
+                              }`}
+                              style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}
+                            >
+                              <div className="truncate font-medium text-slate-800">{row.materialName}</div>
+                              <div className="font-mono text-slate-500">{row.materialSku}</div>
+                              <div className="text-right">
+                                <QtyCell row={row} />
+                              </div>
+                              <div className="text-right font-mono text-slate-500">
+                                {row.minStock.toLocaleString()} {row.materialUnit}
+                              </div>
+                              <div className="text-right text-slate-500">{row.batchCount}</div>
+                              <div className="text-right">
+                                {row.isLow ? (
+                                  <span className="erp-badge erp-badge--pending">低库存</span>
+                                ) : (
+                                  <span className="erp-badge erp-badge--success">正常</span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
                       </div>
-                    </td>
-                    <td className="text-slate-500 text-xs">{row.warehouseName ?? '-'}</td>
-                    <td className="text-right">
-                      <QtyCell qty={row.totalQty} minStock={row.minStock} unit={row.unit} />
-                    </td>
-                    <td className="text-right text-xs font-mono text-slate-500">
-                      {row.minStock > 0 ? `${row.minStock} ${row.unit}` : '-'}
-                    </td>
-                    <td className="text-right text-xs text-slate-500">{row.batchCount}</td>
-                    <td className="text-right font-mono font-semibold text-slate-800 text-sm">
-                      {formatMoney(row.stockValue)}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {!loading && filtered.length > 0 && (
-          <div className="px-6 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-            <span>
-              低库存: <strong className="text-amber-600">{summary.lowCount}</strong> 项 &nbsp;|&nbsp;
-              零库存: <strong className="text-red-600">{summary.outCount}</strong> 项
-            </span>
-            <span>
-              显示 {filtered.length} / {rows.length} 条 &nbsp;|&nbsp;
-              总库存价值: <strong className="text-emerald-700">{formatMoney(summary.totalValue)}</strong>
-            </span>
-          </div>
+                    );
+                  })}
+              </div>
+            );
+          })
         )}
+      </div>
+
+      <div className="text-right text-xs text-slate-400">
+        共 {filteredRows.length} 条库存明细 · 单击仓库/库位行展开/折叠
       </div>
     </div>
   );

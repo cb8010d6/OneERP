@@ -1,83 +1,69 @@
 @import "tailwindcss";
 
 /* ============================================================
-   OneERP High-Density Enterprise Theme
-   Optimized for data-rich ERP workflows (Notion/Linear style)
-   ============================================================ */
+ * OneERP – High-Density Enterprise Theme
+ * Compact spacing, crisp typography, neutral palette
+ * ============================================================ */
 
 :root {
+  /* Surface tokens */
   --background: #f8f9fb;
-  --foreground: #0f172a;
+  --foreground: #111827;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-subtle: #f3f4f6;
+  --border: #e5e7eb;
+  --border-subtle: #f0f1f3;
 
-  /* Brand palette */
-  --color-primary:       #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-primary-light: #eff6ff;
+  /* Brand tokens */
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --primary-subtle: #eff6ff;
+  --primary-foreground: #ffffff;
 
-  /* Surface layers */
-  --color-surface-0: #ffffff;
-  --color-surface-1: #f8f9fb;
-  --color-surface-2: #f1f5f9;
+  /* Status tokens */
+  --success: #16a34a;
+  --success-subtle: #f0fdf4;
+  --warning: #d97706;
+  --warning-subtle: #fffbeb;
+  --danger: #dc2626;
+  --danger-subtle: #fef2f2;
+  --info: #0284c7;
+  --info-subtle: #f0f9ff;
 
-  /* Borders */
-  --color-border:       #e2e8f0;
-  --color-border-light: #f1f5f9;
-
-  /* Text hierarchy */
-  --color-text-primary:   #0f172a;
-  --color-text-secondary: #475569;
-  --color-text-muted:     #94a3b8;
-
-  /* Status semantic colors */
-  --color-success: #16a34a;
-  --color-warning: #d97706;
-  --color-danger:  #dc2626;
-  --color-info:    #0284c7;
-
-  /* Status subtle backgrounds */
-  --color-success-light: #f0fdf4;
-  --color-warning-light: #fffbeb;
-  --color-danger-light:  #fef2f2;
-  --color-info-light:    #f0f9ff;
-
-  /* High-density spacing scale */
-  --space-xs:  2px;
-  --space-sm:  4px;
-  --space-md:  8px;
-  --space-lg:  12px;
-  --space-xl:  16px;
-  --space-2xl: 24px;
-
-  /* Typography: compact for ERP data density */
-  --font-size-xs:   11px;
-  --font-size-sm:   12px;
+  /* Typography */
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
   --font-size-base: 13px;
-  --font-size-md:   14px;
-  --font-size-lg:   16px;
-  --font-size-xl:   18px;
-  --font-size-2xl:  22px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
 
-  /* Component sizing */
-  --input-height:       32px;
-  --input-height-sm:    28px;
-  --button-height:      32px;
-  --row-height:         40px;
-  --row-height-compact: 34px;
-  --header-height:      56px;
-  --sidebar-width:      220px;
-  --sidebar-collapsed:  48px;
+  /* Spacing – compact for ERP data density */
+  --spacing-cell: 6px 10px;
+  --spacing-row: 4px 0;
 
-  /* Border radius */
+  /* Radius */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
   --radius-xl: 12px;
 
-  /* Shadows */
+  /* Shadows – very subtle for flat ERP look */
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.04);
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.07), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+
+  /* Component sizing */
+  --input-height: 32px;
+  --input-height-sm: 28px;
+  --button-height: 32px;
+  --row-height: 40px;
+  --row-height-compact: 34px;
+  --header-height: 56px;
+  --sidebar-width: 220px;
+  --sidebar-collapsed: 48px;
 }
 
 @theme inline {
@@ -87,11 +73,10 @@
   --font-mono: var(--font-geist-mono), ui-monospace, 'Cascadia Code', monospace;
 }
 
-/* ============================================================
-   Base reset for high-density layout
-   ============================================================ */
-
-*, *::before, *::after {
+/* ---- Reset & Base ---- */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -105,114 +90,155 @@ html {
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans, 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif);
+  font-family: var(--font-sans);
   font-size: var(--font-size-base);
+  line-height: 1.5;
   min-height: 100vh;
 }
 
-/* ============================================================
-   ERP Data Table - high-density rows
-   ============================================================ */
-
+/* ---- ERP Data Grid Compact Overrides ---- */
 .erp-table {
-  width: 100%;
-  border-collapse: collapse;
   font-size: var(--font-size-sm);
+  border-collapse: collapse;
+  width: 100%;
 }
 
-.erp-table thead th {
-  background: var(--color-surface-2);
-  color: var(--color-text-secondary);
+.erp-table th {
+  background: var(--surface-subtle);
+  color: #6b7280;
   font-weight: 600;
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  padding: var(--space-sm) var(--space-xl);
-  border-bottom: 1px solid var(--color-border);
+  padding: var(--spacing-cell);
+  border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
 
-.erp-table tbody tr {
-  height: var(--row-height-compact);
-  border-bottom: 1px solid var(--color-border-light);
-  transition: background 0.1s;
-}
-
-.erp-table tbody tr:hover {
-  background: var(--color-primary-light);
-}
-
-.erp-table tbody td {
-  padding: var(--space-sm) var(--space-xl);
+.erp-table td {
+  padding: var(--spacing-cell);
+  border-bottom: 1px solid var(--border-subtle);
   font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
-  vertical-align: middle;
+  color: var(--foreground);
 }
 
-/* ============================================================
-   Status badges - ERP semantic colors
-   ============================================================ */
+.erp-table tr:hover td {
+  background: #f9fafb;
+}
 
-.status-badge {
+/* ---- Status Badge ---- */
+.erp-badge {
   display: inline-flex;
   align-items: center;
-  padding: 1px var(--space-md);
-  border-radius: 4px;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  letter-spacing: 0.03em;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
   white-space: nowrap;
+  letter-spacing: 0.02em;
 }
 
-.status-badge--draft     { background: #f1f5f9; color: #64748b; }
-.status-badge--pending   { background: #fef3c7; color: #92400e; }
-.status-badge--progress  { background: #dbeafe; color: #1e40af; }
-.status-badge--shipped   { background: #ede9fe; color: #4c1d95; }
-.status-badge--done      { background: #dcfce7; color: #14532d; }
-.status-badge--cancelled { background: #fee2e2; color: #7f1d1d; }
-.status-badge--warning   { background: #fff7ed; color: #9a3412; }
-.status-badge--danger    { background: #fef2f2; color: #991b1b; }
+.erp-badge--draft    { background: #f1f5f9; color: #64748b; }
+.erp-badge--pending  { background: var(--warning-subtle); color: var(--warning); }
+.erp-badge--active   { background: var(--info-subtle); color: var(--info); }
+.erp-badge--success  { background: var(--success-subtle); color: var(--success); }
+.erp-badge--danger   { background: var(--danger-subtle); color: var(--danger); }
 
-/* ============================================================
-   High-density form inputs
-   ============================================================ */
+/* ---- Sidebar compact nav ---- */
+.erp-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+  white-space: nowrap;
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+}
 
+.erp-nav-item:hover {
+  background: var(--surface-subtle);
+  color: #111827;
+}
+
+.erp-nav-item--active {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+.erp-nav-item--active svg {
+  color: var(--primary);
+}
+
+/* ---- Card ---- */
+.erp-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+}
+
+/* ---- Stat number formatting ---- */
+.erp-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* ---- Low-stock highlight ---- */
+.erp-stock-critical {
+  background: var(--danger-subtle) !important;
+  color: var(--danger) !important;
+  font-weight: 600;
+}
+
+.erp-stock-warning {
+  background: var(--warning-subtle) !important;
+  color: var(--warning) !important;
+  font-weight: 600;
+}
+
+/* ---- High-density form inputs ---- */
 .erp-input {
   height: var(--input-height);
-  padding: 0 var(--space-lg);
+  padding: 0 12px;
   font-size: var(--font-size-sm);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface-0);
-  color: var(--color-text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--foreground);
   transition: border-color 0.15s, box-shadow 0.15s;
   outline: none;
   width: 100%;
 }
 
 .erp-input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.15);
 }
 
 .erp-input::placeholder {
-  color: var(--color-text-muted);
+  color: #9ca3af;
 }
 
-/* ============================================================
-   ERP Button styles
-   ============================================================ */
-
+/* ---- ERP Button styles ---- */
 .erp-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-sm);
+  gap: 4px;
   height: var(--button-height);
-  padding: 0 var(--space-xl);
+  padding: 0 16px;
   font-size: var(--font-size-sm);
   font-weight: 500;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 1px solid transparent;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -220,38 +246,38 @@ body {
 }
 
 .erp-btn--primary {
-  background: var(--color-primary);
-  color: #fff;
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .erp-btn--primary:hover {
-  background: var(--color-primary-hover);
+  background: var(--primary-hover);
 }
 
 .erp-btn--secondary {
-  background: var(--color-surface-0);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground);
 }
 
 .erp-btn--secondary:hover {
-  background: var(--color-surface-2);
+  background: var(--surface-subtle);
 }
 
 .erp-btn--danger {
-  background: var(--color-danger);
+  background: var(--danger);
   color: #fff;
 }
 
 .erp-btn--ghost {
   background: transparent;
   border-color: transparent;
-  color: var(--color-text-secondary);
+  color: #6b7280;
 }
 
 .erp-btn--ghost:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
+  background: var(--surface-subtle);
+  color: var(--foreground);
 }
 
 .erp-btn:disabled {
@@ -259,10 +285,7 @@ body {
   cursor: not-allowed;
 }
 
-/* ============================================================
-   Low-stock warning animation
-   ============================================================ */
-
+/* ---- Low-stock warning animation ---- */
 @keyframes stock-warning-pulse {
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.6; }
@@ -270,91 +293,54 @@ body {
 
 .stock-low {
   animation: stock-warning-pulse 1.8s ease-in-out infinite;
-  background: #fef2f2 !important;
-  color: #991b1b !important;
 }
 
-.erp-stock-critical {
-  background: var(--color-danger-light) !important;
-  color: var(--color-danger) !important;
-  font-weight: 600;
-}
-
-.erp-stock-warning {
-  background: var(--color-warning-light) !important;
-  color: var(--color-warning) !important;
-  font-weight: 600;
-}
-
-/* ============================================================
-   DataGrid virtual scroller container
-   ============================================================ */
-
+/* ---- DataGrid virtual scroller container ---- */
 .data-grid-scroll {
   overflow: auto;
   scrollbar-width: thin;
   scrollbar-color: #cbd5e1 transparent;
 }
 
-.data-grid-scroll::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-.data-grid-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.data-grid-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
-  border-radius: 3px;
-}
-
-/* ============================================================
-   Workspace tabs strip
-   ============================================================ */
-
+/* ---- Workspace tabs strip ---- */
 .workspace-tab {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-sm);
-  padding: 0 var(--space-lg);
+  gap: 4px;
+  padding: 0 12px;
   height: 36px;
   font-size: var(--font-size-sm);
   white-space: nowrap;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   border: 1px solid transparent;
   border-bottom: none;
   cursor: pointer;
   transition: background 0.12s;
-  color: var(--color-text-secondary);
+  color: #6b7280;
 }
 
 .workspace-tab:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
+  background: var(--surface-subtle);
+  color: var(--foreground);
 }
 
 .workspace-tab--active {
-  background: var(--color-surface-0);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground);
   font-weight: 500;
 }
 
-/* ============================================================
-   Chatter timeline sidebar
-   ============================================================ */
-
+/* ---- Chatter timeline sidebar ---- */
 .chatter-timeline {
   display: flex;
   flex-direction: column;
-  gap: var(--space-md);
+  gap: 8px;
 }
 
 .chatter-event {
   position: relative;
-  padding-left: var(--space-2xl);
+  padding-left: 24px;
 }
 
 .chatter-event::before {
@@ -364,7 +350,7 @@ body {
   top: 8px;
   bottom: -12px;
   width: 1px;
-  background: var(--color-border);
+  background: var(--border);
 }
 
 .chatter-event:last-child::before {
@@ -378,95 +364,33 @@ body {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--color-primary);
-  border: 2px solid var(--color-surface-0);
+  background: var(--primary);
+  border: 2px solid var(--surface);
 }
 
 .chatter-event__meta {
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  color: #9ca3af;
 }
 
 .chatter-event__content {
   font-size: var(--font-size-sm);
-  color: var(--color-text-primary);
+  color: var(--foreground);
   margin-top: 2px;
 }
 
-/* ============================================================
-   Sidebar compact nav
-   ============================================================ */
-
-.erp-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: background 0.1s, color 0.1s;
-  white-space: nowrap;
-  width: 100%;
-  border: none;
-  background: transparent;
-  text-align: left;
-}
-
-.erp-nav-item:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.erp-nav-item--active {
-  background: var(--color-primary-light);
-  color: var(--color-primary);
-}
-
-.erp-nav-item--active svg {
-  color: var(--color-primary);
-}
-
-/* ============================================================
-   Card
-   ============================================================ */
-
-.erp-card {
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-xs);
-}
-
-/* ============================================================
-   Stat number formatting
-   ============================================================ */
-
-.erp-stat-value {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-}
-
-/* ============================================================
-   Scrollbar (global webkit)
-   ============================================================ */
-
+/* ---- Scrollbar (webkit) ---- */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: #d1d5db;
   border-radius: 3px;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: #9ca3af;
 }
