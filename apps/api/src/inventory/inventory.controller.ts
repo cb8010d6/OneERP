@@ -51,11 +51,6 @@ export class InventoryController {
     return this.inventoryService.getCompanyStocks(companyId, pagination);
   }
 
-  @Get('realtime-ledger')
-  @ApiOperation({ summary: '实时库存台账 (Kysely 聚合，高性能大屏数据)' })
-  async getRealtimeLedger(@CurrentCompany() companyId: string) {
-    return this.inventoryService.getRealtimeLedger(companyId);
-  }
 
   @Get('warehouses')
   @ApiOperation({ summary: '获取公司仓库列表' })
