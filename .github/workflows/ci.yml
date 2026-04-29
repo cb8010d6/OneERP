@@ -7,6 +7,7 @@ on:
     branches: [develop]
 
 jobs:
+  # ---- Commit Message Lint ----
   commitlint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -29,8 +30,36 @@ jobs:
       - name: Validate commit messages
         run: npx commitlint --from=${{ github.event.pull_request.base.sha }} --to=${{ github.event.pull_request.head.sha }}
 
-  install-and-check:
+  # ---- API: Lint + Test + Build ----
+  api:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: eip_user
+          POSTGRES_PASSWORD: eip_password
+          POSTGRES_DB: eip_db_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U eip_user"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://eip_user:eip_password@localhost:5432/eip_db_test
+      JWT_SECRET: test_secret_for_ci
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: localhost
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: false
+      MINIO_ACCESS_KEY: minio_admin
+      MINIO_SECRET_KEY: minio_password
+      PORT: 8000
 
     steps:
       - name: Checkout
@@ -45,13 +74,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate Prisma schema
+        run: npx prisma validate --schema=./apps/api/prisma/schema.prisma
+
+      - name: Generate Prisma Client
+        run: npx prisma generate --schema=./apps/api/prisma/schema.prisma
+
+      - name: Run Prisma migrations
+        run: npx prisma migrate deploy --schema=./apps/api/prisma/schema.prisma
+
       - name: Lint API
         run: npm run lint
+        working-directory: apps/api
+
+      - name: Run unit tests
+        run: npm test -- --passWithNoTests
         working-directory: apps/api
 
       - name: Build API
         run: npm run build
         working-directory: apps/api
+
+  # ---- Web: Lint + Build ----
+  web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Lint Web
         run: npm run lint
