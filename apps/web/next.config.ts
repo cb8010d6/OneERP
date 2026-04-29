@@ -106,10 +106,6 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: false,
   },
-  // 构建时 ESLint 检查
-  eslint: {
-    ignoreDuringBuilds: false,
-  },
 };
 
 export default nextConfig;
