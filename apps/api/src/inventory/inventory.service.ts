@@ -9,7 +9,6 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
-import { KyselyService } from '../core/prisma/kysely.service';
 import {
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
@@ -40,7 +39,6 @@ export class InventoryService {
     private prisma: PrismaService,
     private readonly kyselyService: KyselyService,
     private readonly eventEmitter: EventEmitter2,
-    private readonly kyselyService: KyselyService,
   ) {}
 
   async getCompanyStocks(companyId: string, pagination: PaginationDto) {
