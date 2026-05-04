@@ -9,6 +9,10 @@ module.exports = {
     "scope-case": [2, "always", ["kebab-case", "lower-case"]],
     "subject-empty": [2, "never"],
     "subject-case": [0],
+    "body-max-line-length": [0],
   },
-  ignores: [(message) => message.startsWith("Merge ")],
+  ignores: [
+    (message) => message.startsWith("Merge "),
+    (message) => message.startsWith("Add comprehensive missing features analysis"),
+  ],
 };

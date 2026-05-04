@@ -86,7 +86,7 @@ export function ListEngine({
     onSortChange?.(field, direction);
   };
 
-  const renderCell = (row: Record<string, unknown>, column: string) => {        
+  const renderCell = useCallback((row: Record<string, unknown>, column: string) => {
     const field = fieldMap?.[column];
     const rawValue = getNestedValue(row, column);
     if (!field || field.type !== 'reference') {
@@ -112,14 +112,9 @@ export function ListEngine({
     }
 
     return String(rawValue ?? '');
-  };
-
-
-  const renderCellSafe = useCallback((row: Record<string, unknown>, column: string) => {
-    return renderCell(row, column);
   }, [fieldMap]);
 
-  const dataGridColumns = useMemo<ColumnDef<Record<string, unknown>, any>[]>(() => {
+  const dataGridColumns = useMemo<ColumnDef<Record<string, unknown>, unknown>[]>(() => {
     return columns.map((column) => {
       const field = schema.fields.find((f) => f.name === column);
       return {
@@ -127,11 +122,11 @@ export function ListEngine({
         accessorKey: column,
         header: field?.label ?? column,
         cell: (info) => {
-          return renderCellSafe(info.row.original as Record<string, unknown>, column);
+          return renderCell(info.row.original as Record<string, unknown>, column);
         },
       };
     });
-  }, [columns, schema.fields, renderCellSafe]);
+  }, [columns, renderCell, schema.fields]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">

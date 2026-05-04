@@ -42,14 +42,16 @@ export function KanbanEngine({
     setIsMounted(true);
   }, []);
 
-  if (!kanban) {
-    return <div className="rounded-xl border border-dashed border-gray-200 p-6 text-sm text-gray-500">暂无看板配置</div>;
-  }
-
-  const columns = kanban.columns.length ? kanban.columns : buildColumnsFromData(data, kanban.statusField);
-  const transitionForms = kanban.transitionForms ?? {};
+  const columns = useMemo(() => {
+    if (!kanban) return [] as UiKanbanColumn[];
+    return kanban.columns.length
+      ? kanban.columns
+      : buildColumnsFromData(data, kanban.statusField);
+  }, [kanban, data]);
+  const transitionForms = kanban?.transitionForms ?? {};
 
   const activeFields = useMemo(() => {
+    if (!kanban) return [];
     if (!pendingTransition) return [];
     const configured = transitionForms[pendingTransition.toStatus] ?? [];
     if (configured.length) return configured;
@@ -61,7 +63,7 @@ export function KanbanEngine({
       ];
     }
     return [];
-  }, [pendingTransition, transitionForms]);
+  }, [kanban, pendingTransition, transitionForms]);
 
   const handleDragEnd = (result: DropResult) => {
     const { source, destination, draggableId } = result;
@@ -91,6 +93,9 @@ export function KanbanEngine({
   };
 
   if (!isMounted) return null;
+  if (!kanban) {
+    return <div className="rounded-xl border border-dashed border-gray-200 p-6 text-sm text-gray-500">暂无看板配置</div>;
+  }
 
   return (
     <>
