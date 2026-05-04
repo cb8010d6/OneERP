@@ -3,9 +3,24 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { EventQueueService } from '../core/events/event-queue.service';
+
+interface CreateOrderItemInput {
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+}
+
+interface CreateOrderInput {
+  partnerId: string;
+  items?: CreateOrderItemInput[];
+  aiSummary?: Prisma.InputJsonValue;
+  expectedDate?: string | Date | null;
+  notes?: string | null;
+}
 
 @Injectable()
 export class OrdersService {
@@ -14,14 +29,14 @@ export class OrdersService {
     private readonly eventQueueService: EventQueueService,
   ) {}
 
-  async createOrder(companyId: string, userId: string, data: any) {
+  async createOrder(companyId: string, userId: string, data: CreateOrderInput) {
     const { partnerId, items, aiSummary, expectedDate, notes } = data;
 
     // 自动生成订单号
     const orderNo = `ORD-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     let totalAmount = 0;
-    const orderItems = (items || []).map((item: any) => {
+    const orderItems = (items ?? []).map((item) => {
       const totalPrice = item.quantity * item.unitPrice;
       totalAmount += totalPrice;
       return {
@@ -76,7 +91,7 @@ export class OrdersService {
     status?: string,
   ) {
     const { page = 1, limit = 20 } = pagination;
-    const where: any = { companyId };
+    const where: Prisma.OrderWhereInput = { companyId };
     if (status) where.status = status;
     if (search) {
       where.OR = [

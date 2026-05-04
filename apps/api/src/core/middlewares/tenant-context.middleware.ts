@@ -11,9 +11,10 @@ export class TenantContextMiddleware implements NestMiddleware {
       ? companyHeader[0]
       : companyHeader;
 
-    const userId = typeof request.user === 'object' && request.user && 'id' in request.user
-      ? String(request.user.id)
-      : undefined;
+    const userId =
+      typeof request.user === 'object' && request.user && 'id' in request.user
+        ? String(request.user.id)
+        : undefined;
 
     TenantContext.run(
       {

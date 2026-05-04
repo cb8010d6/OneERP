@@ -115,7 +115,8 @@ export default function InventoryPage() {
     try {
       const res = await api.get<LedgerRow[]>('/inventory/realtime-ledger');
       setRows(res.data ?? []);
-    } catch {
+    } catch (error) {
+      console.error('Failed to fetch realtime ledger', error);
       toast.error('加载库存台账失败');
     } finally {
       setLoading(false);

@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CustomFieldType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UiSchema } from './schema.types';
@@ -21,7 +25,12 @@ export class MetadataService {
             name: 'partnerId',
             label: '客户',
             type: 'reference',
-            reference: { model: 'partner', labelField: 'name', valueField: 'id', relationField: 'partner' },
+            reference: {
+              model: 'partner',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'partner',
+            },
           },
           { name: 'status', label: '状态', type: 'string' },
           { name: 'totalAmount', label: '金额', type: 'number' },
@@ -30,10 +39,23 @@ export class MetadataService {
         ],
         views: {
           form: {
-            fields: ['orderNo', 'partnerId', 'status', 'totalAmount', 'expectedDate', 'notes'],
+            fields: [
+              'orderNo',
+              'partnerId',
+              'status',
+              'totalAmount',
+              'expectedDate',
+              'notes',
+            ],
           },
           list: {
-            columns: ['orderNo', 'partnerId', 'status', 'totalAmount', 'expectedDate'],
+            columns: [
+              'orderNo',
+              'partnerId',
+              'status',
+              'totalAmount',
+              'expectedDate',
+            ],
             defaultSort: { createdAt: 'desc' },
             searchFields: ['orderNo', 'status'],
           },
@@ -63,13 +85,23 @@ export class MetadataService {
             name: 'locationId',
             label: '库位',
             type: 'reference',
-            reference: { model: 'stockLocation', labelField: 'name', valueField: 'id', relationField: 'location' },
+            reference: {
+              model: 'stockLocation',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'location',
+            },
           },
           {
             name: 'materialId',
             label: '物料',
             type: 'reference',
-            reference: { model: 'material', labelField: 'name', valueField: 'id', relationField: 'material' },
+            reference: {
+              model: 'material',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'material',
+            },
           },
           { name: 'batchNo', label: '批次号', type: 'string' },
           { name: 'quantity', label: '数量', type: 'number' },
@@ -97,7 +129,12 @@ export class MetadataService {
             name: 'orderId',
             label: '订单',
             type: 'reference',
-            reference: { model: 'order', labelField: 'orderNo', valueField: 'id', relationField: 'order' },
+            reference: {
+              model: 'order',
+              labelField: 'orderNo',
+              valueField: 'id',
+              relationField: 'order',
+            },
           },
           { name: 'productId', label: '产品', type: 'string' },
           { name: 'status', label: '状态', type: 'string' },
@@ -106,10 +143,24 @@ export class MetadataService {
         ],
         views: {
           form: {
-            fields: ['workOrderNo', 'orderId', 'productId', 'status', 'plannedQty', 'actualQty'],
+            fields: [
+              'workOrderNo',
+              'orderId',
+              'productId',
+              'status',
+              'plannedQty',
+              'actualQty',
+            ],
           },
           list: {
-            columns: ['workOrderNo', 'orderId', 'productId', 'status', 'plannedQty', 'actualQty'],
+            columns: [
+              'workOrderNo',
+              'orderId',
+              'productId',
+              'status',
+              'plannedQty',
+              'actualQty',
+            ],
             defaultSort: { createdAt: 'desc' },
             searchFields: ['workOrderNo', 'productId', 'status'],
           },
@@ -137,14 +188,21 @@ export class MetadataService {
             name: 'orderId',
             label: '订单',
             type: 'reference',
-            reference: { model: 'order', labelField: 'orderNo', valueField: 'id', relationField: 'order' },
+            reference: {
+              model: 'order',
+              labelField: 'orderNo',
+              valueField: 'id',
+              relationField: 'order',
+            },
           },
           { name: 'status', label: '状态', type: 'string' },
           { name: 'amount', label: '金额', type: 'number' },
           { name: 'dueDate', label: '到期日', type: 'date' },
         ],
         views: {
-          form: { fields: ['invoiceNo', 'orderId', 'status', 'amount', 'dueDate'] },
+          form: {
+            fields: ['invoiceNo', 'orderId', 'status', 'amount', 'dueDate'],
+          },
           list: {
             columns: ['invoiceNo', 'orderId', 'status', 'amount', 'dueDate'],
             defaultSort: { createdAt: 'desc' },
@@ -218,13 +276,23 @@ export class MetadataService {
             name: 'userId',
             label: '员工',
             type: 'reference',
-            reference: { model: 'user', labelField: 'name', valueField: 'id', relationField: 'user' },
+            reference: {
+              model: 'user',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'user',
+            },
           },
           {
             name: 'roleId',
             label: '系统角色',
             type: 'reference',
-            reference: { model: 'role', labelField: 'name', valueField: 'id', relationField: 'role' },
+            reference: {
+              model: 'role',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'role',
+            },
           },
           { name: 'createdAt', label: '加入时间', type: 'date' },
         ],
@@ -282,7 +350,14 @@ export class MetadataService {
           list: {
             columns: ['code', 'name', 'type', 'contact', 'phone', 'isActive'],
             defaultSort: { createdAt: 'desc' },
-            searchFields: ['code', 'name', 'contact', 'phone', 'email', 'taxId'],
+            searchFields: [
+              'code',
+              'name',
+              'contact',
+              'phone',
+              'email',
+              'taxId',
+            ],
           },
           kanban: {
             statusField: 'type',
@@ -324,7 +399,14 @@ export class MetadataService {
             ],
           },
           list: {
-            columns: ['sku', 'name', 'category', 'unit', 'minStock', 'unitPrice'],
+            columns: [
+              'sku',
+              'name',
+              'category',
+              'unit',
+              'minStock',
+              'unitPrice',
+            ],
             defaultSort: { createdAt: 'desc' },
             searchFields: ['sku', 'name', 'category'],
           },
@@ -360,13 +442,23 @@ export class MetadataService {
             name: 'materialId',
             label: '关联主物料',
             type: 'reference',
-            reference: { model: 'material', labelField: 'name', valueField: 'id', relationField: 'material' },
+            reference: {
+              model: 'material',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'material',
+            },
           },
           {
             name: 'categoryId',
             label: '产品分类',
             type: 'reference',
-            reference: { model: 'productCategory', labelField: 'name', valueField: 'id', relationField: 'category' },
+            reference: {
+              model: 'productCategory',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'category',
+            },
           },
           { name: 'isActive', label: '启用', type: 'boolean' },
           { name: 'description', label: '描述', type: 'text' },
@@ -385,7 +477,15 @@ export class MetadataService {
             ],
           },
           list: {
-            columns: ['sku', 'name', 'type', 'uom', 'categoryId', 'materialId', 'isActive'],
+            columns: [
+              'sku',
+              'name',
+              'type',
+              'uom',
+              'categoryId',
+              'materialId',
+              'isActive',
+            ],
             defaultSort: { createdAt: 'desc' },
             searchFields: ['sku', 'name', 'type'],
           },
@@ -481,7 +581,9 @@ export class MetadataService {
     }
 
     if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(fieldName)) {
-      throw new BadRequestException('fieldName 仅支持字母开头的字母/数字/下划线');
+      throw new BadRequestException(
+        'fieldName 仅支持字母开头的字母/数字/下划线',
+      );
     }
 
     const type = payload.type;
@@ -564,7 +666,10 @@ export class MetadataService {
     const attributes = customAttributes as Record<string, unknown>;
     for (const definition of customFields) {
       const value = attributes[definition.fieldName];
-      if (definition.required && (value === undefined || value === null || value === '')) {
+      if (
+        definition.required &&
+        (value === undefined || value === null || value === '')
+      ) {
         throw new BadRequestException(
           `自定义字段 ${definition.fieldName} 为必填`,
         );

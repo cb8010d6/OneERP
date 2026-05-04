@@ -10,7 +10,12 @@ import { EventQueueModule } from '../core/events/event-queue.module';
 @Module({
   imports: [PrismaModule, EventQueueModule],
   controllers: [FinanceController],
-  providers: [FinanceService, AccountingService, FinanceDlqService, FinanceBridgeListener],
+  providers: [
+    FinanceService,
+    AccountingService,
+    FinanceDlqService,
+    FinanceBridgeListener,
+  ],
   exports: [AccountingService, FinanceDlqService],
 })
 export class FinanceModule {}

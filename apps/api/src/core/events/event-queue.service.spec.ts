@@ -31,7 +31,9 @@ describe('EventQueueService', () => {
     jest.clearAllMocks();
     service = new EventQueueService(
       prisma as unknown as ConstructorParameters<typeof EventQueueService>[0],
-      eventEmitter as unknown as ConstructorParameters<typeof EventQueueService>[1],
+      eventEmitter as unknown as ConstructorParameters<
+        typeof EventQueueService
+      >[1],
     );
   });
 
@@ -51,16 +53,27 @@ describe('EventQueueService', () => {
     prisma.eventDlq.updateMany.mockResolvedValue({ count: 1 });
     eventEmitter.emitAsync.mockResolvedValue(undefined);
 
-    const result = await service.retryPending(10);
+    const result: {
+      total: number;
+      results: Array<{ id: string; status: string; error?: string }>;
+    } = await service.retryPending(10);
+
+    type UpdateCall = {
+      where: { id: string };
+      data: { status: string; error: string; nextRetryAt: null };
+    };
+
+    const updateCalls = prisma.eventDlq.update.mock.calls as unknown as Array<
+      [UpdateCall]
+    >;
+    const updateCall = updateCalls[0]?.[0];
 
     expect(result.total).toBe(1);
     expect(result.results[0]).toEqual({ id: 'e1', status: 'RESOLVED' });
-    expect(prisma.eventDlq.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'e1' },
-        data: expect.objectContaining({ status: 'RESOLVED' }),
-      }),
-    );
+    expect(updateCall.where).toEqual({ id: 'e1' });
+    expect(updateCall.data.status).toBe('RESOLVED');
+    expect(updateCall.data.error).toBe('');
+    expect(updateCall.data.nextRetryAt).toBeNull();
   });
 
   it('keeps item pending with next retry when publish fails and attempts remain', async () => {
@@ -84,20 +97,32 @@ describe('EventQueueService', () => {
       maxAttempts: 5,
     });
 
-    const result = await service.retryPending(10);
+    const result: {
+      total: number;
+      results: Array<{ id: string; status: string; error?: string }>;
+    } = await service.retryPending(10);
+
+    type UpdateCall = {
+      where: { id: string };
+      data: {
+        status: string;
+        error: string;
+        nextRetryAt: Date | null;
+      };
+    };
+
+    const updateCalls = prisma.eventDlq.update.mock.calls as unknown as Array<
+      [UpdateCall]
+    >;
+    const updateCall = updateCalls[0]?.[0];
 
     expect(result.total).toBe(1);
     expect(result.results[0].id).toBe('e2');
     expect(result.results[0].status).toBe('PENDING');
     expect(result.results[0].error).toBe('boom');
-    expect(prisma.eventDlq.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'e2' },
-        data: expect.objectContaining({
-          status: 'PENDING',
-          error: 'boom',
-        }),
-      }),
-    );
+    expect(updateCall.where).toEqual({ id: 'e2' });
+    expect(updateCall.data.status).toBe('PENDING');
+    expect(updateCall.data.error).toBe('boom');
+    expect(updateCall.data.nextRetryAt).toBeInstanceOf(Date);
   });
 });

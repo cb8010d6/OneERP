@@ -27,6 +27,9 @@ export interface UiFieldSchema {
   custom?: boolean;
   options?: UiFieldOption[];
   reference?: UiFieldReference;
+  depends_on?: string; // e.g. "eval:doc.status=='Draft'"
+  hidden_depends_on?: string;
+  read_only_depends_on?: string;
 }
 
 export interface UiFormSection {

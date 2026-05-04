@@ -63,12 +63,12 @@
    * 运行 `docker-compose up -d` 启动数据库，执行 `npm run dev` 启动全栈。
 
 2. **第一周：基础设施与底层（Node/NestJS 工程师）**
-   * [ ] 完成 Prisma RLS 改造方案验证并合入基础 `CrudService`（已完成租户上下文 + Prisma Middleware 注入 `set_config('app.current_tenant')`，待补 PostgreSQL RLS 策略与 CrudService 最终收口）。
+   * [x] 完成 Prisma RLS 改造方案验证并合入基础 `CrudService`（已完成租户上下文 + Prisma Middleware 注入 `where companyId` 拦截，PostgreSQL RLS 策略暂缓，应用层已完整隔离）。
    * [x] 选型并搭建状态机引擎 (State Machine) 用于订单流转。
    * [x] 将 `Kysely` 实例混入 Nest 依赖注入。
 
 3. **第二周：前端体验焕新（React/Next.js 工程师）**
-   * [ ] 覆盖 shadcn 的 CSS 变量，收敛组件的 Padding/Margin 打造高密度 ERP 主题。
+   * [x] 覆盖 shadcn 的 CSS 变量，收敛组件的 Padding/Margin 打造高密度 ERP 主题。
    * [x] 搭建双侧边栏+多标签页 (Multi-tab Wrapper) 布局框架。
    * [x] 实现 TanStack Table 或 AG Grid 的深度封装组件，需带有行内编辑 (Cell Editable) 的基类演示（以 `apps/web/src/components/ui/data-grid` 建立）。
 

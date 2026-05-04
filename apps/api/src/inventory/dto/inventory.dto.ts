@@ -60,7 +60,9 @@ export class CreateStockMoveDto {
   @IsString()
   referenceNo?: string;
 
-  @ApiPropertyOptional({ description: '业务单据类型，如 SALE_ORDER / PURCHASE_ORDER' })
+  @ApiPropertyOptional({
+    description: '业务单据类型，如 SALE_ORDER / PURCHASE_ORDER',
+  })
   @IsOptional()
   @IsString()
   documentType?: string;
@@ -162,7 +164,9 @@ export class ReverseSaleOrderShipmentDto {
 }
 
 export class ReversePurchaseInboundDto {
-  @ApiPropertyOptional({ description: '冲销出库来源库位ID（默认取原入库目标库位）' })
+  @ApiPropertyOptional({
+    description: '冲销出库来源库位ID（默认取原入库目标库位）',
+  })
   @IsOptional()
   @IsString()
   sourceLocationId?: string;

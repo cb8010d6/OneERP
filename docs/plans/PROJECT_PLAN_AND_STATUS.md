@@ -22,7 +22,14 @@
   - 落地 `apps/api/src/core/workflow`，提供抽象的 API 改变单据状态：`POST /v1/workflow/:modelName/:id/transition`。
   - 核心突破：剔除了 `OrdersService` 中的硬核单据判断，改用 `@nestjs/event-emitter` 实现跨模块调度。现在销售单发货状态更新会自动抛出 `workflow.action.sale_order.shipped`，并被库存监听器拦截，实现自动复式过账操作。前端看板支持了挂载表单录入移库批次流转。
 
-### 🚧 阶段三：AI 功能深度集成（接下来即将进入）
+### 🟢 阶段三 (前置部分)：基础设施升级（已完成）
+
+* **高密度 ERP CSS 主题**：在 `apps/web/src/app/globals.css` 中落地全套企业级变量（紧凑间距、高密度行高、语义状态色、ERP 组件基础样式），对标 Linear/Notion 数据密度。
+* **StockLocation 树形结构**：在 `schema.prisma` 中为 `StockLocation` 补全 `parentId` 自引用关联，支持 `仓库→货架区→具体库位` 的多级树形管理。
+* **Kysely 实时台账 API**：`GET /api/inventory/realtime-ledger` 已接入 `KyselyService` 原生聚合 SQL，按物料×库位汇总 `totalQty` / `stockValue`，并在服务层计算 `isLow` / `isOut` 低库存标志。
+* **库存台账前端仪表盘**：重构 `apps/web/src/app/dashboard/inventory/page.tsx` 为完整的实时库存看板，集成快速过滤（低库存/零库存）、分类筛选、关键字搜索和红绿色预警着色。
+
+### 🚧 阶段三 (剩余)：AI 功能深度集成（接下来即将进入）
 
 * **全局 AI Command Bar (前端)**：描述：在前端顶部栏实现类似 Command Palette 的输入框，并接入自然语言理解。用户可输入“帮我创建一个销售订单，卖给微软10台服务器”。直接文字/语音下达自然语言指令。
 * **Agent 意图与 Function Calling (后端)**：接入 LLM 的 Tool Call，借助阶段零生成的通用 CRUD 自动执行业务流配置。**NL2Action 控制器（后端）** *  **描述** ：开发意图识别和 Function Calling 服务。当收到文字时，提取实体映射到 [api](vscode-file://vscode-app/c:/Users/INDEX/AppData/Local/Programs/Microsoft%20VS%20Code/07ff9d6178/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 的相关 Controller（此时调用大模型的 tool/function-calling 机制解析 JSON 参数并调用对应的业务流）。

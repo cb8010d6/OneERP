@@ -32,7 +32,7 @@ export class AuthController {
 
   @Post('register')
   @ApiOperation({ summary: '用户注册' })
-  async register(@Body() signUpDto: RegisterDto) {
+  register(@Body() signUpDto: RegisterDto) {
     return this.authService.register(
       signUpDto.email,
       signUpDto.password,

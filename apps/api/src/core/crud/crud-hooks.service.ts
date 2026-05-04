@@ -25,10 +25,14 @@ export type CrudHookHandler = (
 
 @Injectable()
 export class CrudHooksService {
-  private readonly hooks = new Map<CrudHookEvent, Map<string, CrudHookHandler[]>>();
+  private readonly hooks = new Map<
+    CrudHookEvent,
+    Map<string, CrudHookHandler[]>
+  >();
 
   register(event: CrudHookEvent, modelName: string, handler: CrudHookHandler) {
-    const eventHooks = this.hooks.get(event) ?? new Map<string, CrudHookHandler[]>();
+    const eventHooks =
+      this.hooks.get(event) ?? new Map<string, CrudHookHandler[]>();
     const key = this.normalize(modelName);
     const handlers = eventHooks.get(key) ?? [];
 
@@ -37,7 +41,10 @@ export class CrudHooksService {
     this.hooks.set(event, eventHooks);
   }
 
-  async execute(event: CrudHookEvent, ctx: CrudHookContext): Promise<CrudHookContext> {
+  async execute(
+    event: CrudHookEvent,
+    ctx: CrudHookContext,
+  ): Promise<CrudHookContext> {
     const eventHooks = this.hooks.get(event);
     if (!eventHooks) {
       return ctx;

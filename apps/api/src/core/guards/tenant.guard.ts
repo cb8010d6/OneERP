@@ -6,6 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import type { RequestWithAuth } from '../http/request.types';
 
 /**
  * 业务数据级防越权守卫。
@@ -19,9 +20,12 @@ export class TenantGuard implements CanActivate {
   constructor(private prisma: PrismaService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
+    const request = context.switchToHttp().getRequest<RequestWithAuth>();
     const user = request.user;
-    const companyId = request.headers['x-company-id'];
+    const companyHeader = request.headers['x-company-id'];
+    const companyId = Array.isArray(companyHeader)
+      ? companyHeader[0]
+      : companyHeader;
 
     if (!user) {
       throw new UnauthorizedException('尚未登录，无法访问租户数据');

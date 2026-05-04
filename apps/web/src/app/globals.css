@@ -54,6 +54,46 @@
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.05);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.07), 0 4px 6px -4px rgb(0 0 0 / 0.04);
+
+  /* Component sizing */
+  --input-height: 32px;
+  --input-height-sm: 28px;
+  --button-height: 32px;
+  --row-height: 40px;
+  --row-height-compact: 34px;
+  --header-height: 56px;
+  --sidebar-width: 220px;
+  --sidebar-collapsed: 48px;
+}
+
+.dark {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+
+  --color-primary:       #60a5fa;
+  --color-primary-hover: #3b82f6;
+  --color-primary-light: #1e293b;
+
+  --color-surface-0: #0f172a;
+  --color-surface-1: #111827;
+  --color-surface-2: #1f2937;
+
+  --color-border:       #243041;
+  --color-border-light: #1f2a3a;
+
+  --color-text-primary:   #e2e8f0;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted:     #94a3b8;
+
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger:  #f87171;
+  --color-info:    #38bdf8;
+
+  --color-success-light: #052e1b;
+  --color-warning-light: #3b2a09;
+  --color-danger-light:  #3b0a0a;
+  --color-info-light:    #082f49;
 }
 
 @theme inline {
@@ -72,6 +112,7 @@
 
 html {
   font-size: var(--font-size-base);
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -192,6 +233,180 @@ body {
   background: var(--warning-subtle) !important;
   color: var(--warning) !important;
   font-weight: 600;
+}
+
+/* ---- High-density form inputs ---- */
+.erp-input {
+  height: var(--input-height);
+  padding: 0 12px;
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--foreground);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  outline: none;
+  width: 100%;
+}
+
+.erp-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 0.15);
+}
+
+.erp-input::placeholder {
+  color: #9ca3af;
+}
+
+/* ---- ERP Button styles ---- */
+.erp-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: var(--button-height);
+  padding: 0 16px;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  white-space: nowrap;
+}
+
+.erp-btn--primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.erp-btn--primary:hover {
+  background: var(--primary-hover);
+}
+
+.erp-btn--secondary {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground);
+}
+
+.erp-btn--secondary:hover {
+  background: var(--surface-subtle);
+}
+
+.erp-btn--danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.erp-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #6b7280;
+}
+
+.erp-btn--ghost:hover {
+  background: var(--surface-subtle);
+  color: var(--foreground);
+}
+
+.erp-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---- Low-stock warning animation ---- */
+@keyframes stock-warning-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+.stock-low {
+  animation: stock-warning-pulse 1.8s ease-in-out infinite;
+}
+
+/* ---- DataGrid virtual scroller container ---- */
+.data-grid-scroll {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+/* ---- Workspace tabs strip ---- */
+.workspace-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  height: 36px;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  transition: background 0.12s;
+  color: #6b7280;
+}
+
+.workspace-tab:hover {
+  background: var(--surface-subtle);
+  color: var(--foreground);
+}
+
+.workspace-tab--active {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+/* ---- Chatter timeline sidebar ---- */
+.chatter-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chatter-event {
+  position: relative;
+  padding-left: 24px;
+}
+
+.chatter-event::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  bottom: -12px;
+  width: 1px;
+  background: var(--border);
+}
+
+.chatter-event:last-child::before {
+  display: none;
+}
+
+.chatter-event__dot {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid var(--surface);
+}
+
+.chatter-event__meta {
+  font-size: var(--font-size-xs);
+  color: #9ca3af;
+}
+
+.chatter-event__content {
+  font-size: var(--font-size-sm);
+  color: var(--foreground);
+  margin-top: 2px;
 }
 
 /* ---- Scrollbar (webkit) ---- */

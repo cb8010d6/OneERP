@@ -13,7 +13,11 @@ import { CurrentCompany } from '../decorators/current-company.decorator';
 import { CurrentUser } from '../decorators/current-user.decorator';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { TenantGuard } from '../guards/tenant.guard';
-import { AIChat2SqlDto, AICommandDto, AIChat2DashDto } from './dto/ai-command.dto';
+import {
+  AIChat2SqlDto,
+  AICommandDto,
+  AIChat2DashDto,
+} from './dto/ai-command.dto';
 import { AIService } from './ai.service';
 
 interface CurrentUserPayload {

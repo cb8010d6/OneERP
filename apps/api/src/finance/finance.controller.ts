@@ -14,8 +14,13 @@ import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
-import { CreateInvoiceDto, CreatePaymentDto, PostInvoiceDto } from './dto/finance.dto';
+import {
+  CreateInvoiceDto,
+  CreatePaymentDto,
+  PostInvoiceDto,
+} from './dto/finance.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import type { JwtUserPayload } from '../core/http/request.types';
 
 @ApiTags('财务管理 (Finance)')
 @ApiBearerAuth()
@@ -31,7 +36,7 @@ export class FinanceController {
   @ApiOperation({ summary: '创建应收发票' })
   async createInvoice(
     @CurrentCompany() companyId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: JwtUserPayload,
     @Body() dto: CreateInvoiceDto,
   ) {
     return this.financeService.createInvoice(companyId, dto, user.id);
@@ -60,11 +65,16 @@ export class FinanceController {
   @ApiOperation({ summary: '发票过账（触发收入凭证生成）' })
   async postInvoice(
     @CurrentCompany() companyId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: JwtUserPayload,
     @Param('id') invoiceId: string,
     @Body() dto: PostInvoiceDto,
   ) {
-    return this.financeService.postInvoice(companyId, invoiceId, user.id, dto.taxRate);
+    return this.financeService.postInvoice(
+      companyId,
+      invoiceId,
+      user.id,
+      dto.taxRate,
+    );
   }
 
   @Get('dlq')

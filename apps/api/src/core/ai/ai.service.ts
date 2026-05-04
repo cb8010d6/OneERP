@@ -19,6 +19,18 @@ interface AICommandOptions {
   };
 }
 
+type JsonRecord = Record<string, unknown>;
+
+interface ReceivableInvoiceRow {
+  amount: unknown;
+  payments: Array<{ amount: unknown }>;
+  order?: {
+    partner?: {
+      name?: unknown;
+    } | null;
+  } | null;
+}
+
 @Injectable()
 export class AIService {
   constructor(
@@ -28,6 +40,42 @@ export class AIService {
     private readonly workflowService: WorkflowService,
     private readonly llmAdapterService: LlmAdapterService,
   ) {}
+
+  private toSafeText(value: unknown): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+
+    return '';
+  }
+
+  private readStringArg(args: Record<string, unknown>, key: string): string {
+    return this.toSafeText(args[key]).trim();
+  }
+
+  private readOptionalStringArg(
+    args: Record<string, unknown>,
+    key: string,
+  ): string | undefined {
+    const value = this.readStringArg(args, key);
+    return value || undefined;
+  }
+
+  private readRecordArg(
+    args: Record<string, unknown>,
+    key: string,
+  ): JsonRecord {
+    const value = args[key];
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return value as JsonRecord;
+    }
+
+    return {};
+  }
 
   async getToolSchemas(): Promise<AIToolSchema[]> {
     const models = (await this.metadataService.listSchemas()).map(
@@ -49,11 +97,15 @@ export class AIService {
       },
       {
         name: 'transition_workflow',
-        description: '执行工作流流转 transition_workflow(modelName, recordId, action, note)',
+        description:
+          '执行工作流流转 transition_workflow(modelName, recordId, action, note)',
         parameters: {
           type: 'object',
           properties: {
-            modelName: { type: 'string', enum: ['order', 'workOrder', 'invoice'] },
+            modelName: {
+              type: 'string',
+              enum: ['order', 'workOrder', 'invoice'],
+            },
             recordId: { type: 'string' },
             action: { type: 'string' },
             note: { type: 'string' },
@@ -97,17 +149,25 @@ export class AIService {
     ];
   }
 
-  async command(input: string, companyId: string, userId: string, options?: AICommandOptions) {
+  async command(
+    input: string,
+    companyId: string,
+    userId: string,
+    options?: AICommandOptions,
+  ) {
     const text = input.trim();
     if (!text) {
       throw new BadRequestException('指令不能为空');
     }
 
     const dryRun = Boolean(options?.dryRun);
-
     if (options?.overrideTool?.toolName) {
       if (dryRun && this.isWriteTool(options.overrideTool.toolName)) {
-        return this.buildDraftResponse(text, options.overrideTool.toolName, options.overrideTool.args);
+        return this.buildDraftResponse(
+          text,
+          options.overrideTool.toolName,
+          options.overrideTool.args,
+        );
       }
 
       const executed = await this.executeToolCall(
@@ -122,23 +182,38 @@ export class AIService {
     }
 
     const toolSchemas = await this.getToolSchemas();
-    const llmCall = await this.llmAdapterService.resolveToolCall(text, toolSchemas);
+    const llmCall = await this.llmAdapterService.resolveToolCall(
+      text,
+      toolSchemas,
+    );
     if (llmCall) {
       if (dryRun && this.isWriteTool(llmCall.toolName)) {
         return this.buildDraftResponse(text, llmCall.toolName, llmCall.args);
       }
 
-      const executed = await this.executeToolCall(llmCall.toolName, llmCall.args, companyId, userId);
+      const executed = await this.executeToolCall(
+        llmCall.toolName,
+        llmCall.args,
+        companyId,
+        userId,
+      );
       if (executed) {
         return executed;
       }
     }
 
-    if (text.includes('欠我们多少钱') || text.includes('应收') || text.includes('欠款')) {
+    if (
+      text.includes('欠我们多少钱') ||
+      text.includes('应收') ||
+      text.includes('欠款')
+    ) {
       return this.buildReceivableWidget(text, companyId);
     }
 
-    if (text.includes('创建') && (text.includes('客户') || text.includes('伙伴'))) {
+    if (
+      text.includes('创建') &&
+      (text.includes('客户') || text.includes('伙伴'))
+    ) {
       if (dryRun) {
         return this.buildDraftResponse(text, 'create_resource', {
           modelName: 'partner',
@@ -158,7 +233,14 @@ export class AIService {
       return this.createOrderByPrompt(text, companyId, userId);
     }
 
-    if (text.includes('订单') && (text.includes('发货') || text.includes('提交') || text.includes('完成') || text.includes('取消') || text.includes('生产'))) {
+    if (
+      text.includes('订单') &&
+      (text.includes('发货') ||
+        text.includes('提交') ||
+        text.includes('完成') ||
+        text.includes('取消') ||
+        text.includes('生产'))
+    ) {
       if (dryRun) {
         return this.buildDraftResponse(text, 'transition_workflow', {
           modelName: 'order',
@@ -211,14 +293,18 @@ export class AIService {
 
   async chat2sql(input: string, companyId: string) {
     const schemaContext = this.buildReadSchemaContext();
-    const sql = await this.llmAdapterService.resolveReadSql(input, schemaContext);
+    const sql = await this.llmAdapterService.resolveReadSql(
+      input,
+      schemaContext,
+    );
 
     if (!sql) {
       throw new BadRequestException('未生成可执行查询，请重试更具体的问题');
     }
 
     const checkedSql = this.validateReadOnlySql(sql);
-    const rows = (await this.prisma.$queryRawUnsafe(checkedSql, companyId)) as Array<Record<string, unknown>>;
+    const rows: Array<Record<string, unknown>> =
+      await this.prisma.$queryRawUnsafe(checkedSql, companyId);
 
     const chartSuggestion = this.suggestChart(rows);
     return {
@@ -231,7 +317,10 @@ export class AIService {
     };
   }
 
-  async parseDocumentDraft(file: { originalname: string; mimetype: string; size: number } | undefined, companyId: string) {
+  async parseDocumentDraft(
+    file: { originalname: string; mimetype: string; size: number } | undefined,
+    companyId: string,
+  ) {
     if (!file) {
       throw new BadRequestException('请上传文件');
     }
@@ -264,7 +353,11 @@ export class AIService {
   }
 
   private extractName(text: string) {
-    const patterns = [/名称[是为:]?\s*([^，。]+)/, /叫\s*([^，。]+)/, /创建.*?(客户|伙伴)([^，。]+)/];
+    const patterns = [
+      /名称[是为:]?\s*([^，。]+)/,
+      /叫\s*([^，。]+)/,
+      /创建.*?(客户|伙伴)([^，。]+)/,
+    ];
     for (const pattern of patterns) {
       const matched = text.match(pattern);
       if (matched?.[2]) return matched[2].trim();
@@ -307,7 +400,12 @@ export class AIService {
 
   private extractOrderAction(text: string) {
     if (text.includes('提交')) return 'submit';
-    if (text.includes('开始生产') || text.includes('开工') || text.includes('生产')) return 'start_production';
+    if (
+      text.includes('开始生产') ||
+      text.includes('开工') ||
+      text.includes('生产')
+    )
+      return 'start_production';
     if (text.includes('发货')) return 'ship';
     if (text.includes('完成')) return 'complete';
     if (text.includes('取消')) return 'cancel';
@@ -315,7 +413,8 @@ export class AIService {
   }
 
   private async createPartnerByPrompt(text: string, companyId: string) {
-    const name = this.extractName(text) || `AI客户-${Date.now().toString().slice(-6)}`;
+    const name =
+      this.extractName(text) || `AI客户-${Date.now().toString().slice(-6)}`;
 
     const created = await this.crudService.create(
       'partner',
@@ -335,13 +434,17 @@ export class AIService {
       message: `已创建客户 ${name}`,
       card: {
         modelName: 'partner',
-        id: record.id,
-        name: record.name,
+        id: this.toSafeText(record.id),
+        name: this.toSafeText(record.name),
       },
     };
   }
 
-  private async createOrderByPrompt(text: string, companyId: string, userId: string) {
+  private async createOrderByPrompt(
+    text: string,
+    companyId: string,
+    userId: string,
+  ) {
     const quantity = this.extractQuantity(text);
 
     const partner = await this.prisma.partner.findFirst({
@@ -387,22 +490,28 @@ export class AIService {
     return {
       type: 'tool_result',
       tool: 'create_resource',
-      message: `已创建草稿订单 ${String(record.orderNo || '')}`,
+      message: `已创建草稿订单 ${this.toSafeText(record.orderNo)}`,
       card: {
         modelName: 'order',
-        id: record.id,
-        orderNo: record.orderNo,
-        status: record.status,
+        id: this.toSafeText(record.id),
+        orderNo: this.toSafeText(record.orderNo),
+        status: this.toSafeText(record.status),
       },
     };
   }
 
-  private async transitionOrderByPrompt(text: string, companyId: string, userId: string) {
+  private async transitionOrderByPrompt(
+    text: string,
+    companyId: string,
+    userId: string,
+  ) {
     const orderNo = this.extractOrderNo(text);
     const action = this.extractOrderAction(text);
 
     if (!orderNo || !action) {
-      throw new BadRequestException('请给出订单号和动作，例如：把订单 ORD-202603-1234 标记为发货');
+      throw new BadRequestException(
+        '请给出订单号和动作，例如：把订单 ORD-202603-1234 标记为发货',
+      );
     }
 
     const order = await this.prisma.order.findFirst({
@@ -440,7 +549,7 @@ export class AIService {
   private async buildReceivableWidget(text: string, companyId: string) {
     const keyword = this.extractPartnerKeyword(text);
 
-    const invoices = await this.prisma.invoice.findMany({
+    const invoices = (await this.prisma.invoice.findMany({
       where: {
         companyId,
         status: { in: ['UNPAID', 'PARTIAL'] },
@@ -464,15 +573,21 @@ export class AIService {
         },
       },
       take: 100,
-    });
+    })) as ReceivableInvoiceRow[];
 
     const totalReceivable = invoices.reduce((sum, invoice) => {
-      const paid = invoice.payments.reduce((acc, payment) => acc + Number(payment.amount), 0);
+      const paid = invoice.payments.reduce(
+        (acc, payment) => acc + Number(payment.amount),
+        0,
+      );
       const remaining = Number(invoice.amount) - paid;
       return sum + Math.max(remaining, 0);
     }, 0);
 
-    const partnerName = keyword ?? invoices[0]?.order?.partner?.name ?? '全部客户';
+    const partnerName =
+      this.toSafeText(keyword) ||
+      this.toSafeText(invoices[0]?.order?.partner?.name) ||
+      '全部客户';
 
     return {
       type: 'tool_result',
@@ -494,8 +609,8 @@ export class AIService {
     userId: string,
   ) {
     if (toolName === 'create_resource') {
-      const modelName = String(args.modelName ?? '').trim();
-      const data = (args.data ?? {}) as Record<string, unknown>;
+      const modelName = this.readStringArg(args, 'modelName');
+      const data = this.readRecordArg(args, 'data');
       if (!modelName) {
         return null;
       }
@@ -515,10 +630,10 @@ export class AIService {
     }
 
     if (toolName === 'transition_workflow') {
-      const modelName = String(args.modelName ?? '').trim();
-      const recordId = String(args.recordId ?? '').trim();
-      const action = String(args.action ?? '').trim();
-      const note = args.note ? String(args.note) : undefined;
+      const modelName = this.readStringArg(args, 'modelName');
+      const recordId = this.readStringArg(args, 'recordId');
+      const action = this.readStringArg(args, 'action');
+      const note = this.readOptionalStringArg(args, 'note');
 
       if (!modelName || !recordId || !action) {
         return null;
@@ -547,7 +662,7 @@ export class AIService {
     }
 
     if (toolName === 'chat2dash_query') {
-      const question = String(args.question ?? '').trim();
+      const question = this.readStringArg(args, 'question');
       if (!question) {
         return null;
       }
@@ -555,7 +670,7 @@ export class AIService {
     }
 
     if (toolName === 'chat2sql_read') {
-      const question = String(args.question ?? '').trim();
+      const question = this.readStringArg(args, 'question');
       if (!question) {
         return null;
       }
@@ -630,7 +745,9 @@ Rules:
       throw new BadRequestException('检测到不安全 SQL 关键字');
     }
 
-    const hasCompanyFilter = lowered.includes('companyid') && (lowered.includes('$1') || lowered.includes('?'));
+    const hasCompanyFilter =
+      lowered.includes('companyid') &&
+      (lowered.includes('$1') || lowered.includes('?'));
     if (!hasCompanyFilter) {
       throw new BadRequestException('查询必须包含 companyId 过滤');
     }

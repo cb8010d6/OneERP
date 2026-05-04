@@ -33,6 +33,34 @@ export interface StockLedgerRow {
   isLow: boolean;
 }
 
+interface StockLedgerQueryRow {
+  locationId: string;
+  locationName: string;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  materialId: string;
+  materialSku: string;
+  materialName: string;
+  materialUnit: string;
+  minStock: number | string | null;
+  netQty: number | string | null;
+  batchCount: number | string | null;
+}
+
+interface InventoryTransactionRecord {
+  id: string;
+  type: string;
+  materialId: string;
+  quantity: number;
+  referenceNo?: string | null;
+  batchNo?: string | null;
+  sourceLocationId?: string | null;
+  destLocationId?: string | null;
+  companyId?: string;
+  operatorId?: string;
+  note?: string | null;
+}
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -100,46 +128,49 @@ export class InventoryService {
    * 支持低库存预警标记。
    */
   async getRealtimeLedger(companyId: string): Promise<StockLedgerRow[]> {
-    const rows = await this.kyselyService.withTenant(async (trx) => {
-      return trx
-        .selectFrom('StockQuant as sq')
-        .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
-        .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
-        .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
-        .select([
-          'loc.id as locationId',
-          'loc.name as locationName',
-          'loc.warehouseId as warehouseId',
-          'wh.name as warehouseName',
-          'mat.id as materialId',
-          'mat.sku as materialSku',
-          'mat.name as materialName',
-          'mat.unit as materialUnit',
-          'mat.minStock as minStock',
-        ])
-        .select((eb) => [
-          eb.fn.sum<number>('sq.quantity').as('netQty'),
-          eb.fn.count<number>('sq.id').as('batchCount'),
-        ])
-        .where('loc.companyId', '=', companyId)
-        .groupBy([
-          'loc.id',
-          'loc.name',
-          'loc.warehouseId',
-          'wh.name',
-          'mat.id',
-          'mat.sku',
-          'mat.name',
-          'mat.unit',
-          'mat.minStock',
-        ])
-        .orderBy('wh.name', 'asc')
-        .orderBy('loc.name', 'asc')
-        .orderBy('mat.name', 'asc')
-        .execute();
-    });
+    const rows = await this.kyselyService.withTenant<StockLedgerQueryRow[]>(
+      async (trx) => {
+        const queryRows = await trx
+          .selectFrom('StockQuant as sq')
+          .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
+          .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
+          .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
+          .select([
+            'loc.id as locationId',
+            'loc.name as locationName',
+            'loc.warehouseId as warehouseId',
+            'wh.name as warehouseName',
+            'mat.id as materialId',
+            'mat.sku as materialSku',
+            'mat.name as materialName',
+            'mat.unit as materialUnit',
+            'mat.minStock as minStock',
+          ])
+          .select((eb) => [
+            eb.fn.sum<number>('sq.quantity').as('netQty'),
+            eb.fn.count<number>('sq.id').as('batchCount'),
+          ])
+          .where('loc.companyId', '=', companyId)
+          .groupBy([
+            'loc.id',
+            'loc.name',
+            'loc.warehouseId',
+            'wh.name',
+            'mat.id',
+            'mat.sku',
+            'mat.name',
+            'mat.unit',
+            'mat.minStock',
+          ])
+          .orderBy('wh.name', 'asc')
+          .orderBy('loc.name', 'asc')
+          .orderBy('mat.name', 'asc')
+          .execute();
+        return queryRows as unknown as StockLedgerQueryRow[];
+      },
+    );
 
-    return rows.map((row) => {
+    return rows.map((row): StockLedgerRow => {
       const netQty = Number(row.netQty ?? 0);
       const minStock = Number(row.minStock ?? 0);
       return {
@@ -163,7 +194,7 @@ export class InventoryService {
     companyId: string,
     data: CreateStockMoveDto,
     operatorId?: string,
-  ) {
+  ): Promise<InventoryTransactionRecord> {
     const sourceLocation = await this.resolveLocationOwnership(
       companyId,
       data.sourceLocationId,
@@ -179,7 +210,11 @@ export class InventoryService {
       throw new BadRequestException('来源库位和目标库位不能同时为空');
     }
 
-    if (sourceLocation?.id && destLocation?.id && sourceLocation.id === destLocation.id) {
+    if (
+      sourceLocation?.id &&
+      destLocation?.id &&
+      sourceLocation.id === destLocation.id
+    ) {
       throw new BadRequestException('来源库位和目标库位不能相同');
     }
 
@@ -188,7 +223,8 @@ export class InventoryService {
       data.documentType,
       data.documentId,
     );
-    const finalNote = data.note ?? this.buildMoveNote(data.documentType, data.documentId);
+    const finalNote =
+      data.note ?? this.buildMoveNote(data.documentType, data.documentId);
 
     const material = await this.prisma.material.findFirst({
       where: { id: data.materialId },
@@ -363,7 +399,11 @@ export class InventoryService {
 
     const moveNote = payload.note ?? `销售订单自动出库：${order.orderNo}`;
     const results = await this.prisma.$transaction(async (tx) => {
-      const postedLines: Array<{ materialId: string; quantity: number; transactionId: string }> = [];
+      const postedLines: Array<{
+        materialId: string;
+        quantity: number;
+        transactionId: string;
+      }> = [];
 
       for (const [materialId, quantity] of materialQuantityMap.entries()) {
         const transaction = await this.executeStockMove(tx, {
@@ -377,7 +417,11 @@ export class InventoryService {
           operatorId: operatorId || 'SYSTEM',
         });
 
-        postedLines.push({ materialId, quantity, transactionId: transaction.id });
+        postedLines.push({
+          materialId,
+          quantity,
+          transactionId: transaction.id,
+        });
       }
 
       await tx.order.update({
@@ -501,7 +545,11 @@ export class InventoryService {
       throw new BadRequestException('未找到可冲销的销售出库流水');
     }
 
-    const reversedLines: Array<{ materialId: string; quantity: number; transactionId: string }> = [];
+    const reversedLines: Array<{
+      materialId: string;
+      quantity: number;
+      transactionId: string;
+    }> = [];
 
     for (const move of shippedMoves) {
       const transaction = await this.createStockMove(
@@ -509,7 +557,8 @@ export class InventoryService {
         {
           materialId: move.materialId,
           quantity: move.quantity,
-          destLocationId: payload.destLocationId ?? move.sourceLocationId ?? undefined,
+          destLocationId:
+            payload.destLocationId ?? move.sourceLocationId ?? undefined,
           batchNo: payload.batchNo,
           referenceNo: reverseReferenceNo,
           documentType: 'SALE_ORDER_REVERSE',
@@ -582,7 +631,11 @@ export class InventoryService {
       throw new BadRequestException('未找到可冲销的采购入库流水');
     }
 
-    const reversedLines: Array<{ materialId: string; quantity: number; transactionId: string }> = [];
+    const reversedLines: Array<{
+      materialId: string;
+      quantity: number;
+      transactionId: string;
+    }> = [];
 
     for (const move of inboundMoves) {
       const transaction = await this.createStockMove(
@@ -590,7 +643,8 @@ export class InventoryService {
         {
           materialId: move.materialId,
           quantity: move.quantity,
-          sourceLocationId: payload.sourceLocationId ?? move.destLocationId ?? undefined,
+          sourceLocationId:
+            payload.sourceLocationId ?? move.destLocationId ?? undefined,
           batchNo: payload.batchNo,
           referenceNo: reverseReferenceNo,
           documentType: 'PURCHASE_ORDER_REVERSE',
@@ -612,6 +666,89 @@ export class InventoryService {
       reversedLines,
       message: '采购入库冲销完成',
     };
+  }
+
+  /**
+   * 实时库存台账 (Realtime Stock Ledger)
+   * 使用 Kysely 原生聚合 SQL，高性能计算每个物料×库位的实时库存情况。
+   * 用于大屏看板和报表接口 GET /inventory/realtime-ledger
+   */
+  async getRealtimeLedger(companyId: string) {
+    return this.kyselyService.withTenant(async (db) => {
+      const rows = await db
+        .selectFrom('StockQuant as sq')
+        .innerJoin('Material as m', 'm.id', 'sq.materialId')
+        .innerJoin('StockLocation as l', 'l.id', 'sq.locationId')
+        .leftJoin('Warehouse as w', 'w.id', 'l.warehouseId')
+        .select([
+          'sq.materialId',
+          'm.sku as materialSku',
+          'm.name as materialName',
+          'm.unit as unit',
+          'm.category as category',
+          'm.minStock as minStock',
+          'm.unitPrice as unitPrice',
+          'sq.locationId',
+          'l.name as locationName',
+          'l.code as locationCode',
+          'l.usage as locationUsage',
+          'w.name as warehouseName',
+        ])
+        .select((eb) => [
+          eb.fn.sum('sq.quantity').as('totalQty'),
+          eb.fn.count('sq.id').as('batchCount'),
+        ])
+        .where('l.companyId', '=', companyId)
+        .where((eb) =>
+          eb.or([
+            eb('m.companyId', '=', companyId),
+            eb('m.companyId', 'is', null),
+          ]),
+        )
+        .groupBy([
+          'sq.materialId',
+          'm.sku',
+          'm.name',
+          'm.unit',
+          'm.category',
+          'm.minStock',
+          'm.unitPrice',
+          'sq.locationId',
+          'l.name',
+          'l.code',
+          'l.usage',
+          'w.name',
+        ])
+        .orderBy('m.category')
+        .orderBy('m.name')
+        .execute();
+
+      return rows.map((row) => {
+        const qty = Number(row.totalQty ?? 0);
+        const minStock = Number(row.minStock ?? 0);
+        const unitPrice = Number(row.unitPrice ?? 0);
+
+        return {
+          materialId: row.materialId as string,
+          materialSku: row.materialSku as string,
+          materialName: row.materialName as string,
+          unit: row.unit as string,
+          category: row.category as string,
+          locationId: row.locationId as string,
+          locationName: row.locationName as string,
+          locationCode: (row.locationCode as string | null) ?? null,
+          locationUsage: row.locationUsage as string,
+          warehouseName: (row.warehouseName as string | null) ?? null,
+          batchCount: Number(row.batchCount ?? 0),
+          totalQty: qty,
+          minStock,
+          unitPrice,
+          stockValue: qty * unitPrice,
+          isLow: minStock > 0 && qty < minStock,
+          isOut: qty <= 0,
+        };
+      });
+    });
   }
 
   private async resolveLocationOwnership(
@@ -667,7 +804,7 @@ export class InventoryService {
       referenceNo?: string;
       note?: string;
     },
-  ) {
+  ): Promise<InventoryTransactionRecord> {
     let finalBatchNo = input.batchNo;
 
     if (input.sourceLocationId) {
@@ -682,7 +819,8 @@ export class InventoryService {
     }
 
     if (input.destLocationId) {
-      const destinationBatch = finalBatchNo ?? input.batchNo ?? this.generateBatchNo();
+      const destinationBatch =
+        finalBatchNo ?? input.batchNo ?? this.generateBatchNo();
       await tx.stockQuant.upsert({
         where: {
           locationId_materialId_batchNo: {
@@ -704,11 +842,12 @@ export class InventoryService {
       finalBatchNo = destinationBatch;
     }
 
-    const moveType = input.sourceLocationId && input.destLocationId
-      ? 'TRANSFER'
-      : input.sourceLocationId
-        ? 'OUTBOUND'
-        : 'INBOUND';
+    const moveType =
+      input.sourceLocationId && input.destLocationId
+        ? 'TRANSFER'
+        : input.sourceLocationId
+          ? 'OUTBOUND'
+          : 'INBOUND';
 
     return tx.inventoryTransaction.create({
       data: {

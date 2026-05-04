@@ -2,6 +2,20 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { TenantContext } from '../core/tenant/tenant-context';
 
+type PrismaMiddleware = Parameters<PrismaClient['$use']>[0];
+type PrismaMiddlewareParams = Parameters<PrismaMiddleware>[0];
+type PrismaMiddlewareNext = Parameters<PrismaMiddleware>[1];
+
+type MiddlewareArgs = {
+  data?: unknown;
+  where?: unknown;
+  [key: string]: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 const COMPANY_SCOPED_MODELS = new Set([
   'Order',
   'OrderItem',
@@ -38,20 +52,23 @@ export class PrismaService
   constructor() {
     super({});
 
-    this.$use(async (params, next) => {
+    this.$use((params: PrismaMiddlewareParams, next: PrismaMiddlewareNext) => {
       const tenantBound = TenantContext.hasStore();
       const companyId = TenantContext.getCompanyId();
       const modelName = params.model;
-      const needsTenantScope = modelName
-        ? COMPANY_SCOPED_MODELS.has(modelName)
-        : false;
+      const needsTenantScope =
+        typeof modelName === 'string'
+          ? COMPANY_SCOPED_MODELS.has(modelName)
+          : false;
 
       if (!tenantBound || !needsTenantScope) {
         return next(params);
       }
 
       if (!companyId) {
-        throw new Error('租户上下文缺失: 未携带 x-company-id，数据库访问已阻止');
+        throw new Error(
+          '租户上下文缺失: 未携带 x-company-id，数据库访问已阻止',
+        );
       }
 
       // 【🚨 严重安全修复 - 移除连接池毒化漏洞】
@@ -59,18 +76,19 @@ export class PrismaService
       // 由于 Prisma 默认的连接池机制，该连接会被污染并复用，导致跨租户越权漏洞。
       // 当前暂时依靠下面的 parameters 拦截级 where 子句进行隔离。
 
-      params.args = params.args ?? {};
+      const args = (params.args ?? {}) as MiddlewareArgs;
 
       if (params.action === 'create' || params.action === 'upsert') {
-        const data = params.args.data ?? {};
-        params.args.data = { ...data, companyId };
+        const data = isRecord(args.data) ? args.data : {};
+        args.data = { ...data, companyId };
       }
 
       if (params.action === 'createMany') {
-        const data = Array.isArray(params.args.data)
-          ? params.args.data
-          : [params.args.data];
-        params.args.data = data.map((item) => ({ ...item, companyId }));
+        const data = Array.isArray(args.data) ? args.data : [args.data];
+        args.data = data.map((item) => ({
+          ...(isRecord(item) ? item : {}),
+          companyId,
+        }));
       }
 
       if (
@@ -82,10 +100,13 @@ export class PrismaService
         params.action === 'updateMany' ||
         params.action === 'deleteMany'
       ) {
-        params.args.where = {
-          AND: [params.args.where ?? {}, { companyId }],
+        const where = isRecord(args.where) ? args.where : {};
+        args.where = {
+          AND: [where, { companyId }],
         };
       }
+
+      params.args = args;
 
       return next(params);
     });

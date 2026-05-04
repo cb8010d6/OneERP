@@ -15,6 +15,7 @@ import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
 import { CreateWorkOrderDto, CreateWorkReportDto } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import type { JwtUserPayload } from '../core/http/request.types';
 
 @ApiTags('生产制造 (Production)')
 @ApiBearerAuth()
@@ -45,7 +46,7 @@ export class ProductionController {
   @ApiOperation({ summary: '提交报工/产量' })
   async submitWorkReport(
     @CurrentCompany() companyId: string,
-    @CurrentUser() user: any,
+    @CurrentUser() user: JwtUserPayload,
     @Param('id') workOrderId: string,
     @Body() dto: CreateWorkReportDto,
   ) {

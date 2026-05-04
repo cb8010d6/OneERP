@@ -24,7 +24,9 @@ export class OrderWorkflowListener {
         {
           sourceLocationId: this.asString(payload.data?.sourceLocationId),
           batchNo: this.asString(payload.data?.batchNo),
-          note: this.asString(payload.data?.shipmentNote) ?? this.asString(payload.data?.note),
+          note:
+            this.asString(payload.data?.shipmentNote) ??
+            this.asString(payload.data?.note),
         },
         payload.operatorId,
       );

@@ -1,0 +1,75 @@
+# ============================================================
+#  Docker Ignore — OneERP
+# ============================================================
+
+# Version control
+.git
+.github
+.gitignore
+
+# Dependencies (will be installed during build)
+node_modules
+**/node_modules
+
+# Build outputs (will be generated during build)
+dist
+**/dist
+.next
+**/.next
+build
+coverage
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Development tools
+.husky
+.commitlintrc.json
+
+# Temporary files
+tmp
+.temp
+*.tmp
+*.local
+
+# Docker files (avoid recursive copy)
+docker-compose.yml
+**/Dockerfile
+**/.dockerignore
+
+# Mobile & Desktop (not needed for server builds)
+apps/mobile
+apps/desktop
+
+# Test files
+**/test
+**/__tests__
+**/*.spec.ts
+**/*.test.ts
+
+# Logs
+*.log
+npm-debug.log*
+
+# Misc
+run_fix*.js
+write_kysely.js
+start.bat
+stop.bat

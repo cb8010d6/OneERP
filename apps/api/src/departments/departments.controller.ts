@@ -13,7 +13,7 @@ import { DepartmentsService } from './departments.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
-import { IsString, IsOptional } from 'class-validator';
+import { IsString } from 'class-validator';
 
 export class CreateDepartmentDto {
   @IsString()
