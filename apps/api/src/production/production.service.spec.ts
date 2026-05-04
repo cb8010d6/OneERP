@@ -58,8 +58,8 @@ describe('ProductionService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    prisma.$transaction.mockImplementation(async (callback: (trx: MockTx) => unknown) =>
-      callback(tx),
+    prisma.$transaction.mockImplementation(
+      (callback: (trx: MockTx) => unknown) => callback(tx),
     );
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
@@ -85,24 +85,40 @@ describe('ProductionService', () => {
       prisma.order.findFirst.mockResolvedValue(order);
       prisma.workOrder.create.mockResolvedValue(workOrder);
 
-      const result = await service.createWorkOrder('c1', {
+      const result: {
+        id: string;
+        workOrderNo: string;
+        orderId: string;
+        productId: string;
+        plannedQty: number;
+        status: string;
+        companyId: string;
+      } = (await service.createWorkOrder('c1', {
         orderId: 'o1',
         productId: 'p1',
         plannedQty: 100,
-      });
+      })) as unknown as {
+        id: string;
+        workOrderNo: string;
+        orderId: string;
+        productId: string;
+        plannedQty: number;
+        status: string;
+        companyId: string;
+      };
 
       expect(result).toEqual(workOrder);
       expect(prisma.order.findFirst).toHaveBeenCalledWith({
         where: { id: 'o1', companyId: 'c1' },
       });
       expect(prisma.workOrder.create).toHaveBeenCalledWith({
-        data: expect.objectContaining({
+        data: {
           orderId: 'o1',
           productId: 'p1',
           plannedQty: 100,
           status: 'PENDING',
           companyId: 'c1',
-        }),
+        },
       });
     });
 
@@ -151,10 +167,10 @@ describe('ProductionService', () => {
       });
       tx.workOrder.update.mockResolvedValue({});
 
-      const result = await service.submitWorkReport('c1', 'wo1', 'u1', {
+      const result = (await service.submitWorkReport('c1', 'wo1', 'u1', {
         goodQty: 20,
         defectQty: 2,
-      });
+      })) as { id: string };
 
       expect(result.id).toBe('wr1');
       expect(tx.workReport.create).toHaveBeenCalled();

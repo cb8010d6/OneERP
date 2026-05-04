@@ -3,6 +3,8 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import type { HelmetOptions } from 'helmet';
+import type { RequestHandler } from 'express';
 import { AllExceptionsFilter } from './core/filters/all-exceptions.filter';
 
 // CORS 白名单：通过环境变量 CORS_ORIGINS 配置（逗号分隔），未配置时使用开发默认值
@@ -19,8 +21,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   // ── 安全响应头（Helmet） ──────────────────────────────────────
+  const helmetMiddleware = helmet as unknown as (
+    options: HelmetOptions,
+  ) => RequestHandler;
   app.use(
-    helmet({
+    helmetMiddleware({
       // Content-Security-Policy: 限制资源加载来源
       contentSecurityPolicy: {
         directives: {
@@ -112,4 +117,4 @@ async function bootstrap() {
   );
   console.log(`Swagger 接口文档地址: http://localhost:8000/api/docs`);
 }
-bootstrap();
+void bootstrap();

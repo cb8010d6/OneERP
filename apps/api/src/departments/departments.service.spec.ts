@@ -68,8 +68,15 @@ describe('DepartmentsService', () => {
 
   describe('update', () => {
     it('should update an existing department', async () => {
-      prisma.department.findFirst.mockResolvedValue({ id: 'd1', companyId: 'c1' });
-      prisma.department.update.mockResolvedValue({ id: 'd1', name: '技术部', companyId: 'c1' });
+      prisma.department.findFirst.mockResolvedValue({
+        id: 'd1',
+        companyId: 'c1',
+      });
+      prisma.department.update.mockResolvedValue({
+        id: 'd1',
+        name: '技术部',
+        companyId: 'c1',
+      });
 
       const result = await service.update('c1', 'd1', { name: '技术部' });
 
@@ -91,7 +98,10 @@ describe('DepartmentsService', () => {
 
   describe('remove', () => {
     it('should delete an existing department', async () => {
-      prisma.department.findFirst.mockResolvedValue({ id: 'd1', companyId: 'c1' });
+      prisma.department.findFirst.mockResolvedValue({
+        id: 'd1',
+        companyId: 'c1',
+      });
       prisma.department.delete.mockResolvedValue({ id: 'd1' });
 
       const result = await service.remove('c1', 'd1');
@@ -105,9 +115,9 @@ describe('DepartmentsService', () => {
     it('should throw NotFoundException when department not found', async () => {
       prisma.department.findFirst.mockResolvedValue(null);
 
-      await expect(
-        service.remove('c1', 'nonexistent'),
-      ).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.remove('c1', 'nonexistent')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
     });
   });
 });

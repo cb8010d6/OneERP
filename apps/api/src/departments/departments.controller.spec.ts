@@ -42,7 +42,9 @@ describe('DepartmentsController', () => {
       const result = await controller.create('c1', { name: '研发部' });
 
       expect(result).toEqual(expected);
-      expect(mockDepartmentsService.create).toHaveBeenCalledWith('c1', { name: '研发部' });
+      expect(mockDepartmentsService.create).toHaveBeenCalledWith('c1', {
+        name: '研发部',
+      });
     });
   });
 
@@ -66,7 +68,9 @@ describe('DepartmentsController', () => {
       const result = await controller.update('c1', 'd1', { name: '技术部' });
 
       expect(result).toEqual(updated);
-      expect(mockDepartmentsService.update).toHaveBeenCalledWith('c1', 'd1', { name: '技术部' });
+      expect(mockDepartmentsService.update).toHaveBeenCalledWith('c1', 'd1', {
+        name: '技术部',
+      });
     });
   });
 

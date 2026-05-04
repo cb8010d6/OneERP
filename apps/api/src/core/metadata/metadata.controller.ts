@@ -65,7 +65,11 @@ export class MetadataController {
     @Param('fieldName') fieldName: string,
     @CurrentCompany() companyId: string,
   ) {
-    return this.metadataService.removeCustomField(modelName, companyId, fieldName);
+    return this.metadataService.removeCustomField(
+      modelName,
+      companyId,
+      fieldName,
+    );
   }
 
   @Get(':modelName')

@@ -192,7 +192,10 @@ export class CrudService {
     );
     ctx = await this.crudHooksService.execute('beforeUpdate', ctx);
 
-    const updated = await model.update({ where: { id }, data: ctx.data ?? data });
+    const updated = await model.update({
+      where: { id },
+      data: ctx.data ?? data,
+    });
     await this.auditService.logCrudAction({
       modelName: normalizedModelName,
       recordId: id,

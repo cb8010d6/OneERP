@@ -31,7 +31,9 @@ describe('EventQueueService', () => {
     jest.clearAllMocks();
     service = new EventQueueService(
       prisma as unknown as ConstructorParameters<typeof EventQueueService>[0],
-      eventEmitter as unknown as ConstructorParameters<typeof EventQueueService>[1],
+      eventEmitter as unknown as ConstructorParameters<
+        typeof EventQueueService
+      >[1],
     );
   });
 
@@ -51,14 +53,17 @@ describe('EventQueueService', () => {
     prisma.eventDlq.updateMany.mockResolvedValue({ count: 1 });
     eventEmitter.emitAsync.mockResolvedValue(undefined);
 
-    const result = await service.retryPending(10);
+    const result: {
+      total: number;
+      results: Array<{ id: string; status: string; error?: string }>;
+    } = await service.retryPending(10);
 
     expect(result.total).toBe(1);
     expect(result.results[0]).toEqual({ id: 'e1', status: 'RESOLVED' });
     expect(prisma.eventDlq.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'e1' },
-        data: expect.objectContaining({ status: 'RESOLVED' }),
+        data: { status: 'RESOLVED' },
       }),
     );
   });
@@ -84,7 +89,10 @@ describe('EventQueueService', () => {
       maxAttempts: 5,
     });
 
-    const result = await service.retryPending(10);
+    const result: {
+      total: number;
+      results: Array<{ id: string; status: string; error?: string }>;
+    } = await service.retryPending(10);
 
     expect(result.total).toBe(1);
     expect(result.results[0].id).toBe('e2');
@@ -93,10 +101,10 @@ describe('EventQueueService', () => {
     expect(prisma.eventDlq.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'e2' },
-        data: expect.objectContaining({
+        data: {
           status: 'PENDING',
           error: 'boom',
-        }),
+        },
       }),
     );
   });

@@ -46,10 +46,14 @@ describe('FinanceService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    prisma.$transaction.mockImplementation(async (cb: (trx: MockTx) => unknown) => cb(tx));
+    prisma.$transaction.mockImplementation((cb: (trx: MockTx) => unknown) =>
+      cb(tx),
+    );
     service = new FinanceService(
       prisma as unknown as ConstructorParameters<typeof FinanceService>[0],
-      eventEmitter as unknown as ConstructorParameters<typeof FinanceService>[1],
+      eventEmitter as unknown as ConstructorParameters<
+        typeof FinanceService
+      >[1],
     );
   });
 
@@ -61,14 +65,24 @@ describe('FinanceService', () => {
     it('should create an invoice when order exists', async () => {
       prisma.order.findFirst.mockResolvedValue({ id: 'o1', companyId: 'c1' });
       prisma.invoice.create.mockResolvedValue({
-        id: 'inv1', invoiceNo: 'INV-123', orderId: 'o1',
-        amount: 1000, status: 'UNPAID', companyId: 'c1',
+        id: 'inv1',
+        invoiceNo: 'INV-123',
+        orderId: 'o1',
+        amount: 1000,
+        status: 'UNPAID',
+        companyId: 'c1',
       });
       prisma.auditLog.create.mockResolvedValue({});
 
-      const result = await service.createInvoice('c1', {
-        orderId: 'o1', amount: 1000, dueDate: '2025-12-31',
-      }, 'u1');
+      const result = await service.createInvoice(
+        'c1',
+        {
+          orderId: 'o1',
+          amount: 1000,
+          dueDate: '2025-12-31',
+        },
+        'u1',
+      );
 
       expect(result.id).toBe('inv1');
       expect(prisma.invoice.create).toHaveBeenCalled();
@@ -79,7 +93,11 @@ describe('FinanceService', () => {
       prisma.order.findFirst.mockResolvedValue(null);
 
       await expect(
-        service.createInvoice('c1', { orderId: 'x', amount: 100, dueDate: '2025-01-01' }, 'u1'),
+        service.createInvoice(
+          'c1',
+          { orderId: 'x', amount: 100, dueDate: '2025-01-01' },
+          'u1',
+        ),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
@@ -100,13 +118,21 @@ describe('FinanceService', () => {
   describe('recordPayment', () => {
     it('should record payment and update invoice to PAID', async () => {
       prisma.invoice.findFirst.mockResolvedValue({
-        id: 'inv1', amount: 1000, status: 'UNPAID', payments: [],
+        id: 'inv1',
+        amount: 1000,
+        status: 'UNPAID',
+        payments: [],
       });
-      tx.payment.create.mockResolvedValue({ id: 'pay1', invoiceId: 'inv1', amount: 1000 });
+      tx.payment.create.mockResolvedValue({
+        id: 'pay1',
+        invoiceId: 'inv1',
+        amount: 1000,
+      });
       tx.invoice.update.mockResolvedValue({});
 
       const result = await service.recordPayment('c1', 'inv1', {
-        amount: 1000, method: 'BANK_TRANSFER',
+        amount: 1000,
+        method: 'BANK_TRANSFER',
       });
 
       expect(result.id).toBe('pay1');
@@ -118,12 +144,18 @@ describe('FinanceService', () => {
 
     it('should set PARTIAL status for partial payment', async () => {
       prisma.invoice.findFirst.mockResolvedValue({
-        id: 'inv1', amount: 1000, status: 'UNPAID', payments: [],
+        id: 'inv1',
+        amount: 1000,
+        status: 'UNPAID',
+        payments: [],
       });
       tx.payment.create.mockResolvedValue({ id: 'pay2', amount: 500 });
       tx.invoice.update.mockResolvedValue({});
 
-      await service.recordPayment('c1', 'inv1', { amount: 500, method: 'ALIPAY' });
+      await service.recordPayment('c1', 'inv1', {
+        amount: 500,
+        method: 'ALIPAY',
+      });
 
       expect(tx.invoice.update).toHaveBeenCalledWith({
         where: { id: 'inv1' },
@@ -143,10 +175,14 @@ describe('FinanceService', () => {
   describe('postInvoice', () => {
     it('should post an invoice and emit event', async () => {
       prisma.invoice.findFirst.mockResolvedValue({
-        id: 'inv1', invoiceNo: 'INV-123', postingStatus: 'DRAFT',
+        id: 'inv1',
+        invoiceNo: 'INV-123',
+        postingStatus: 'DRAFT',
       });
       prisma.invoice.update.mockResolvedValue({
-        id: 'inv1', invoiceNo: 'INV-123', postingStatus: 'POSTED',
+        id: 'inv1',
+        invoiceNo: 'INV-123',
+        postingStatus: 'POSTED',
       });
       prisma.auditLog.create.mockResolvedValue({});
 
@@ -159,13 +195,19 @@ describe('FinanceService', () => {
       });
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'finance.invoice.posted',
-        expect.objectContaining({ companyId: 'c1', invoiceId: 'inv1', taxRate: 0.13 }),
+        expect.objectContaining({
+          companyId: 'c1',
+          invoiceId: 'inv1',
+          taxRate: 0.13,
+        }),
       );
     });
 
     it('should skip posting when already POSTED', async () => {
       prisma.invoice.findFirst.mockResolvedValue({
-        id: 'inv1', invoiceNo: 'INV-123', postingStatus: 'POSTED',
+        id: 'inv1',
+        invoiceNo: 'INV-123',
+        postingStatus: 'POSTED',
       });
 
       const result = await service.postInvoice('c1', 'inv1', 'u1');

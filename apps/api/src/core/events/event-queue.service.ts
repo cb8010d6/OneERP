@@ -11,6 +11,17 @@ interface EnqueueEventInput {
   nextRetryAt?: Date;
 }
 
+interface EventQueueResult {
+  id: string;
+  status: string;
+  error?: string;
+}
+
+interface RetryPendingResult {
+  total: number;
+  results: EventQueueResult[];
+}
+
 @Injectable()
 export class EventQueueService {
   private readonly logger = new Logger(EventQueueService.name);
@@ -48,7 +59,7 @@ export class EventQueueService {
     });
   }
 
-  async dispatchById(id: string) {
+  async dispatchById(id: string): Promise<EventQueueResult> {
     const item = await this.prisma.eventDlq.findUnique({ where: { id } });
     if (!item) {
       return { id, status: 'NOT_FOUND' };
@@ -57,7 +68,7 @@ export class EventQueueService {
     return this.processItem(item);
   }
 
-  async retryPending(limit = 20) {
+  async retryPending(limit = 20): Promise<RetryPendingResult> {
     const now = new Date();
     const items = await this.prisma.eventDlq.findMany({
       where: {
@@ -68,7 +79,7 @@ export class EventQueueService {
       take: limit,
     });
 
-    const results: Array<{ id: string; status: string; error?: string }> = [];
+    const results: EventQueueResult[] = [];
     for (const item of items) {
       results.push(await this.processItem(item));
     }
@@ -76,7 +87,7 @@ export class EventQueueService {
     return { total: items.length, results };
   }
 
-  private async processItem(item: EventDlq) {
+  private async processItem(item: EventDlq): Promise<EventQueueResult> {
     if (item.attempts >= item.maxAttempts) {
       await this.markFailed(item.id, item.error || '超过最大重试次数');
       return { id: item.id, status: 'FAILED', error: item.error };
@@ -115,7 +126,9 @@ export class EventQueueService {
       return { id: item.id, status: 'RESOLVED' };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const latest = await this.prisma.eventDlq.findUnique({ where: { id: item.id } });
+      const latest = await this.prisma.eventDlq.findUnique({
+        where: { id: item.id },
+      });
       const attempts = latest?.attempts ?? item.attempts + 1;
       const maxAttempts = latest?.maxAttempts ?? item.maxAttempts;
 
@@ -140,7 +153,7 @@ export class EventQueueService {
     }
   }
 
-  private async markFailed(id: string, error: string) {
+  private async markFailed(id: string, error: string): Promise<void> {
     await this.prisma.eventDlq.update({
       where: { id },
       data: {
@@ -151,9 +164,12 @@ export class EventQueueService {
     });
   }
 
-  private getNextRetryAt(attempts: number) {
+  private getNextRetryAt(attempts: number): Date {
     const baseMs = 30_000;
-    const capped = Math.min(baseMs * 2 ** Math.max(0, attempts - 1), 30 * 60_000);
+    const capped = Math.min(
+      baseMs * 2 ** Math.max(0, attempts - 1),
+      30 * 60_000,
+    );
     const jitter = Math.floor(Math.random() * 5_000);
     return new Date(Date.now() + capped + jitter);
   }

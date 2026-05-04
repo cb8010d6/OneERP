@@ -2,6 +2,20 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
+import type {
+  AuthUserProfile,
+  AuthenticatedUser,
+} from '../core/http/request.types';
+
+type AuthResult = {
+  accessToken: string;
+  user: AuthUserProfile;
+  companies: Array<{
+    id: string;
+    name: string;
+    role: string;
+  }>;
+};
 
 @Injectable()
 export class AuthService {
@@ -10,16 +24,23 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async validateUser(email: string, pass: string): Promise<any> {
+  async validateUser(
+    email: string,
+    pass: string,
+  ): Promise<AuthenticatedUser | null> {
     const user = await this.usersService.findByEmail(email);
     if (user && (await bcrypt.compare(pass, user.passwordHash))) {
-      const { passwordHash, ...result } = user;
-      return result;
+      return {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        companies: user.companies,
+      };
     }
     return null;
   }
 
-  async login(user: any) {
+  login(user: AuthenticatedUser): AuthResult {
     const payload = { email: user.email, sub: user.id };
     return {
       accessToken: this.jwtService.sign(payload),
@@ -28,21 +49,30 @@ export class AuthService {
         email: user.email,
         name: user.name,
       },
-      companies: user.companies.map((c: any) => ({
-        id: c.company.id,
-        name: c.company.name,
-        role: c.role.name,
+      companies: user.companies.map((membership) => ({
+        id: membership.company.id,
+        name: membership.company.name,
+        role: membership.role.name,
       })),
     };
   }
 
-  async register(email: string, pass: string, name: string) {
-    // Check if duplicate (add error handling in real prod)
+  async register(
+    email: string,
+    pass: string,
+    name: string,
+  ): Promise<AuthResult> {
     const existing = await this.usersService.findByEmail(email);
     if (existing) {
       throw new UnauthorizedException('Email already exists');
     }
+
     const user = await this.usersService.createUser(email, pass, name);
-    return this.login({ ...user, companies: [] });
+    return this.login({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      companies: [],
+    });
   }
 }

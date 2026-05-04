@@ -1,18 +1,29 @@
 import {
   Injectable,
-  UnauthorizedException,
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { Prisma, User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { CreateUserDto } from './dto/user.dto';
+
+type UserWithCompanyMemberships = Prisma.UserGetPayload<{
+  include: {
+    companies: {
+      include: {
+        company: true;
+        role: true;
+      };
+    };
+  };
+}>;
 
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
 
-  async findByEmail(email: string) {
+  async findByEmail(email: string): Promise<UserWithCompanyMemberships | null> {
     return this.prisma.user.findUnique({
       where: { email },
       include: {
@@ -23,7 +34,7 @@ export class UsersService {
     });
   }
 
-  async findById(id: string) {
+  async findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { id } });
   }
 
@@ -78,7 +89,11 @@ export class UsersService {
     });
   }
 
-  async createUser(email: string, passwordPlain: string, name: string) {
+  async createUser(
+    email: string,
+    passwordPlain: string,
+    name: string,
+  ): Promise<User> {
     const saltOrRounds = 10;
     const passwordHash = await bcrypt.hash(passwordPlain, saltOrRounds);
 

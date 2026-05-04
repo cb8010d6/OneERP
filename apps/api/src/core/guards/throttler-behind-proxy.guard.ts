@@ -13,7 +13,7 @@ import { Request } from 'express';
  */
 @Injectable()
 export class ThrottlerBehindProxyGuard extends ThrottlerGuard {
-  protected async getTracker(req: Record<string, any>): Promise<string> {
+  protected getTracker(req: Record<string, any>): string {
     const request = req as Request;
 
     // X-Forwarded-For 可能包含多个 IP（经过多级代理），取第一个即真实客户端 IP

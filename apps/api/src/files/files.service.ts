@@ -21,7 +21,7 @@ export class FilesService {
       secretKey: process.env.MINIO_SECRET_KEY || 'minio_password',
     });
 
-    this.initBucket();
+    void this.initBucket();
   }
   private async initBucket() {
     try {
@@ -31,7 +31,10 @@ export class FilesService {
         this.logger.log(`Bucket ${this.BUCKET_NAME} created successfully`);
       }
     } catch (error) {
-      this.logger.error('Failed to initialize MinIO bucket', error);
+      this.logger.error(
+        'Failed to initialize MinIO bucket',
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
@@ -73,7 +76,11 @@ export class FilesService {
         fileName: file.originalname,
         size: file.size,
       };
-    } catch (err) {
+    } catch (error) {
+      this.logger.error(
+        'Failed to upload drawing file strictly',
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new InternalServerErrorException(
         'Failed to upload drawing file strictly',
       );

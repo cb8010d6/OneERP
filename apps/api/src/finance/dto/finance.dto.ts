@@ -1,5 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, IsNotEmpty, IsNumber, Min, Max } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  Min,
+  Max,
+} from 'class-validator';
 
 export class CreateInvoiceDto {
   @ApiProperty({ description: '关联订单ID' })
@@ -30,7 +37,11 @@ export class CreatePaymentDto {
 }
 
 export class PostInvoiceDto {
-  @ApiProperty({ description: '税率，默认0.13', required: false, example: 0.13 })
+  @ApiProperty({
+    description: '税率，默认0.13',
+    required: false,
+    example: 0.13,
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)

@@ -55,13 +55,25 @@ describe('ProductionController', () => {
 
   describe('getWorkOrders', () => {
     it('should return paginated work orders', async () => {
-      const expected = { data: [], total: 0, page: 1, limit: 20, totalPages: 0 };
+      const expected = {
+        data: [],
+        total: 0,
+        page: 1,
+        limit: 20,
+        totalPages: 0,
+      };
       mockProductionService.getWorkOrders.mockResolvedValue(expected);
 
-      const result = await controller.getWorkOrders('c1', { page: 1, limit: 20 });
+      const result = await controller.getWorkOrders('c1', {
+        page: 1,
+        limit: 20,
+      });
 
       expect(result).toEqual(expected);
-      expect(mockProductionService.getWorkOrders).toHaveBeenCalledWith('c1', { page: 1, limit: 20 });
+      expect(mockProductionService.getWorkOrders).toHaveBeenCalledWith('c1', {
+        page: 1,
+        limit: 20,
+      });
     });
   });
 

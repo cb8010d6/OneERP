@@ -51,7 +51,6 @@ export class InventoryController {
     return this.inventoryService.getCompanyStocks(companyId, pagination);
   }
 
-
   @Get('warehouses')
   @ApiOperation({ summary: '获取公司仓库列表' })
   async getWarehouses(@CurrentCompany() companyId: string) {
@@ -81,7 +80,9 @@ export class InventoryController {
   }
 
   @Get('realtime-ledger')
-  @ApiOperation({ summary: '实时库存台账 – Kysely 聚合，支持树形钻取与低库存预警' })
+  @ApiOperation({
+    summary: '实时库存台账 – Kysely 聚合，支持树形钻取与低库存预警',
+  })
   async getRealtimeLedger(@CurrentCompany() companyId: string) {
     return this.inventoryService.getRealtimeLedger(companyId);
   }
@@ -155,7 +156,11 @@ export class InventoryController {
     @CurrentUser() user: CurrentUserPayload,
     @Body() payload: PurchaseInboundPostingDto,
   ) {
-    return this.inventoryService.postPurchaseInbound(companyId, payload, user.id);
+    return this.inventoryService.postPurchaseInbound(
+      companyId,
+      payload,
+      user.id,
+    );
   }
 
   @Post('posting/sale-order/:orderId/reverse')

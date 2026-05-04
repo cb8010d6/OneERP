@@ -46,13 +46,21 @@ describe('FinanceController', () => {
       const expected = { id: 'inv1', amount: 1000 };
       mockFinanceService.createInvoice.mockResolvedValue(expected);
 
-      const result = await controller.createInvoice('c1', { id: 'u1' }, {
-        orderId: 'o1', amount: 1000, dueDate: '2025-12-31',
-      });
+      const result = await controller.createInvoice(
+        'c1',
+        { id: 'u1' },
+        {
+          orderId: 'o1',
+          amount: 1000,
+          dueDate: '2025-12-31',
+        },
+      );
 
       expect(result).toEqual(expected);
       expect(mockFinanceService.createInvoice).toHaveBeenCalledWith(
-        'c1', { orderId: 'o1', amount: 1000, dueDate: '2025-12-31' }, 'u1',
+        'c1',
+        { orderId: 'o1', amount: 1000, dueDate: '2025-12-31' },
+        'u1',
       );
     });
   });
@@ -74,7 +82,8 @@ describe('FinanceController', () => {
       mockFinanceService.recordPayment.mockResolvedValue(expected);
 
       const result = await controller.recordPayment('c1', 'inv1', {
-        amount: 500, method: 'BANK_TRANSFER',
+        amount: 500,
+        method: 'BANK_TRANSFER',
       });
 
       expect(result).toEqual(expected);
@@ -86,10 +95,17 @@ describe('FinanceController', () => {
       const expected = { id: 'inv1', postingStatus: 'POSTED' };
       mockFinanceService.postInvoice.mockResolvedValue(expected);
 
-      const result = await controller.postInvoice('c1', { id: 'u1' }, 'inv1', { taxRate: 0.13 });
+      const result = await controller.postInvoice('c1', { id: 'u1' }, 'inv1', {
+        taxRate: 0.13,
+      });
 
       expect(result).toEqual(expected);
-      expect(mockFinanceService.postInvoice).toHaveBeenCalledWith('c1', 'inv1', 'u1', 0.13);
+      expect(mockFinanceService.postInvoice).toHaveBeenCalledWith(
+        'c1',
+        'inv1',
+        'u1',
+        0.13,
+      );
     });
   });
 

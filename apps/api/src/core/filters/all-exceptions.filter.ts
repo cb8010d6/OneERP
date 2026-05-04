@@ -8,6 +8,10 @@ import {
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
@@ -27,16 +31,15 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getResponse()
         : 'Internal server error';
 
+    const messageRecord = isRecord(message) ? message : undefined;
+
     // Build the standardized response format
     const errorResponse = {
       statusCode: status,
       timestamp: new Date().toISOString(),
       path: request.url,
-      message:
-        typeof message === 'object'
-          ? (message as any).message || message
-          : message,
-      error: typeof message === 'object' ? (message as any).error : undefined,
+      message: messageRecord?.message ?? message,
+      error: messageRecord?.error,
     };
 
     // Log the error

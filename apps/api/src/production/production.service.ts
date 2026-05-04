@@ -3,11 +3,32 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkOrderDto, CreateWorkReportDto } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 
+interface WorkOrderRecord {
+  id: string;
+  workOrderNo: string;
+  orderId: string;
+  productId: string;
+  plannedQty: number;
+  status: string;
+  companyId: string;
+}
+
+interface WorkReportRecord {
+  id: string;
+  workOrderId: string;
+  workerId: string;
+  goodQty: number;
+  defectQty: number;
+}
+
 @Injectable()
 export class ProductionService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async createWorkOrder(companyId: string, dto: CreateWorkOrderDto) {
+  async createWorkOrder(
+    companyId: string,
+    dto: CreateWorkOrderDto,
+  ): Promise<WorkOrderRecord> {
     const order = await this.prisma.order.findFirst({
       where: { id: dto.orderId, companyId },
     });
@@ -53,7 +74,7 @@ export class ProductionService {
     workOrderId: string,
     workerId: string,
     dto: CreateWorkReportDto,
-  ) {
+  ): Promise<WorkReportRecord> {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id: workOrderId, companyId },
     });

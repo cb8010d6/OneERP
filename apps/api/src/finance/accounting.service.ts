@@ -46,7 +46,9 @@ export class AccountingService {
     const unitCost = Number(payload.unitCost ?? material?.unitPrice ?? 0);
     const amount = this.round2(unitCost * Number(payload.quantity ?? 0));
     if (amount <= 0) {
-      this.logger.warn(`跳过零成本库存出库凭证: material=${payload.materialId}`);
+      this.logger.warn(
+        `跳过零成本库存出库凭证: material=${payload.materialId}`,
+      );
       return null;
     }
 
@@ -144,7 +146,7 @@ export class AccountingService {
 
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(
-        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
         `journal-entry-${input.companyId}`,
       );
 
@@ -155,8 +157,12 @@ export class AccountingService {
       }));
 
       this.validateLines(lines);
-      const totalDebit = this.round2(lines.reduce((sum, line) => sum + line.debit, 0));
-      const totalCredit = this.round2(lines.reduce((sum, line) => sum + line.credit, 0));
+      const totalDebit = this.round2(
+        lines.reduce((sum, line) => sum + line.debit, 0),
+      );
+      const totalCredit = this.round2(
+        lines.reduce((sum, line) => sum + line.credit, 0),
+      );
 
       if (totalDebit !== totalCredit) {
         throw new BadRequestException(
@@ -240,7 +246,11 @@ export class AccountingService {
   private async ensureDefaultMasterData(companyId: string) {
     await this.prisma.journal.upsert({
       where: { companyId_code: { companyId, code: 'GEN' } },
-      update: { name: 'General Journal', type: JournalType.GENERAL, isActive: true },
+      update: {
+        name: 'General Journal',
+        type: JournalType.GENERAL,
+        isActive: true,
+      },
       create: {
         companyId,
         code: 'GEN',
@@ -287,7 +297,10 @@ export class AccountingService {
       if (line.debit < 0 || line.credit < 0) {
         throw new BadRequestException('分录金额不能为负数');
       }
-      if ((line.debit === 0 && line.credit === 0) || (line.debit > 0 && line.credit > 0)) {
+      if (
+        (line.debit === 0 && line.credit === 0) ||
+        (line.debit > 0 && line.credit > 0)
+      ) {
         throw new BadRequestException('每行分录必须仅填写借方或贷方');
       }
     }
