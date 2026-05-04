@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkOrderDto, CreateWorkReportDto } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 
-interface WorkOrderRecord {
+export interface WorkOrderRecord {
   id: string;
   workOrderNo: string;
   orderId: string;
@@ -13,7 +13,7 @@ interface WorkOrderRecord {
   companyId: string;
 }
 
-interface WorkReportRecord {
+export interface WorkReportRecord {
   id: string;
   workOrderId: string;
   workerId: string;

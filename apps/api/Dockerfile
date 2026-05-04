@@ -10,26 +10,24 @@ WORKDIR /app
 # Install build dependencies for native modules (bcrypt)
 RUN apk add --no-cache python3 make g++
 
-# Copy root package files for workspace resolution
-COPY package.json package-lock.json ./
-
 # Copy API package files
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
 
-# Install ALL dependencies (including devDependencies for build)
-RUN npm ci
+# Install API dependencies inside the API package directory
+RUN npm ci --prefix apps/api
 
 # Copy Prisma schema first (for layer caching)
 COPY apps/api/prisma ./apps/api/prisma
 
 # Generate Prisma Client
-RUN npx prisma generate --schema=./apps/api/prisma/schema.prisma
+WORKDIR /app/apps/api
+RUN npx prisma generate --schema=./prisma/schema.prisma
 
 # Copy API source code
-COPY apps/api ./apps/api
+COPY apps/api ./
 
 # Build the NestJS application
-RUN npm run build --prefix apps/api
+RUN npm run build
 
 # ---- Stage 2: Production ----
 FROM node:22-alpine AS production
@@ -39,18 +37,15 @@ WORKDIR /app
 # Install runtime dependencies for native modules
 RUN apk add --no-cache tini
 
-# Copy root package files
-COPY package.json package-lock.json ./
-
 # Copy API package files
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
 
 # Install production dependencies only
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --prefix apps/api
 
 # Copy Prisma schema and generated client
 COPY apps/api/prisma ./apps/api/prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/apps/api/node_modules/.prisma ./apps/api/node_modules/.prisma
 
 # Copy built application
 COPY --from=builder /app/apps/api/dist ./apps/api/dist

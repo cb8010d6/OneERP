@@ -11,13 +11,13 @@ interface EnqueueEventInput {
   nextRetryAt?: Date;
 }
 
-interface EventQueueResult {
+export interface EventQueueResult {
   id: string;
   status: string;
   error?: string;
 }
 
-interface RetryPendingResult {
+export interface RetryPendingResult {
   total: number;
   results: EventQueueResult[];
 }

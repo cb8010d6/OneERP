@@ -56,9 +56,9 @@ interface WorkflowDefinitionRecord {
   transitions: WorkflowTransitionRecord[];
 }
 
-interface WorkflowTargetRecord {
+export interface WorkflowTargetRecord {
   id: string;
-  [key: string]: string | null | undefined;
+  [key: string]: unknown;
 }
 
 type WorkflowDelegateName = 'order' | 'workOrder' | 'invoice';
@@ -112,7 +112,7 @@ interface WorkflowTransitionTxResult {
   matchedTransition: WorkflowTransitionRecord;
 }
 
-interface WorkflowTransitionResult {
+export interface WorkflowTransitionResult {
   modelName: string;
   recordId: string;
   action: string;
@@ -225,10 +225,7 @@ export class WorkflowService {
     }
 
     const { updatedRecord, matchedTransition }: WorkflowTransitionTxResult =
-      await this.prisma.$transaction(
-        async (
-          tx: WorkflowTransitionTransaction,
-        ): Promise<WorkflowTransitionTxResult> => {
+      await this.prisma.$transaction(async (tx: any): Promise<WorkflowTransitionTxResult> => {
           const txDelegate = tx[target.delegate as WorkflowDelegateName];
 
           if (!txDelegate) {

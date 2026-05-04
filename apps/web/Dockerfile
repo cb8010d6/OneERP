@@ -7,14 +7,11 @@ FROM node:22-alpine AS deps
 
 WORKDIR /app
 
-# Copy root package files
-COPY package.json package-lock.json ./
-
 # Copy Web package files
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 
-# Install ALL dependencies (including devDependencies for build)
-RUN npm ci
+# Install Web dependencies inside the Web package directory
+RUN npm ci --prefix apps/web
 
 # ---- Stage 2: Build ----
 FROM node:22-alpine AS builder
@@ -22,13 +19,11 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # Copy dependencies from deps stage
-COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 
-# Copy root config files
-COPY package.json ./
+# Copy Web package files and source code
+COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 
-# Copy Web source code
 COPY apps/web ./apps/web
 
 # Set build-time environment variables
