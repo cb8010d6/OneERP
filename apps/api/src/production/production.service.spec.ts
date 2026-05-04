@@ -107,19 +107,31 @@ describe('ProductionService', () => {
         companyId: string;
       };
 
+      type CreateCall = {
+        data: {
+          orderId: string;
+          productId: string;
+          plannedQty: number;
+          status: string;
+          companyId: string;
+          workOrderNo: string;
+        };
+      };
+
+      const createCalls = prisma.workOrder.create.mock
+        .calls as unknown as Array<[CreateCall]>;
+      const createCall = createCalls[0]?.[0];
+
       expect(result).toEqual(workOrder);
       expect(prisma.order.findFirst).toHaveBeenCalledWith({
         where: { id: 'o1', companyId: 'c1' },
       });
-      expect(prisma.workOrder.create).toHaveBeenCalledWith({
-        data: {
-          orderId: 'o1',
-          productId: 'p1',
-          plannedQty: 100,
-          status: 'PENDING',
-          companyId: 'c1',
-        },
-      });
+      expect(createCall.data.orderId).toBe('o1');
+      expect(createCall.data.productId).toBe('p1');
+      expect(createCall.data.plannedQty).toBe(100);
+      expect(createCall.data.status).toBe('PENDING');
+      expect(createCall.data.companyId).toBe('c1');
+      expect(createCall.data.workOrderNo).toMatch(/^WO-/);
     });
 
     it('should throw NotFoundException when order not found', async () => {

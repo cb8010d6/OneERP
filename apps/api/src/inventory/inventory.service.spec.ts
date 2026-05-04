@@ -201,14 +201,20 @@ describe('InventoryService', () => {
       'u1',
     )) as unknown as { id: string };
 
+    type CreateCall = {
+      data: {
+        batchNo: string;
+      };
+    };
+
+    const createCalls = tx.inventoryTransaction.create.mock
+      .calls as unknown as Array<[CreateCall]>;
+    const createCall = createCalls[0]?.[0];
+
     expect(result.id).toBe('t1');
     expect(tx.stockQuant.findFirst).toHaveBeenCalledTimes(2);
     expect(tx.stockQuant.updateMany).toHaveBeenCalledTimes(2);
-    expect(tx.inventoryTransaction.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { batchNo: 'B2' },
-      }),
-    );
+    expect(createCall.data.batchNo).toBe('B2');
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       'inventory.stock_depleted',
       expect.objectContaining({ materialId: 'm1', quantity: 2 }),

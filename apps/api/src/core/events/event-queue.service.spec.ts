@@ -58,14 +58,22 @@ describe('EventQueueService', () => {
       results: Array<{ id: string; status: string; error?: string }>;
     } = await service.retryPending(10);
 
+    type UpdateCall = {
+      where: { id: string };
+      data: { status: string; error: string; nextRetryAt: null };
+    };
+
+    const updateCalls = prisma.eventDlq.update.mock.calls as unknown as Array<
+      [UpdateCall]
+    >;
+    const updateCall = updateCalls[0]?.[0];
+
     expect(result.total).toBe(1);
     expect(result.results[0]).toEqual({ id: 'e1', status: 'RESOLVED' });
-    expect(prisma.eventDlq.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'e1' },
-        data: { status: 'RESOLVED' },
-      }),
-    );
+    expect(updateCall.where).toEqual({ id: 'e1' });
+    expect(updateCall.data.status).toBe('RESOLVED');
+    expect(updateCall.data.error).toBe('');
+    expect(updateCall.data.nextRetryAt).toBeNull();
   });
 
   it('keeps item pending with next retry when publish fails and attempts remain', async () => {
@@ -94,18 +102,27 @@ describe('EventQueueService', () => {
       results: Array<{ id: string; status: string; error?: string }>;
     } = await service.retryPending(10);
 
+    type UpdateCall = {
+      where: { id: string };
+      data: {
+        status: string;
+        error: string;
+        nextRetryAt: Date | null;
+      };
+    };
+
+    const updateCalls = prisma.eventDlq.update.mock.calls as unknown as Array<
+      [UpdateCall]
+    >;
+    const updateCall = updateCalls[0]?.[0];
+
     expect(result.total).toBe(1);
     expect(result.results[0].id).toBe('e2');
     expect(result.results[0].status).toBe('PENDING');
     expect(result.results[0].error).toBe('boom');
-    expect(prisma.eventDlq.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 'e2' },
-        data: {
-          status: 'PENDING',
-          error: 'boom',
-        },
-      }),
-    );
+    expect(updateCall.where).toEqual({ id: 'e2' });
+    expect(updateCall.data.status).toBe('PENDING');
+    expect(updateCall.data.error).toBe('boom');
+    expect(updateCall.data.nextRetryAt).toBeInstanceOf(Date);
   });
 });
