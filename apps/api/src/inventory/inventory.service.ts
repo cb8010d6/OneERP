@@ -645,6 +645,12 @@ export class InventoryService {
           eb.fn.count('sq.id').as('batchCount'),
         ])
         .where('l.companyId', '=', companyId)
+        .where((eb) =>
+          eb.or([
+            eb('m.companyId', '=', companyId),
+            eb('m.companyId', 'is', null),
+          ]),
+        )
         .groupBy([
           'sq.materialId',
           'm.sku',

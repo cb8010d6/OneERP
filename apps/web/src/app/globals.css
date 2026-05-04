@@ -66,6 +66,36 @@
   --sidebar-collapsed: 48px;
 }
 
+.dark {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+
+  --color-primary:       #60a5fa;
+  --color-primary-hover: #3b82f6;
+  --color-primary-light: #1e293b;
+
+  --color-surface-0: #0f172a;
+  --color-surface-1: #111827;
+  --color-surface-2: #1f2937;
+
+  --color-border:       #243041;
+  --color-border-light: #1f2a3a;
+
+  --color-text-primary:   #e2e8f0;
+  --color-text-secondary: #cbd5e1;
+  --color-text-muted:     #94a3b8;
+
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger:  #f87171;
+  --color-info:    #38bdf8;
+
+  --color-success-light: #052e1b;
+  --color-warning-light: #3b2a09;
+  --color-danger-light:  #3b0a0a;
+  --color-info-light:    #082f49;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);

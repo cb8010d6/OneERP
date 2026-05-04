@@ -85,7 +85,7 @@
 
 - [x] 针对出入库流水，避免使用深层 Prisma 嵌套分页。通过我们此前已经封装的 `KyselyService` 专属连接池，编写原生的 Postgres 聚合 SQL：
   `SELECT productId, locationId, SUM(quantity) as net_qty FROM stock_moves WHERE ... GROUP BY productId, locationId`
-- [x] 将其打包暴露为 `GET /api/v1/inventory/realtime-ledger` 接口用于高频数据大屏读取。
+- [x] 将其打包暴露为 `GET /api/inventory/realtime-ledger` 接口用于高频数据大屏读取。
 
 ---
 

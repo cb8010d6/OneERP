@@ -26,7 +26,7 @@
 
 * **高密度 ERP CSS 主题**：在 `apps/web/src/app/globals.css` 中落地全套企业级变量（紧凑间距、高密度行高、语义状态色、ERP 组件基础样式），对标 Linear/Notion 数据密度。
 * **StockLocation 树形结构**：在 `schema.prisma` 中为 `StockLocation` 补全 `parentId` 自引用关联，支持 `仓库→货架区→具体库位` 的多级树形管理。
-* **Kysely 实时台账 API**：`GET /api/v1/inventory/realtime-ledger` 已接入 `KyselyService` 原生聚合 SQL，按物料×库位汇总 `totalQty` / `stockValue`，并在服务层计算 `isLow` / `isOut` 低库存标志。
+* **Kysely 实时台账 API**：`GET /api/inventory/realtime-ledger` 已接入 `KyselyService` 原生聚合 SQL，按物料×库位汇总 `totalQty` / `stockValue`，并在服务层计算 `isLow` / `isOut` 低库存标志。
 * **库存台账前端仪表盘**：重构 `apps/web/src/app/dashboard/inventory/page.tsx` 为完整的实时库存看板，集成快速过滤（低库存/零库存）、分类筛选、关键字搜索和红绿色预警着色。
 
 ### 🚧 阶段三 (剩余)：AI 功能深度集成（接下来即将进入）
