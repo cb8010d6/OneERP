@@ -42,6 +42,12 @@ const COMPANY_SCOPED_MODELS = new Set([
   'EventDlq',
   'AuditLog',
   'Department',
+  'PurchaseOrder',
+  'PurchaseOrderLine',
+  'GoodsReceipt',
+  'GoodsReceiptLine',
+  'StockPicking',
+  'StockMove',
 ]);
 
 @Injectable()

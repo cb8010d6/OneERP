@@ -39,6 +39,12 @@ function main() {
       'JournalEntry',
       'JournalEntryLine',
       'Account',
+      'PurchaseOrder',
+      'PurchaseOrderLine',
+      'GoodsReceipt',
+      'GoodsReceiptLine',
+      'StockPicking',
+      'StockMove',
     ].includes(model.name),
   );
 

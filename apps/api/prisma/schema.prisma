@@ -26,25 +26,28 @@ model Company {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  users       UserCompanyRole[]
-  departments Department[]
-  orders      Order[]
-  warehouses  Warehouse[]
-  locations   StockLocation[]
-  materials   Material[]
-  partners    Partner[]
-  products    Product[]
-  categories  ProductCategory[]
-  boms        Bom[]
-  fileRecords FileRecord[]
-  workflows   Workflow[]
-  customFields CustomFieldDefinition[]
-  auditLogs   AuditLog[]
-  accounts    Account[]
-  journals    Journal[]
-  journalEntries JournalEntry[]
+  users           UserCompanyRole[]
+  departments     Department[]
+  orders          Order[]
+  warehouses      Warehouse[]
+  locations       StockLocation[]
+  materials       Material[]
+  partners        Partner[]
+  products        Product[]
+  categories      ProductCategory[]
+  boms            Bom[]
+  fileRecords     FileRecord[]
+  workflows       Workflow[]
+  customFields    CustomFieldDefinition[]
+  auditLogs       AuditLog[]
+  accounts        Account[]
+  journals        Journal[]
+  journalEntries  JournalEntry[]
   eventDlqRecords EventDlq[]
-  taxCodes    TaxCode[]
+  taxCodes        TaxCode[]
+  purchaseOrders  PurchaseOrder[]
+  goodsReceipts   GoodsReceipt[]
+  stockPickings   StockPicking[]
 }
 
 enum PartnerType {
@@ -77,6 +80,51 @@ enum JournalType {
 enum EntryPostingStatus {
   DRAFT
   POSTED
+  CANCELLED
+}
+
+// ==========================================
+// Purchase Module Enums
+// ==========================================
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  CONFIRMED
+  CANCELLED
+}
+
+// ==========================================
+// Stock Execution Enums
+// ==========================================
+
+enum PickingType {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum PickingStatus {
+  DRAFT
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+enum MoveStatus {
+  DRAFT
+  WAITING
+  CONFIRMED
+  DONE
   CANCELLED
 }
 
@@ -127,23 +175,25 @@ model Department {
 }
 
 model Partner {
-  id        String      @id @default(uuid())
-  code      String?
-  name      String
-  type      PartnerType @default(CUSTOMER)
-  contact   String?
-  phone     String?
-  email     String?
-  taxId     String?
-  address   String?
+  id               String      @id @default(uuid())
+  code             String?
+  name             String
+  type             PartnerType @default(CUSTOMER)
+  contact          String?
+  phone            String?
+  email            String?
+  taxId            String?
+  address          String?
   customAttributes Json?
-  isActive  Boolean     @default(true)
-  companyId String
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  isActive         Boolean     @default(true)
+  companyId        String
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  company Company @relation(fields: [companyId], references: [id])
-  orders  Order[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  orders            Order[]
+  purchaseOrders    PurchaseOrder[]
+  goodsReceipts     GoodsReceipt[]
   journalEntryLines JournalEntryLine[]
 
   @@unique([companyId, code])
@@ -163,11 +213,11 @@ model TaxCode {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  company   Company  @relation(fields: [companyId], references: [id])
-  account   Account? @relation(fields: [accountId], references: [id])
-  orders    Order[]
+  company    Company     @relation(fields: [companyId], references: [id])
+  account    Account?    @relation(fields: [accountId], references: [id])
+  orders     Order[]
   orderItems OrderItem[]
-  invoices  Invoice[]
+  invoices   Invoice[]
 
   @@unique([companyId, code])
   @@index([companyId, active])
@@ -179,20 +229,20 @@ model TaxCode {
 // ==========================================
 
 model Order {
-  id           String    @id @default(uuid())
-  orderNo      String    @unique
-  partnerId    String
-  salesId      String // 挂单销售员
-  companyId    String
-  status       String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
-  totalAmount  Float     @default(0)
-  subTotal     Float     @default(0)
-  taxTotal     Float     @default(0)
-  taxCodeId    String?
-  aiSummary    Json? // 存放 AI 抓取的客户需求 JSON 结构
+  id               String    @id @default(uuid())
+  orderNo          String    @unique
+  partnerId        String
+  salesId          String // 挂单销售员
+  companyId        String
+  status           String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
+  totalAmount      Float     @default(0)
+  subTotal         Float     @default(0)
+  taxTotal         Float     @default(0)
+  taxCodeId        String?
+  aiSummary        Json? // 存放 AI 抓取的客户需求 JSON 结构
   customAttributes Json?
-  expectedDate DateTime? // 预计交付日期
-  notes        String? // 备注
+  expectedDate     DateTime? // 预计交付日期
+  notes            String? // 备注
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -207,20 +257,77 @@ model Order {
 }
 
 model OrderItem {
-  id         String @id @default(uuid())
-  orderId    String
-  productId  String // 关联的产品/模型名称
-  quantity   Int
-  unitPrice  Float
-  totalPrice Float
-  subTotal   Float   @default(0)
-  taxAmount  Float   @default(0)
-  taxRate    Float   @default(0)
-  taxCodeId  String?
+  id               String  @id @default(uuid())
+  orderId          String
+  productId        String // 关联的产品/模型名称
+  quantity         Int
+  unitPrice        Float
+  totalPrice       Float
+  subTotal         Float   @default(0)
+  taxAmount        Float   @default(0)
+  taxRate          Float   @default(0)
+  taxCodeId        String?
   customAttributes Json?
 
   order   Order    @relation(fields: [orderId], references: [id])
   taxCode TaxCode? @relation(fields: [taxCodeId], references: [id])
+}
+
+// ==========================================
+// Purchase Management
+// ==========================================
+
+model PurchaseOrder {
+  id           String              @id @default(uuid())
+  orderNo      String              @unique
+  partnerId    String
+  orderDate    DateTime            @default(now())
+  expectedDate DateTime?
+  status       PurchaseOrderStatus @default(DRAFT)
+  currency     String              @default("CNY")
+  subTotal     Float               @default(0)
+  taxTotal     Float               @default(0)
+  totalAmount  Float               @default(0)
+  notes        String?
+  companyId    String
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  partner       Partner             @relation(fields: [partnerId], references: [id])
+  company       Company             @relation(fields: [companyId], references: [id])
+  lines         PurchaseOrderLine[]
+  goodsReceipts GoodsReceipt[]
+
+  @@index([companyId, partnerId])
+  @@index([companyId, status])
+}
+
+model PurchaseOrderLine {
+  id               String   @id @default(uuid())
+  orderId          String
+  lineNo           Int
+  materialId       String?
+  productId        String?
+  description      String?
+  quantity         Float
+  receivedQuantity Float    @default(0)
+  unitPrice        Float
+  taxRate          Float    @default(0)
+  taxAmount        Float    @default(0)
+  subTotal         Float    @default(0)
+  totalAmount      Float    @default(0)
+  companyId        String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  order             PurchaseOrder      @relation(fields: [orderId], references: [id])
+  material          Material?          @relation(fields: [materialId], references: [id])
+  product           Product?           @relation(fields: [productId], references: [id])
+  goodsReceiptLines GoodsReceiptLine[]
+
+  @@unique([orderId, lineNo])
+  @@index([materialId])
+  @@index([productId])
 }
 
 // ==========================================
@@ -233,8 +340,8 @@ model Warehouse {
   type      String // "MATERIAL", "FINISHED", "PART"
   companyId String
 
-  company              Company                @relation(fields: [companyId], references: [id])
-  locations            StockLocation[]
+  company   Company         @relation(fields: [companyId], references: [id])
+  locations StockLocation[]
 }
 
 model StockLocation {
@@ -245,7 +352,7 @@ model StockLocation {
   isActive    Boolean  @default(true)
   companyId   String
   warehouseId String?
-  parentId    String?  // 自引用父库位，支持 华南仓/货架区/A01层 层次结构
+  parentId    String? // 自引用父库位，支持 华南仓/货架区/A01层 层次结构
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -256,6 +363,8 @@ model StockLocation {
   quants               StockQuant[]
   outgoingTransactions InventoryTransaction[] @relation("StockMoveSourceLocation")
   incomingTransactions InventoryTransaction[] @relation("StockMoveDestinationLocation")
+  sourceMoves          StockMove[]            @relation("StockMoveSourceLocation")
+  destMoves            StockMove[]            @relation("StockMoveDestLocation")
 
   @@unique([companyId, code])
   @@index([companyId, warehouseId])
@@ -278,6 +387,9 @@ model Material {
   inventoryTransactions InventoryTransaction[]
   products              Product[]
   bomLines              BomLine[]
+  purchaseOrderLines    PurchaseOrderLine[]
+  goodsReceiptLines     GoodsReceiptLine[]
+  stockMoves            StockMove[]
 }
 
 model ProductCategory {
@@ -299,24 +411,26 @@ model ProductCategory {
 }
 
 model Product {
-  id          String      @id @default(uuid())
-  sku         String
-  name        String
-  type        ProductType @default(STOCKABLE)
-  categoryId  String?
-  materialId  String?
-  uom         String      @default("pcs")
-  description String?
+  id               String      @id @default(uuid())
+  sku              String
+  name             String
+  type             ProductType @default(STOCKABLE)
+  categoryId       String?
+  materialId       String?
+  uom              String      @default("pcs")
+  description      String?
   customAttributes Json?
-  isActive    Boolean     @default(true)
-  companyId   String
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  isActive         Boolean     @default(true)
+  companyId        String
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  company  Company          @relation(fields: [companyId], references: [id])
-  category ProductCategory? @relation(fields: [categoryId], references: [id])
-  material Material?        @relation(fields: [materialId], references: [id])
-  boms     Bom[]
+  company           Company             @relation(fields: [companyId], references: [id])
+  category          ProductCategory?    @relation(fields: [categoryId], references: [id])
+  material          Material?           @relation(fields: [materialId], references: [id])
+  boms              Bom[]
+  PurchaseOrderLine PurchaseOrderLine[]
+  GoodsReceiptLine  GoodsReceiptLine[]
 
   @@unique([companyId, sku])
   @@index([companyId, categoryId])
@@ -341,19 +455,19 @@ model Bom {
 }
 
 model CustomFieldDefinition {
-  id                   String          @id @default(uuid())
-  modelName            String
-  fieldName            String
-  label                String
-  type                 CustomFieldType
-  required             Boolean         @default(false)
-  referenceModel       String?
-  referenceLabelField  String?
-  referenceValueField  String?
+  id                     String          @id @default(uuid())
+  modelName              String
+  fieldName              String
+  label                  String
+  type                   CustomFieldType
+  required               Boolean         @default(false)
+  referenceModel         String?
+  referenceLabelField    String?
+  referenceValueField    String?
   referenceRelationField String?
-  companyId            String
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  companyId              String
+  createdAt              DateTime        @default(now())
+  updatedAt              DateTime        @updatedAt
 
   company Company @relation(fields: [companyId], references: [id])
 
@@ -377,11 +491,12 @@ model BomLine {
 }
 
 model StockQuant {
-  id          String @id @default(uuid())
-  locationId  String
-  materialId  String
-  batchNo     String
-  quantity    Float
+  id               String @id @default(uuid())
+  locationId       String
+  materialId       String
+  batchNo          String
+  quantity         Float
+  reservedQuantity Float  @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -391,6 +506,111 @@ model StockQuant {
 
   @@unique([locationId, materialId, batchNo])
   @@index([materialId])
+}
+
+// ==========================================
+// Goods Receipt
+// ==========================================
+
+model GoodsReceipt {
+  id              String             @id @default(uuid())
+  receiptNo       String             @unique
+  purchaseOrderId String?
+  partnerId       String?
+  receiptDate     DateTime           @default(now())
+  status          GoodsReceiptStatus @default(DRAFT)
+  notes           String?
+  companyId       String
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  purchaseOrder PurchaseOrder?     @relation(fields: [purchaseOrderId], references: [id])
+  partner       Partner?           @relation(fields: [partnerId], references: [id])
+  company       Company            @relation(fields: [companyId], references: [id])
+  lines         GoodsReceiptLine[]
+
+  @@index([companyId, purchaseOrderId])
+  @@index([companyId, status])
+}
+
+model GoodsReceiptLine {
+  id                  String   @id @default(uuid())
+  receiptId           String
+  lineNo              Int
+  purchaseOrderLineId String?
+  materialId          String?
+  productId           String?
+  quantity            Float
+  batchNo             String?
+  destLocationId      String?
+  companyId           String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  receipt           GoodsReceipt       @relation(fields: [receiptId], references: [id])
+  purchaseOrderLine PurchaseOrderLine? @relation(fields: [purchaseOrderLineId], references: [id])
+  material          Material?          @relation(fields: [materialId], references: [id])
+  product           Product?           @relation(fields: [productId], references: [id])
+
+  @@unique([receiptId, lineNo])
+  @@index([purchaseOrderLineId])
+  @@index([materialId])
+}
+
+// ==========================================
+// Stock Picking & Move
+// ==========================================
+
+model StockPicking {
+  id            String        @id @default(uuid())
+  pickingNo     String        @unique
+  type          PickingType
+  referenceType String?
+  referenceId   String?
+  scheduledDate DateTime?
+  completedDate DateTime?
+  status        PickingStatus @default(DRAFT)
+  notes         String?
+  companyId     String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  company Company     @relation(fields: [companyId], references: [id])
+  moves   StockMove[]
+
+  @@index([companyId, status])
+  @@index([companyId, type])
+  @@index([referenceType, referenceId])
+}
+
+model StockMove {
+  id               String     @id @default(uuid())
+  pickingId        String
+  lineNo           Int
+  materialId       String
+  sourceLocationId String?
+  destLocationId   String?
+  quantity         Float
+  quantityDone     Float      @default(0)
+  batchNo          String?
+  unitCost         Float      @default(0)
+  totalCost        Float      @default(0)
+  status           MoveStatus @default(DRAFT)
+  companyId        String
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  picking        StockPicking           @relation(fields: [pickingId], references: [id])
+  material       Material               @relation(fields: [materialId], references: [id])
+  sourceLocation StockLocation?         @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation   StockLocation?         @relation("StockMoveDestLocation", fields: [destLocationId], references: [id])
+  transactions   InventoryTransaction[]
+
+  @@unique([pickingId, lineNo])
+  @@index([materialId])
+  @@index([sourceLocationId])
+  @@index([destLocationId])
+  @@index([companyId, status])
 }
 
 // ==========================================
@@ -412,26 +632,29 @@ model FileRecord {
 }
 
 model InventoryTransaction {
-  id                String   @id @default(uuid())
-  type              String // "INBOUND", "OUTBOUND", "TRANSFER"
-  materialId        String
-  sourceLocationId  String?
-  destLocationId    String?
-  quantity          Float
-  batchNo           String?
-  operatorId        String
-  companyId         String
-  referenceNo       String? // 关联单号（订单号/采购号等）
-  note              String?
-  createdAt         DateTime @default(now())
+  id               String   @id @default(uuid())
+  type             String // "INBOUND", "OUTBOUND", "TRANSFER"
+  materialId       String
+  sourceLocationId String?
+  destLocationId   String?
+  quantity         Float
+  batchNo          String?
+  operatorId       String
+  companyId        String
+  referenceNo      String? // 关联单号（订单号/采购号等）
+  stockMoveId      String? // 关联库存执行单据行
+  note             String?
+  createdAt        DateTime @default(now())
 
-  material        Material       @relation(fields: [materialId], references: [id])
-  sourceLocation  StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
-  destLocation    StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
+  material       Material       @relation(fields: [materialId], references: [id])
+  sourceLocation StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation   StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
+  stockMove      StockMove?     @relation(fields: [stockMoveId], references: [id])
 
   @@index([companyId, materialId])
   @@index([sourceLocationId])
   @@index([destLocationId])
+  @@index([stockMoveId])
 }
 
 model Workflow {
@@ -444,7 +667,7 @@ model Workflow {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  company     Company?              @relation(fields: [companyId], references: [id])
+  company     Company?             @relation(fields: [companyId], references: [id])
   states      WorkflowState[]
   transitions WorkflowTransition[]
 
@@ -518,18 +741,18 @@ model WorkReport {
 }
 
 model Invoice {
-  id         String    @id @default(uuid())
-  invoiceNo  String    @unique
-  orderId    String
-  amount     Float
-  subTotal   Float    @default(0)
-  taxAmount  Float    @default(0)
-  taxCodeId  String?
-  status     String // "UNPAID", "PARTIAL", "PAID"
+  id            String             @id @default(uuid())
+  invoiceNo     String             @unique
+  orderId       String
+  amount        Float
+  subTotal      Float              @default(0)
+  taxAmount     Float              @default(0)
+  taxCodeId     String?
+  status        String // "UNPAID", "PARTIAL", "PAID"
   postingStatus EntryPostingStatus @default(DRAFT)
-  companyId  String
-  dueDate    DateTime?
-  issuedDate DateTime  @default(now())
+  companyId     String
+  dueDate       DateTime?
+  issuedDate    DateTime           @default(now())
 
   order    Order     @relation(fields: [orderId], references: [id])
   taxCode  TaxCode?  @relation(fields: [taxCodeId], references: [id])
@@ -557,9 +780,9 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  parent   Account?  @relation("AccountTree", fields: [parentId], references: [id])
-  children Account[] @relation("AccountTree")
-  company  Company   @relation(fields: [companyId], references: [id])
+  parent   Account?           @relation("AccountTree", fields: [parentId], references: [id])
+  children Account[]          @relation("AccountTree")
+  company  Company            @relation(fields: [companyId], references: [id])
   lines    JournalEntryLine[]
   taxCodes TaxCode[]
 
@@ -628,18 +851,18 @@ model JournalEntryLine {
 }
 
 model EventDlq {
-  id             String   @id @default(uuid())
+  id             String    @id @default(uuid())
   eventName      String
   idempotencyKey String?
   payload        Json
   error          String
-  attempts       Int      @default(1)
-  maxAttempts    Int      @default(5)
+  attempts       Int       @default(1)
+  maxAttempts    Int       @default(5)
   nextRetryAt    DateTime?
-  status         String   @default("PENDING")
+  status         String    @default("PENDING")
   companyId      String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   company Company? @relation(fields: [companyId], references: [id])
 
