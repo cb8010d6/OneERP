@@ -20,8 +20,8 @@ OneERP 项目已经完成了**扎实的技术基础架构**（元数据驱动、
 | **采购模块** | **0%** | ❌ **完全缺失** |
 | 生产管理 | 50% | ⚠️ 仅有工单 |
 | 财务会计 | 40% | ⚠️ 记账存在但不完整 |
-| **税务引擎** | **5%** | ❌ **硬编码 13%** |
-| AI 功能 | 20% | ⚠️ 仅 UI，逻辑未接入 |
+| **税务引擎** | **60%** | ✅ **TaxCode 模型 + 动态税码解析已落地** |
+| AI 功能 | 65% | ✅ LLM Function Calling + Chat2SQL + 规则引擎兜底已落地 |
 | 报表系统 | 10% | ❌ 缺少财务三表 |
 
 ---
@@ -32,7 +32,7 @@ OneERP 项目已经完成了**扎实的技术基础架构**（元数据驱动、
 
 **问题严重性**: ⚠️ **业务闭环受阻** - 无法完成"采购→收货→应付→付款"完整链路
 
-#### 缺失组件清单
+#### 组件状态（已更新 2026-05-05）清单
 
 ##### 数据库层
 ```prisma
@@ -80,19 +80,12 @@ model PurchaseRequisition {
 
 ### 🔴 2. 可配置税务引擎（Configurable Tax Engine）
 
-**问题严重性**: ⚠️ **合规风险** - 硬编码税率无法适配多地区
+**问题严重性**: ⚠️ ~~合规风险~~ → **已修复** — TaxCode 主数据模型与动态税率解析已落地
 
-#### 当前问题
+#### 当前问题 → 已修复
 
-在 `apps/api/src/finance/finance.service.ts:151-154`：
-
-```typescript
-// ❌ 硬编码 13% 增值税
-const taxAmount = new Decimal(totalAmount).mul(0.13);
-const totalWithTax = new Decimal(totalAmount).add(taxAmount);
-```
-
-#### 缺失组件
+**已修复 (2026-05-05)**：inance.service.ts 现在通过 esolveTaxCode() 从数据库动态查找税码，未指定时回退到默认税码或 13% 兜底。
+#### 组件状态（已更新 2026-05-05）
 
 ##### 数据库层
 ```prisma
@@ -142,7 +135,7 @@ enum TaxType {
 
 **问题严重性**: ⚠️ **物流执行缺失** - 有订单但无法正确发货
 
-#### 缺失组件
+#### 组件状态（已更新 2026-05-05）
 
 ##### 数据库层
 ```prisma
@@ -421,31 +414,31 @@ prisma.$use(async (params, next) => {
 
 ---
 
-### ⚠️ 3. AI 功能集成（AI Features）
+### ✅ 3. AI 功能集成（AI Features）— 核心逻辑已落地
 
-#### 已实现（仅 UI）
-- ✅ Command Palette 界面 (`apps/web/src/components/ai/CommandPalette.tsx`)
+#### 已实现（后端核心 + 前端 UI）
+- ✅ Command Palette 界面（apps/web/src/components/ai/CommandPalette.tsx） (`apps/web/src/components/ai/CommandPalette.tsx`)
 - ✅ Chat2DashPanel 组件
 - ✅ DocumentDraftUploader（OCR 上传器）
 
-#### 缺失（核心逻辑）
-- ❌ **LLM 接入未完成** - `LlmAdapterService` 仅有空架子
-- ❌ **Function Calling 未实现** - 无意图识别和参数提取
-- ❌ **Chat2SQL 逻辑缺失** - 无 Schema 喂给模型，无 SQL 生成
-- ❌ **OCR 识别服务未接入** - 上传后无处理逻辑
+#### 已实现（核心逻辑，2026-05-05 更新）
+- ✅ **LLM 接入已完成** — `LlmAdapterService` 已实现 OpenAI Function Calling
+- ✅ **Function Calling 已实现** — 支持 create_resource / transition_workflow / chat2dash_query / chat2sql_read / parse_document_draft
+- ✅ **Chat2SQL 已实现** — AIService.chat2sql() + LlmAdapterService.resolveReadSql() 支持只读 SELECT 查询
+- ⚠️ **文档解析部分实现** — 文件名推测 + LLM 降级兜底，尚无真实 OCR
 
-#### 代码证据
+#### 代码证据（已更新 2026-05-05）
 
-`apps/api/src/ai/llm-adapter.service.ts:15-20`:
+pps/api/src/core/ai/llm-adapter.service.ts — 完整实现：
+- esolveToolCall() — OpenAI Function Calling 路由
+- esolveReadSql() — SQL 只读查询生成（限定 SELECT + companyId 过滤）
+- esolveDocumentDraft() — 文档草稿 JSON 生成
 
-```typescript
-// ❌ 空实现
-async completion(prompt: string, options?: any): Promise<string> {
-  // TODO: Integrate with actual LLM provider (OpenAI, Azure, etc.)
-  return 'Mock LLM response';
-}
-```
-
+pps/api/src/core/ai/ai.service.ts — 完整业务逻辑：
+- command() — AI 指令路由器（LLM 优先 → 规则引擎兜底）
+- chat2dash() — 图表洞察查询
+- chat2sql() — 只读 SQL 查询执行
+- parseDocumentDraft() — 附件解析
 #### 推荐行动
 **优先级**: P1
 **预计工期**: 2 周
@@ -499,10 +492,10 @@ async completion(prompt: string, options?: any): Promise<string> {
 
 ### ❌ 4. DevOps 与测试
 
-#### 缺失的 CI/CD
-- ❌ 无 `.github/workflows/` 配置
-- ❌ 无自动化测试运行
-- ❌ 无自动化部署脚本
+#### CI/CD 状态（已更新 2026-05-05）
+- ✅ `.github/workflows/ci.yml` + `deploy.yml` 已落地
+- ⚠️ 自动化测试覆盖率待提升
+- ⚠️ 部署脚本为占位（deploy.yml），需配置实际服务器
 
 #### 测试覆盖率未知
 - 虽有 `.spec.ts` 文件，但不确定是否可运行
@@ -530,7 +523,7 @@ async completion(prompt: string, options?: any): Promise<string> {
 1. **业务完整性不足** - 核心流程有断点（尤其采购）
 2. **企业级特性缺失** - 税务、多币种、审批流
 3. **数据安全防护弱** - 并发控制、RLS 不到位
-4. **AI 承诺未兑现** - UI 做了，后端逻辑空白
+4. **AI 已部分落地** - Function Calling + Chat2SQL 已实现，OCR 识别待接入真实视觉模型
 5. **可观测性缺失** - 无监控、无报表、无审计追溯
 
 ---
@@ -539,7 +532,7 @@ async completion(prompt: string, options?: any): Promise<string> {
 
 ### 第 1-2 周：P0 功能补齐（业务闭环）
 - [ ] 实现 PurchaseOrder 模块（采购订单 + 收货单）
-- [ ] 构建可配置税务引擎（TaxCode 主数据 + 动态税率计算）
+- [x] 构建可配置税务引擎（TaxCode 主数据 + 动态税率计算） ✅ 已完成
 - [ ] 改造库存扣减为原子操作（防并发超卖）
 
 ### 第 3-4 周：P0 功能深化（流程完善）
@@ -553,9 +546,9 @@ async completion(prompt: string, options?: any): Promise<string> {
 - [ ] PostgreSQL RLS 安全加固
 
 ### 第 7-8 周：AI 功能落地
-- [ ] 接入 LLM 提供商（OpenAI / Azure）
-- [ ] 实现 Function Calling（NL2Action）
-- [ ] 完成 Chat2SQL（Schema 注入 + SQL 生成）
+- [x] 接入 LLM 提供商（OpenAI） ✅ 已完成
+- [x] 实现 Function Calling（NL2Action） ✅ 已完成
+- [x] 完成 Chat2SQL（Schema 注入 + SQL 生成） ✅ 已完成
 
 ### 第 9-10 周：报表与分析
 - [ ] 财务三大报表生成器
@@ -564,7 +557,7 @@ async completion(prompt: string, options?: any): Promise<string> {
 
 ### 第 11-12 周：测试与部署
 - [ ] 编写集成测试（采购→入库→应付→付款 E2E）
-- [ ] 搭建 CI/CD 管道
+- [x] 搭建 CI/CD 管道 ✅ 已完成
 - [ ] 容器化与生产环境部署
 
 ---
@@ -598,7 +591,7 @@ OneERP 项目的**技术架构设计优秀**，元数据驱动和事件驱动的
 
 其次是**库存安全加固**和**Stock Picking 流程**，防止数据不一致和业务断链。
 
-AI 功能虽然 UI 做得很漂亮，但后端逻辑基本是空的，需要尽快对接真实的 LLM 服务。
+AI 功能核心逻辑已落地（LLM Function Calling + Chat2SQL + 规则引擎兜底），但需要配置 OPENAI_API_KEY 才能启用 LLM 路由；未配置时自动降级为规则引擎。
 
 报表系统完全缺失，建议在完成核心业务流后优先开发财务三表和销售分析看板。
 

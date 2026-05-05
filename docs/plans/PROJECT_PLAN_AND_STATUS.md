@@ -2,7 +2,7 @@
 
 > 本文档汇集整合了先前的架构分析 (`analyze.md`)、执行规划 (`plan.md`) 及各阶段交接文档 (`PHASE_X_HANDOVER.md`)，作为本项目的唯一核心蓝图与状态追踪板。
 
-## 一、 系统执行总进度与各阶段状态 (更新于 2026-03-23)
+## 一、 系统执行总进度与各阶段状态 (更新于 2026-05-05)
 
 ### 🟢 阶段零：内核引擎打造（已验收收口）
 
@@ -29,16 +29,11 @@
 * **Kysely 实时台账 API**：`GET /api/inventory/realtime-ledger` 已接入 `KyselyService` 原生聚合 SQL，按物料×库位汇总 `totalQty` / `stockValue`，并在服务层计算 `isLow` / `isOut` 低库存标志。
 * **库存台账前端仪表盘**：重构 `apps/web/src/app/dashboard/inventory/page.tsx` 为完整的实时库存看板，集成快速过滤（低库存/零库存）、分类筛选、关键字搜索和红绿色预警着色。
 
-### 🚧 阶段三 (剩余)：AI 功能深度集成（接下来即将进入）
+### 🟢 阶段三：AI 功能深度集成（核心逻辑已落地，2026-05-05 更新）
 
-* **全局 AI Command Bar (前端)**：描述：在前端顶部栏实现类似 Command Palette 的输入框，并接入自然语言理解。用户可输入“帮我创建一个销售订单，卖给微软10台服务器”。直接文字/语音下达自然语言指令。
-* **Agent 意图与 Function Calling (后端)**：接入 LLM 的 Tool Call，借助阶段零生成的通用 CRUD 自动执行业务流配置。**NL2Action 控制器（后端）** *  **描述** ：开发意图识别和 Function Calling 服务。当收到文字时，提取实体映射到 [api](vscode-file://vscode-app/c:/Users/INDEX/AppData/Local/Programs/Microsoft%20VS%20Code/07ff9d6178/resources/app/out/vs/code/electron-browser/workbench/workbench.html) 的相关 Controller（此时调用大模型的 tool/function-calling 机制解析 JSON 参数并调用对应的业务流）。
-* **Smart Dashboard (Chat2SQL)**：实时根据语义绘制分析图表。**RAG 数据分析（Text-to-SQL）** *  **描述** ：将数据库 Schema 喂给大模型（或微调专属模型），支持用户直接在 Dashboard 提问（例如：“上个月哪个部门采购的物料最多？”），系统自动生成报表或数据透视表。
-
-### ⚪ 阶段四：测试、优化与部署（计划中）
-
-* 端到端流转测试，编写集成测试，尤其是“采购->收货入库->产生应付账款”整个资金链路的断言测试。
-* 容器化服务剥离，优化 [docker-compose.yml](vscode-file://vscode-app/c:/Users/INDEX/AppData/Local/Programs/Microsoft%20VS%20Code/07ff9d6178/resources/app/out/vs/code/electron-browser/workbench/workbench.html)，拆分服务为 API, Web, Postgres, Redis 等，并确保自动化部署脚本完备。，基于 `docker-compose` 和 CI/CD 进行多端部署打包。
+* **全局 AI Command Bar (前端)**：✅ 已落地 — CommandPalette.tsx 支持 Cmd+K 快捷键触发自然语言指令。
+* **Agent 意图与 Function Calling (后端)**：✅ 已落地 — llm-adapter.service.ts 实现 OpenAI Function Calling 路由，ai.service.ts 注册 5 个 AI Tools。未配置 OPENAI_API_KEY 时自动降级为规则引擎。
+* **Smart Dashboard (Chat2SQL)**：✅ 已落地 — chat2dash() 支持图表洞察查询，chat2sql() 支持自然语言转只读 SELECT SQL。
 
 ---
 

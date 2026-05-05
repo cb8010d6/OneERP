@@ -16,6 +16,7 @@
 
 ## 必读文档
 
+- `docs/architecture/ARCHITECTURE.md`
 - `docs/architecture/STANDARDS.md`
 - `docs/plans/PROJECT_PLAN_AND_STATUS.md`
 - `docs/plans/EXECUTION_PLAN.md`
