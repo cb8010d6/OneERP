@@ -203,6 +203,67 @@ export class AccountingService {
     });
   }
 
+  async postVendorBillPostedEntry(payload: {
+    companyId: string;
+    invoiceId: string;
+    taxCodeId?: string | null;
+    taxAccountId?: string | null;
+    taxRate?: number;
+    operatorId?: string;
+  }) {
+    const invoice = await this.prisma.purchaseInvoice.findFirst({
+      where: { id: payload.invoiceId, companyId: payload.companyId },
+      include: {
+        partner: { select: { id: true, name: true } },
+        taxCode: { include: { account: true, outputAccount: true, inputAccount: true } },
+      },
+    });
+    if (!invoice) throw new BadRequestException('采购发票不存在，无法生成凭证');
+
+    const amount = this.taxService.round2(Number(invoice.amount));
+    if (amount <= 0) throw new BadRequestException('采购发票金额必须大于0');
+
+    let subTotal = this.taxService.round2(Number(invoice.subTotal ?? 0));
+    let taxAmount = this.taxService.round2(Number(invoice.taxAmount ?? 0));
+    if (subTotal <= 0 && taxAmount <= 0) {
+      const fallbackRate = Math.max(0, Math.min(1, Number(invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)));
+      subTotal = this.taxService.round2(amount / (1 + fallbackRate));
+      taxAmount = this.taxService.round2(amount - subTotal);
+      this.logger.warn('采购发票未包含税额快照，使用兜底税率: ' + invoice.invoiceNo);
+    }
+
+    let taxAccountCode = '222102';
+    let taxAccountName = '应交税费-进项税';
+    let taxAccountType = 'LIABILITY';
+    if (payload.taxAccountId) {
+      const account = await this.prisma.account.findFirst({ where: { id: payload.taxAccountId, companyId: payload.companyId } });
+      if (account) { taxAccountCode = account.code; taxAccountName = account.name; taxAccountType = account.type; }
+    } else if (invoice.taxCode) {
+      const tc = invoice.taxCode;
+      const nature = (tc.taxNature as TaxNature) ?? TaxNature.INPUT;
+      const accountId = nature === TaxNature.INPUT ? (tc.inputAccountId ?? tc.accountId) : (tc.outputAccountId ?? tc.accountId);
+      if (accountId) {
+        const account = await this.prisma.account.findFirst({ where: { id: accountId, companyId: payload.companyId } });
+        if (account) { taxAccountCode = account.code; taxAccountName = account.name; taxAccountType = account.type; }
+      }
+    }
+
+    return this.createBalancedEntry({
+      companyId: payload.companyId,
+      journalCode: 'PUR',
+      journalName: 'Purchase Journal',
+      journalType: JournalType.PURCHASE,
+      ref: invoice.invoiceNo,
+      description: '采购应付自动凭证: ' + invoice.invoiceNo,
+      createdBy: payload.operatorId,
+      lines: [
+        { accountCode: '1401', accountName: '原材料/库存商品', accountType: 'ASSET', debit: subTotal, partnerId: invoice.partnerId, memo: '采购入库 ' + invoice.invoiceNo },
+        { accountCode: taxAccountCode, accountName: taxAccountName, accountType: taxAccountType, debit: taxAmount, memo: '进项税 ' + invoice.invoiceNo },
+        { accountCode: '2202', accountName: '应付账款', accountType: 'LIABILITY', credit: amount, partnerId: invoice.partnerId, memo: '应付 ' + invoice.invoiceNo },
+      ],
+    });
+  }
+
   async createBalancedEntry(input: CreateBalancedEntryInput) {
     await this.ensureDefaultMasterData(input.companyId);
 
