@@ -27,12 +27,17 @@ export class VendorBillLineDto {
   @Min(0)
   unitPrice!: number;
 
-  @ApiPropertyOptional({ description: '税码ID（可选，未填使用发票级或默认税码）' })
+  @ApiPropertyOptional({ description: '税码ID（可选，未填使用发票级或默认税码�? })
   @IsOptional()
   @IsString()
   taxCodeId?: string;
 
-  @ApiPropertyOptional({ description: '行描述' })
+  @ApiPropertyOptional({ description: 'accountId for debit posting' })
+  @IsOptional()
+  @IsString()
+  accountId?: string;
+
+  @ApiPropertyOptional({ description: '行描�? })
   @IsOptional()
   @IsString()
   description?: string;
@@ -44,7 +49,7 @@ export class CreateVendorBillDto {
   @IsNotEmpty()
   partnerId!: string;
 
-  @ApiPropertyOptional({ description: '关联入库单ID（从入库单生成时填写）' })
+  @ApiPropertyOptional({ description: '关联入库单ID（从入库单生成时填写�? })
   @IsOptional()
   @IsString()
   receiptId?: string;
@@ -54,7 +59,7 @@ export class CreateVendorBillDto {
   @IsString()
   invoiceNo?: string;
 
-  @ApiProperty({ description: '税码ID（发票级默认税码）', required: false })
+  @ApiProperty({ description: '税码ID（发票级默认税码�?, required: false })
   @IsOptional()
   @IsString()
   taxCodeId?: string;
@@ -68,7 +73,7 @@ export class CreateVendorBillDto {
   @IsString()
   notes?: string;
 
-  @ApiProperty({ description: '行项目列表', type: [VendorBillLineDto] })
+  @ApiProperty({ description: '行项目列�?, type: [VendorBillLineDto] })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => VendorBillLineDto)

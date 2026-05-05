@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from "@nestjs/common";
+﻿import { BadRequestException, Injectable, Logger } from "@nestjs/common";
 import { EntryPostingStatus, JournalType, TaxNature, Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { TaxService } from "../core/tax/tax.service";
@@ -51,7 +51,7 @@ export class AccountingService {
     const amount = this.taxService.round2(unitCost * Number(payload.quantity ?? 0));
     if (amount <= 0) {
       this.logger.warn(
-        "跳过零成本库存出库凭证: material=" + payload.materialId,
+        "跳过零成本库存出库凭�? material=" + payload.materialId,
       );
       return null;
     }
@@ -119,7 +119,7 @@ export class AccountingService {
     let tax = this.taxService.round2(Number(invoice.taxAmount ?? 0));
 
     if (revenue <= 0 && tax <= 0) {
-      // 仅对历史遗留数据做兜底
+      // 仅对历史遗留数据做兜�?
       const fallbackRate = Math.max(
         0,
         Math.min(1, Number(invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)),
@@ -173,7 +173,7 @@ export class AccountingService {
       journalName: "Sales Journal",
       journalType: JournalType.SALES,
       ref: invoice.invoiceNo,
-      description: "销售开票自动凭证: " + invoice.invoiceNo,
+      description: "销售开票自动凭�? " + invoice.invoiceNo,
       createdBy: payload.operatorId,
       lines: [
         {
@@ -216,12 +216,13 @@ export class AccountingService {
       include: {
         partner: { select: { id: true, name: true } },
         taxCode: { include: { account: true, outputAccount: true, inputAccount: true } },
+        lines: { include: { account: true } },
       },
     });
-    if (!invoice) throw new BadRequestException('采购发票不存在，无法生成凭证');
+    if (!invoice) throw new BadRequestException('Purchase invoice not found');
 
     const amount = this.taxService.round2(Number(invoice.amount));
-    if (amount <= 0) throw new BadRequestException('采购发票金额必须大于0');
+    if (amount <= 0) throw new BadRequestException('Purchase invoice amount must be > 0');
 
     let subTotal = this.taxService.round2(Number(invoice.subTotal ?? 0));
     let taxAmount = this.taxService.round2(Number(invoice.taxAmount ?? 0));
@@ -229,11 +230,12 @@ export class AccountingService {
       const fallbackRate = Math.max(0, Math.min(1, Number(invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)));
       subTotal = this.taxService.round2(amount / (1 + fallbackRate));
       taxAmount = this.taxService.round2(amount - subTotal);
-      this.logger.warn('采购发票未包含税额快照，使用兜底税率: ' + invoice.invoiceNo);
+      this.logger.warn('Purchase invoice missing tax snapshot, using fallback rate: ' + invoice.invoiceNo);
     }
 
+    // ---- Resolve input tax account ----
     let taxAccountCode = '222102';
-    let taxAccountName = '应交税费-进项税';
+    let taxAccountName = 'Tax Payable - Input Tax';
     let taxAccountType = 'LIABILITY';
     if (payload.taxAccountId) {
       const account = await this.prisma.account.findFirst({ where: { id: payload.taxAccountId, companyId: payload.companyId } });
@@ -248,23 +250,92 @@ export class AccountingService {
       }
     }
 
+    // ---- Build debit lines by line-level account (inventory / expense) ----
+    const debitLines = this.buildPurchaseDebitLines(
+      invoice.lines,
+      invoice.invoiceNo,
+      invoice.partnerId,
+      subTotal,
+    );
+
     return this.createBalancedEntry({
       companyId: payload.companyId,
       journalCode: 'PUR',
       journalName: 'Purchase Journal',
       journalType: JournalType.PURCHASE,
       ref: invoice.invoiceNo,
-      description: '采购应付自动凭证: ' + invoice.invoiceNo,
+      description: 'Purchase AP auto-entry: ' + invoice.invoiceNo,
       createdBy: payload.operatorId,
       lines: [
-        { accountCode: '1401', accountName: '原材料/库存商品', accountType: 'ASSET', debit: subTotal, partnerId: invoice.partnerId, memo: '采购入库 ' + invoice.invoiceNo },
-        { accountCode: taxAccountCode, accountName: taxAccountName, accountType: taxAccountType, debit: taxAmount, memo: '进项税 ' + invoice.invoiceNo },
-        { accountCode: '2202', accountName: '应付账款', accountType: 'LIABILITY', credit: amount, partnerId: invoice.partnerId, memo: '应付 ' + invoice.invoiceNo },
+        ...debitLines,
+        { accountCode: taxAccountCode, accountName: taxAccountName, accountType: taxAccountType, debit: taxAmount, memo: 'Input Tax ' + invoice.invoiceNo },
+        { accountCode: '2202', accountName: 'Accounts Payable', accountType: 'LIABILITY', credit: amount, partnerId: invoice.partnerId, memo: 'AP ' + invoice.invoiceNo },
       ],
     });
   }
 
-  async createBalancedEntry(input: CreateBalancedEntryInput) {
+  /**
+   * Build debit journal lines from purchase invoice lines.
+   * Uses line-level accountId (inventory or expense); defaults to 1401.
+   * Merges lines sharing the same account code into a single debit line.
+   */
+  private buildPurchaseDebitLines(
+    lines: Array<{
+      subTotal: number;
+      accountId?: string | null;
+      account?: { code: string; name: string; type: string } | null;
+    }>,
+    invoiceNo: string,
+    partnerId: string,
+    fallbackSubTotal: number,
+  ): JournalLineInput[] {
+    const accountMap = new Map<string, { code: string; name: string; type: string; amount: number }>();
+
+    if (lines.length > 0) {
+      for (const line of lines) {
+        const lineSubTotal = this.taxService.round2(Number(line.subTotal ?? 0));
+        if (lineSubTotal <= 0) continue;
+
+        if (line.account) {
+          const key = line.account.code;
+          const existing = accountMap.get(key);
+          if (existing) {
+            existing.amount = this.taxService.round2(existing.amount + lineSubTotal);
+          } else {
+            accountMap.set(key, { code: line.account.code, name: line.account.name, type: line.account.type, amount: lineSubTotal });
+          }
+        } else {
+          const key = '1401';
+          const existing = accountMap.get(key);
+          if (existing) {
+            existing.amount = this.taxService.round2(existing.amount + lineSubTotal);
+          } else {
+            accountMap.set(key, { code: '1401', name: 'Inventory/Raw Materials', type: 'ASSET', amount: lineSubTotal });
+          }
+        }
+      }
+    }
+
+    // Fallback: if no line-level data, use invoice-level subTotal
+    if (accountMap.size === 0) {
+      accountMap.set('1401', { code: '1401', name: 'Inventory/Raw Materials', type: 'ASSET', amount: fallbackSubTotal });
+    }
+
+    const result: JournalLineInput[] = [];
+    for (const entry of accountMap.values()) {
+      if (entry.amount > 0) {
+        result.push({
+          accountCode: entry.code,
+          accountName: entry.name,
+          accountType: entry.type,
+          debit: entry.amount,
+          partnerId,
+          memo: 'Purchase ' + invoiceNo,
+        });
+      }
+    }
+    return result;
+  }  async createBalancedEntry(input: CreateBalancedEntryInput) {
     await this.ensureDefaultMasterData(input.companyId);
 
     return this.prisma.$transaction(async (tx) => {
@@ -289,7 +360,7 @@ export class AccountingService {
 
       if (totalDebit !== totalCredit) {
         throw new BadRequestException(
-          "借贷不平衡: debit=" + totalDebit + ", credit=" + totalCredit,
+          "借贷不平�? debit=" + totalDebit + ", credit=" + totalCredit,
         );
       }
 

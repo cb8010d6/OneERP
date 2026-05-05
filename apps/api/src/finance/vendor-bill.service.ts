@@ -44,12 +44,12 @@ export class VendorBillService {
       });
       if (!receipt) throw new NotFoundException('入库单不存在');
       if (receipt.partnerId !== dto.partnerId) {
-        throw new BadRequestException('入库单供应商与发票供应商不匹配');
+        throw new BadRequestException('入库单供应商与发票供应商不匹�?);
       }
     }
 
     if (!dto.lines || dto.lines.length === 0) {
-      throw new BadRequestException('采购发票至少需要一行明细');
+      throw new BadRequestException('采购发票至少需要一行明�?);
     }
 
     const resolvedTaxCode = await this.taxService.resolveTaxCode(
@@ -103,6 +103,7 @@ export class VendorBillService {
               taxAmount: l.taxAmount,
               taxRate: l.taxRate,
               taxCodeId: l.taxCodeId,
+              accountId: l.accountId ?? null,
               description: l.description ?? null,
             })),
           },
@@ -143,7 +144,7 @@ export class VendorBillService {
       select: { id: true },
     });
     if (existing) {
-      this.logger.warn(`入库单 ${receipt.receiptNo} 已关联应付单，跳过`);
+      this.logger.warn(`入库�?${receipt.receiptNo} 已关联应付单，跳过`);
       return existing;
     }
 
@@ -180,7 +181,7 @@ export class VendorBillService {
       return created;
     });
 
-    this.logger.log(`入库单 ${receipt.receiptNo} 自动生成应付草稿 ${invoice.invoiceNo}`);
+    this.logger.log(`入库�?${receipt.receiptNo} 自动生成应付草稿 ${invoice.invoiceNo}`);
     return invoice;
   }
 
@@ -212,7 +213,7 @@ export class VendorBillService {
         payments: true, taxCode: true, receipt: { include: { lines: true } },
       },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存在');
+    if (!invoice) throw new NotFoundException('采购发票不存�?);
     return invoice;
   }
 
@@ -221,8 +222,8 @@ export class VendorBillService {
       where: { id, companyId },
       select: { id: true, status: true, invoiceNo: true },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存在');
-    if (invoice.status !== 'DRAFT') throw new BadRequestException('只有草稿状态的应付单才能确认');
+    if (!invoice) throw new NotFoundException('采购发票不存�?);
+    if (invoice.status !== 'DRAFT') throw new BadRequestException('只有草稿状态的应付单才能确�?);
 
     return this.prisma.$transaction(async (tx) => {
       const result = await tx.purchaseInvoice.update({ where: { id }, data: { status: 'UNPAID' } });
@@ -238,7 +239,7 @@ export class VendorBillService {
       where: { id: invoiceId, companyId },
       include: { payments: true },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存在');
+    if (!invoice) throw new NotFoundException('采购发票不存�?);
     if (invoice.status === 'DRAFT') throw new BadRequestException('请先确认应付单再登记付款');
 
     return this.prisma.$transaction(async (tx) => {
@@ -259,7 +260,7 @@ export class VendorBillService {
       where: { id: invoiceId, companyId },
       include: { partner: { select: { id: true } }, taxCode: { include: { account: true, outputAccount: true, inputAccount: true } } },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存在');
+    if (!invoice) throw new NotFoundException('采购发票不存�?);
     // 三单匹配校验：过账前必须通过匹配
     await this.threeWayMatchService.validateAndPersist(companyId, invoiceId, operatorId);
 
@@ -299,17 +300,17 @@ export class VendorBillService {
     lines: Array<{ materialId: string; quantity: number; unitPrice: number; taxCodeId?: string; description?: string }>,
     defaultTaxCode: Awaited<ReturnType<TaxService['resolveTaxCode']>>,
   ) {
-    const results: Array<{ materialId: string; quantity: number; unitPrice: number; lineTotal: number; subTotal: number; taxAmount: number; taxRate: number; taxCodeId: string | null; description?: string }> = [];
+    const results: Array<{ materialId: string; quantity: number; unitPrice: number; lineTotal: number; subTotal: number; taxAmount: number; taxRate: number; taxCodeId: string | null; accountId?: string; description?: string }> = [];
     for (const line of lines) {
       const material = await this.prisma.material.findFirst({ where: { id: line.materialId }, select: { id: true } });
-      if (!material) throw new NotFoundException(`物料不存在: ${line.materialId}`);
+      if (!material) throw new NotFoundException(`物料不存�? ${line.materialId}`);
 
       let lineTaxCode = defaultTaxCode;
       if (line.taxCodeId) lineTaxCode = await this.taxService.resolveTaxCode(companyId, line.taxCodeId);
 
       const lineTotal = this.taxService.round2(line.quantity * line.unitPrice);
       const bd = this.taxService.calcTaxBreakdown(lineTotal, lineTaxCode.rate, lineTaxCode.isTaxInclusive, TaxNature.INPUT);
-      results.push({ materialId: line.materialId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal, subTotal: bd.subTotal, taxAmount: bd.taxAmount, taxRate: bd.taxRate, taxCodeId: lineTaxCode.id ?? null, description: line.description });
+      results.push({ materialId: line.materialId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal, subTotal: bd.subTotal, taxAmount: bd.taxAmount, taxRate: bd.taxRate, taxCodeId: lineTaxCode.id ?? null, accountId: line.accountId, description: line.description });
     }
     return results;
   }
