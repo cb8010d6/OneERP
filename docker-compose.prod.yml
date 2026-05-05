@@ -1,6 +1,19 @@
 # ============================================================
 #  OneERP Production Docker Compose
-#  Usage: docker compose -f docker-compose.prod.yml up -d
+# ============================================================
+#  前置条件:
+#    1. 复制 .env.example 为 .env 并填写所有生产环境实际值
+#    2. 确保 IMAGE_OWNER 设置为你的 GitHub 用户名或组织名
+#    3. 确保 POSTGRES_PASSWORD / JWT_SECRET / MINIO_SECRET_KEY 均已设置（无默认值）
+#
+#  启动命令 (不带 Nginx):
+#    docker compose -f docker-compose.prod.yml up -d
+#
+#  启动命令 (带 Nginx 反向代理):
+#    docker compose -f docker-compose.prod.yml --profile with-nginx up -d
+#
+#  指定镜像版本标签 (默认 latest，用于回滚):
+#    IMAGE_TAG=abc1234 docker compose -f docker-compose.prod.yml up -d
 # ============================================================
 
 version: '3.8'
@@ -36,7 +49,8 @@ services:
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # 带密码健康检查: 若 REDIS_PASSWORD 为空则退化为无密码 ping
+      test: ["CMD-SHELL", "redis-cli ${REDIS_PASSWORD:+-a $REDIS_PASSWORD} ping | grep PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -63,7 +77,8 @@ services:
 
   # ---- NestJS API ----
   api:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER:-your-org}/oneerp-api:latest
+    # IMAGE_TAG 环境变量用于回滚: 回滚时指定 commit SHA 即可
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER}/oneerp-api:${IMAGE_TAG:-latest}
     container_name: oneerp_api
     restart: always
     depends_on:
@@ -83,19 +98,26 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minio_admin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
       PORT: ${API_PORT:-8000}
+      # CORS 白名单 (逗号分隔); 生产环境前端域名需加入此列表
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${WEB_PORT:-3000}}
+      # ---- 可选: AI 功能 (未配置时自动降级为规则引擎) ----
+      # OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
     ports:
       - "${API_PORT:-8000}:8000"
 
   # ---- Next.js Web ----
   web:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER:-your-org}/oneerp-web:latest
+    image: ${REGISTRY:-ghcr.io}/${IMAGE_OWNER}/oneerp-web:${IMAGE_TAG:-latest}
     container_name: oneerp_web
     restart: always
     depends_on:
       - api
     environment:
       NODE_ENV: production
-      NEXT_PUBLIC_API_URL: http://api:${API_PORT:-8000}
+      # 服务端渲染 (SSR) 时通过 Docker 内部网络访问 API
+      # 注意: 变量名必须是 NEXT_PUBLIC_API_BASE_URL (与 apps/web/src/lib/api.ts 一致)
+      NEXT_PUBLIC_API_BASE_URL: http://api:${API_PORT:-8000}/api
     ports:
       - "${WEB_PORT:-3000}:3000"
 
