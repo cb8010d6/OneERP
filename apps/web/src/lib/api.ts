@@ -1,4 +1,4 @@
-import axios, { AxiosHeaders, AxiosError } from 'axios';
+﻿import axios, { AxiosHeaders, AxiosError } from 'axios';
 import { useAuthStore } from '../store/authStore';
 
 function sanitizePaginationInUrl(url?: string): string | undefined {
@@ -29,9 +29,12 @@ function sanitizePaginationInUrl(url?: string): string | undefined {
   }
 }
 
+// API 基础地址：优先读取环境变量，未配置时回退到本地开发默认值
+const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
+
 // 创建可以复用的 axios 实例
 const api = axios.create({
-  baseURL: 'http://127.0.0.1:8000/api', // 这里对应我们刚才黑窗口启动的 NestJS 核心的 api 路由
+  baseURL,
   timeout: 10000,
 });
 
