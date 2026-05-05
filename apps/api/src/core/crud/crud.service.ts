@@ -15,6 +15,12 @@ import {
   parseJsonParam,
   parseOrderByParam,
 } from './query-utils';
+import {
+  getDmmfModel,
+  sanitizeFilter,
+  sanitizeInclude,
+  sanitizeOrderBy,
+} from './crud-query-validator';
 import { TenantContext } from '../tenant/tenant-context';
 
 interface DynamicModelDelegate {
@@ -48,7 +54,9 @@ export class CrudService {
   }> {
     const normalizedModelName = this.normalizeModelName(modelName);
     const model = this.resolveModel(normalizedModelName);
-    const filter = parseJsonParam<Record<string, unknown>>(query.filter) ?? {};
+    const modelMeta = this.getDmmfModelMeta(normalizedModelName);
+    const rawFilter = parseJsonParam<Record<string, unknown>>(query.filter) ?? {};
+    const filter = sanitizeFilter(rawFilter, modelMeta);
     const where = this.applyCompanyScope(
       normalizedModelName,
       { ...filter },
@@ -63,10 +71,12 @@ export class CrudService {
 
     const fields = parseJsonParam(query.fields, { allowCommaList: true });
     const select = normalizeSelect(fields);
-    const include = select ? undefined : parseJsonParam(query.include);
+    const rawInclude = select ? undefined : parseJsonParam<Record<string, unknown>>(query.include);
+    const include = sanitizeInclude(rawInclude, modelMeta);
     const schema = await this.getSchemaIfExists(normalizedModelName, companyId);
-    const orderBy =
+    const rawOrderBy =
       parseOrderByParam(query.orderBy) ?? schema?.views.list.defaultSort;
+    const orderBy = sanitizeOrderBy(rawOrderBy, modelMeta);
 
     const { page = 1, limit = 20 } = query;
     const { skip, take } = paginate(page, limit);
@@ -101,7 +111,9 @@ export class CrudService {
 
     const fields = parseJsonParam(query.fields, { allowCommaList: true });
     const select = normalizeSelect(fields);
-    const include = select ? undefined : parseJsonParam(query.include);
+    const findOneModelMeta = this.getDmmfModelMeta(normalizedModelName);
+    const rawInclude = select ? undefined : parseJsonParam<Record<string, unknown>>(query.include);
+    const include = sanitizeInclude(rawInclude, findOneModelMeta);
 
     const record = await model.findFirst({ where, select, include });
     if (!record) {
@@ -415,5 +427,9 @@ export class CrudService {
     }
 
     return candidate;
+  }
+
+  private getDmmfModelMeta(modelName: string) {
+    return getDmmfModel(this.prisma, modelName);
   }
 }
