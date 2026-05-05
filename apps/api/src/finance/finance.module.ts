@@ -1,15 +1,16 @@
-import { Module } from '@nestjs/common';
-import { FinanceController } from './finance.controller';
-import { FinanceService } from './finance.service';
-import { PrismaModule } from '../prisma/prisma.module';
-import { AccountingService } from './accounting.service';
-import { FinanceDlqService } from './finance-dlq.service';
-import { FinanceBridgeListener } from './finance-bridge.listener';
-import { EventQueueModule } from '../core/events/event-queue.module';
+import { Module } from "@nestjs/common";
+import { FinanceController } from "./finance.controller";
+import { FinanceService } from "./finance.service";
+import { TaxCodeController } from "./tax-code.controller";
+import { PrismaModule } from "../prisma/prisma.module";
+import { AccountingService } from "./accounting.service";
+import { FinanceDlqService } from "./finance-dlq.service";
+import { FinanceBridgeListener } from "./finance-bridge.listener";
+import { EventQueueModule } from "../core/events/event-queue.module";
 
 @Module({
   imports: [PrismaModule, EventQueueModule],
-  controllers: [FinanceController],
+  controllers: [FinanceController, TaxCodeController],
   providers: [
     FinanceService,
     AccountingService,

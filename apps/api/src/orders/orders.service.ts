@@ -3,11 +3,12 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
-} from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { PaginationDto } from '../core/dto/pagination.dto';
-import { EventQueueService } from '../core/events/event-queue.service';
+} from "@nestjs/common";
+import { TaxNature, Prisma } from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+import { TaxService } from "../core/tax/tax.service";
+import { PaginationDto } from "../core/dto/pagination.dto";
+import { EventQueueService } from "../core/events/event-queue.service";
 
 interface CreateOrderItemInput {
   productId: string;
@@ -32,86 +33,36 @@ export class OrdersService {
   constructor(
     private prisma: PrismaService,
     private readonly eventQueueService: EventQueueService,
+    private readonly taxService: TaxService,
   ) {}
-
-  private round2(value: number) {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
-  }
-
-  private calcTaxBreakdown(
-    baseAmount: number,
-    taxRate: number,
-    isTaxInclusive: boolean,
-  ) {
-    const safeRate = Math.max(0, Math.min(1, Number(taxRate ?? 0)));
-    if (isTaxInclusive) {
-      const subTotal = this.round2(baseAmount / (1 + safeRate));
-      const taxAmount = this.round2(baseAmount - subTotal);
-      return {
-        subTotal,
-        taxAmount,
-        total: this.round2(baseAmount),
-      };
-    }
-
-    const subTotal = this.round2(baseAmount);
-    const taxAmount = this.round2(subTotal * safeRate);
-    const total = this.round2(subTotal + taxAmount);
-    return { subTotal, taxAmount, total };
-  }
-
-  private async resolveTaxCode(companyId: string, taxCodeId?: string | null) {
-    if (taxCodeId) {
-      const taxCode = await this.prisma.taxCode.findFirst({
-        where: { id: taxCodeId, companyId, active: true },
-      });
-      if (!taxCode) {
-        throw new BadRequestException('税码不存在或已停用，请确认税码选择');
-      }
-      return { ...taxCode, isFallback: false };
-    }
-
-    const defaultTaxCode = await this.prisma.taxCode.findFirst({
-      where: { companyId, isDefault: true, active: true },
-      orderBy: { updatedAt: 'desc' },
-    });
-    if (defaultTaxCode) {
-      return { ...defaultTaxCode, isFallback: false };
-    }
-
-    this.logger.warn(
-      `未配置默认税码，订单将使用 13% 默认税率: companyId=${companyId}`,
-    );
-    return {
-      id: null,
-      rate: 0.13,
-      isTaxInclusive: true,
-      isFallback: true,
-    };
-  }
 
   async createOrder(companyId: string, userId: string, data: CreateOrderInput) {
     const { partnerId, items, aiSummary, expectedDate, notes, taxCodeId } = data;
 
-    // 自动生成订单号
-    const orderNo = `ORD-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const orderNo = "ORD-" + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, "0") + "-" + Math.floor(1000 + Math.random() * 9000);
 
     let totalAmount = 0;
     let subTotal = 0;
     let taxTotal = 0;
 
-    const baseTaxCode = await this.resolveTaxCode(companyId, taxCodeId);
+    const baseTaxCode = await this.taxService.resolveTaxCode(
+      companyId,
+      taxCodeId,
+      { operatorId: userId, entity: "Order", entityId: "new" },
+    );
+
     const orderItems = await Promise.all(
       (items ?? []).map(async (item) => {
         const resolvedTaxCode = item.taxCodeId
-          ? await this.resolveTaxCode(companyId, item.taxCodeId)
+          ? await this.taxService.resolveTaxCode(companyId, item.taxCodeId)
           : baseTaxCode;
 
         const lineBase = item.quantity * item.unitPrice;
-        const breakdown = this.calcTaxBreakdown(
+        const breakdown = this.taxService.calcTaxBreakdown(
           lineBase,
           resolvedTaxCode.rate,
           resolvedTaxCode.isTaxInclusive,
+          resolvedTaxCode.taxNature,
         );
 
         totalAmount += breakdown.total;
@@ -125,7 +76,7 @@ export class OrdersService {
           totalPrice: breakdown.total,
           subTotal: breakdown.subTotal,
           taxAmount: breakdown.taxAmount,
-          taxRate: Number(resolvedTaxCode.rate ?? 0),
+          taxRate: breakdown.taxRate,
           taxCodeId: resolvedTaxCode.id ?? null,
         };
       }),
@@ -137,10 +88,10 @@ export class OrdersService {
         companyId,
         salesId: userId,
         partnerId,
-        status: 'DRAFT',
+        status: "DRAFT",
         totalAmount,
-        subTotal: this.round2(subTotal),
-        taxTotal: this.round2(taxTotal),
+        subTotal: this.taxService.round2(subTotal),
+        taxTotal: this.taxService.round2(taxTotal),
         taxCodeId: baseTaxCode.id ?? null,
         aiSummary,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
@@ -156,8 +107,8 @@ export class OrdersService {
     });
 
     await this.eventQueueService.publish({
-      eventName: 'order.created',
-      idempotencyKey: `order_created:${created.id}`,
+      eventName: "order.created",
+      idempotencyKey: "order_created:" + created.id,
       companyId,
       payload: {
         orderId: created.id,
@@ -183,8 +134,8 @@ export class OrdersService {
     if (status) where.status = status;
     if (search) {
       where.OR = [
-        { orderNo: { contains: search, mode: 'insensitive' } },
-        { partner: { name: { contains: search, mode: 'insensitive' } } },
+        { orderNo: { contains: search, mode: "insensitive" } },
+        { partner: { name: { contains: search, mode: "insensitive" } } },
       ];
     }
 
@@ -195,7 +146,7 @@ export class OrdersService {
           partner: true,
           salesPerson: { select: { id: true, name: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -220,7 +171,7 @@ export class OrdersService {
         },
       },
     });
-    if (!order) throw new NotFoundException('该订单不存在或您无权查看');
+    if (!order) throw new NotFoundException("该订单不存在或您无权查看");
     return order;
   }
 
@@ -228,9 +179,9 @@ export class OrdersService {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, companyId },
     });
-    if (!order) throw new NotFoundException('订单不存在或无权操作');
-    if (order.status !== 'DRAFT')
-      throw new BadRequestException('只能删除草稿状态的订单');
+    if (!order) throw new NotFoundException("订单不存在或无权操作");
+    if (order.status !== "DRAFT")
+      throw new BadRequestException("只能删除草稿状态的订单");
 
     await this.prisma.orderItem.deleteMany({ where: { orderId } });
     return this.prisma.order.delete({ where: { id: orderId } });
@@ -243,16 +194,16 @@ export class OrdersService {
     });
 
     if (!order) {
-      throw new NotFoundException('该订单不存在或您无权查看');
+      throw new NotFoundException("该订单不存在或您无权查看");
     }
 
     const logs = await this.prisma.auditLog.findMany({
       where: {
         companyId,
-        entity: { in: ['order', 'sale_order'] },
+        entity: { in: ["order", "sale_order"] },
         entityId: orderId,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       include: {
         user: {
           select: { id: true, name: true, email: true },
