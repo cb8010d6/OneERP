@@ -187,6 +187,61 @@ export class OrdersService {
     return this.prisma.order.delete({ where: { id: orderId } });
   }
 
+  async getOrderStockTransactions(orderId: string, companyId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      select: { id: true, orderNo: true },
+    });
+
+    if (!order) {
+      throw new NotFoundException('该订单不存在或您无权查看');
+    }
+
+    // 库存过账时 referenceNo 格式: SALE-SHIP-{orderNo} 或 REVERSE-SHIP-{orderNo}
+    const referencePatterns = [
+      `SALE-SHIP-${order.orderNo}`,
+      `REVERSE-SHIP-${order.orderNo}`,
+      order.orderNo,
+    ];
+
+    const transactions = await this.prisma.inventoryTransaction.findMany({
+      where: {
+        companyId,
+        referenceNo: { in: referencePatterns },
+      },
+      include: {
+        material: { select: { id: true, sku: true, name: true, unit: true } },
+        sourceLocation: {
+          select: { id: true, name: true, code: true },
+          include: { warehouse: { select: { id: true, name: true } } },
+        },
+        destLocation: {
+          select: { id: true, name: true, code: true },
+          include: { warehouse: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      orderId: order.id,
+      orderNo: order.orderNo,
+      transactions: transactions.map((tx) => ({
+        id: tx.id,
+        type: tx.type,
+        materialId: tx.materialId,
+        material: tx.material,
+        quantity: tx.quantity,
+        batchNo: tx.batchNo,
+        referenceNo: tx.referenceNo,
+        note: tx.note,
+        sourceLocation: tx.sourceLocation,
+        destLocation: tx.destLocation,
+        createdAt: tx.createdAt,
+      })),
+    };
+  }
+
   async getOrderTimeline(orderId: string, companyId: string) {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, companyId },
