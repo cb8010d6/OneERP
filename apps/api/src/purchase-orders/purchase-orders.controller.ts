@@ -55,15 +55,17 @@ export class PurchaseOrdersController {
     @Query('search') search?: string,
     @Query('status') status?: string,
   ) {
-    return this.poService.getPurchaseOrders(companyId, pagination, search, status);
+    return this.poService.getPurchaseOrders(
+      companyId,
+      pagination,
+      search,
+      status,
+    );
   }
 
   @Get(':id')
   @ApiOperation({ summary: '获取采购单详情' })
-  async findOne(
-    @Param('id') id: string,
-    @CurrentCompany() companyId: string,
-  ) {
+  async findOne(@Param('id') id: string, @CurrentCompany() companyId: string) {
     return this.poService.getPurchaseOrderById(id, companyId);
   }
 

@@ -38,7 +38,11 @@ export class CreateTaxCodeDto {
   @IsBoolean()
   isDefault?: boolean;
 
-  @ApiPropertyOptional({ description: '税务属性: OUTPUT=销项税, INPUT=进项税', enum: TaxNature, default: TaxNature.OUTPUT })
+  @ApiPropertyOptional({
+    description: '税务属性: OUTPUT=销项税, INPUT=进项税',
+    enum: TaxNature,
+    default: TaxNature.OUTPUT,
+  })
   @IsOptional()
   @IsEnum(TaxNature)
   taxNature?: TaxNature;

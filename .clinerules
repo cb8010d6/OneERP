@@ -1,0 +1,64 @@
+# OneERP Agent Rules Adapter
+
+This file mirrors the generic rules in `AGENTS.md` for tools that read repository rule files automatically. Do not put tool-specific policy here unless absolutely required.
+
+## Fixed Context
+
+Do not rediscover the whole repository for every task. Start from:
+
+- `AGENTS.md`
+- `docs/README.md`
+- `docs/architecture/ARCHITECTURE.md`
+- `docs/architecture/DEVELOPMENT_WORKFLOW.md`
+- `docs/architecture/STANDARDS.md`
+- `docs/architecture/QUALITY_GATES.md`
+
+## Multi-Agent Task Policy
+
+Use one card per module boundary. Each card must declare:
+
+- goal
+- scope
+- forbidden files
+- required reading
+- acceptance command
+- changed files
+- residual risk
+
+## Conflict Policy
+
+Never assign two agents to edit these files at the same time:
+
+- `apps/api/prisma/schema.prisma`
+- `apps/api/src/app.module.ts`
+- `apps/web/src/lib/ui-schema.ts`
+- `apps/api/src/core/**`
+- `apps/web/src/components/core/**`
+- `package-lock.json`
+
+## Branch Policy
+
+- Daily work: `agent/<scope>/<task>` from `develop`
+- Integration: PR into `develop`
+- Release: PR from `develop` into `main`
+- Do not push directly to `main`
+
+## Validation Policy
+
+Before opening a PR, run the narrowest relevant test plus the full gate:
+
+```bash
+npm run validate
+```
+
+When CI fails, classify the failure first:
+
+- dependency/install
+- Prisma/migration
+- TypeScript
+- ESLint
+- unit test
+- build
+- Docker/deploy
+
+Fix only the first real root cause.

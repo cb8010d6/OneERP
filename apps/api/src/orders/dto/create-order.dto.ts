@@ -44,7 +44,9 @@ export class CreateOrderDto {
   @Type(() => OrderItemDto)
   items!: OrderItemDto[];
 
-  @ApiPropertyOptional({ description: '订单税码ID (建议填写，未填将使用默认税码)' })
+  @ApiPropertyOptional({
+    description: '订单税码ID (建议填写，未填将使用默认税码)',
+  })
   @IsOptional()
   @IsString()
   taxCodeId?: string;

@@ -74,7 +74,14 @@ export class PurchaseOrdersService {
     companyId: string,
   ) {
     return this.prisma.auditLog.create({
-      data: { userId, action, entity: 'purchase_order', entityId, details, companyId },
+      data: {
+        userId,
+        action,
+        entity: 'purchase_order',
+        entityId,
+        details,
+        companyId,
+      },
     });
   }
 
@@ -102,7 +109,11 @@ export class PurchaseOrdersService {
 
     const lineCreates = (lines ?? []).map((line, index) => {
       const taxRate = line.taxRate ?? 0.13;
-      const amounts = this.calcLineAmounts(line.quantity, line.unitPrice, taxRate);
+      const amounts = this.calcLineAmounts(
+        line.quantity,
+        line.unitPrice,
+        taxRate,
+      );
       subTotal += amounts.subTotal;
       taxTotal += amounts.taxAmount;
       totalAmount += amounts.totalAmount;
@@ -159,7 +170,8 @@ export class PurchaseOrdersService {
   ) {
     const { page = 1, limit = 20 } = pagination;
     const where: Prisma.PurchaseOrderWhereInput = { companyId };
-    if (status) where.status = status as unknown as Prisma.EnumPurchaseOrderStatusFilter;
+    if (status)
+      where.status = status as unknown as Prisma.EnumPurchaseOrderStatusFilter;
     if (search) {
       where.OR = [
         { orderNo: { contains: search, mode: 'insensitive' } },
@@ -199,7 +211,7 @@ export class PurchaseOrdersService {
           },
           orderBy: { lineNo: 'asc' },
         },
-        goodsReceipts: true,
+        receipts: true,
       },
     });
     if (!po) throw new NotFoundException('采购单不存在或无权查看');
@@ -248,11 +260,17 @@ export class PurchaseOrdersService {
     });
 
     await this.recalcOrderTotals(orderId);
-    await this.auditLog(userId, 'ADD_PO_LINE', orderId, {
-      lineNo,
-      materialId: dto.materialId,
-      productId: dto.productId,
-    }, companyId);
+    await this.auditLog(
+      userId,
+      'ADD_PO_LINE',
+      orderId,
+      {
+        lineNo,
+        materialId: dto.materialId,
+        productId: dto.productId,
+      },
+      companyId,
+    );
 
     return line;
   }
@@ -279,11 +297,17 @@ export class PurchaseOrdersService {
       include: { lines: true, partner: true },
     });
 
-    await this.auditLog(userId, 'SUBMIT_PURCHASE_ORDER', orderId, {
-      orderNo: po.orderNo,
-      lineCount: po.lines.length,
-      totalAmount: po.totalAmount,
-    }, companyId);
+    await this.auditLog(
+      userId,
+      'SUBMIT_PURCHASE_ORDER',
+      orderId,
+      {
+        orderNo: po.orderNo,
+        lineCount: po.lines.length,
+        totalAmount: po.totalAmount,
+      },
+      companyId,
+    );
 
     return updated;
   }
@@ -308,11 +332,17 @@ export class PurchaseOrdersService {
       include: { lines: true, partner: true },
     });
 
-    await this.auditLog(userId, 'CONFIRM_PURCHASE_ORDER', orderId, {
-      orderNo: po.orderNo,
-      totalAmount: po.totalAmount,
-      lineCount: po.lines.length,
-    }, companyId);
+    await this.auditLog(
+      userId,
+      'CONFIRM_PURCHASE_ORDER',
+      orderId,
+      {
+        orderNo: po.orderNo,
+        totalAmount: po.totalAmount,
+        lineCount: po.lines.length,
+      },
+      companyId,
+    );
 
     return updated;
   }
@@ -332,9 +362,15 @@ export class PurchaseOrdersService {
     await this.prisma.purchaseOrderLine.deleteMany({ where: { orderId } });
     await this.prisma.purchaseOrder.delete({ where: { id: orderId } });
 
-    await this.auditLog(userId, 'DELETE_PURCHASE_ORDER', orderId, {
-      orderNo: po.orderNo,
-    }, companyId);
+    await this.auditLog(
+      userId,
+      'DELETE_PURCHASE_ORDER',
+      orderId,
+      {
+        orderNo: po.orderNo,
+      },
+      companyId,
+    );
 
     return { id: orderId, deleted: true };
   }

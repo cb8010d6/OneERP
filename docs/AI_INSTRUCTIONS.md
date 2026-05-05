@@ -66,8 +66,22 @@
 
 当你（下一个 AI Agent）接手本工程开发时：
 
-1. 请先检查 `TODO.md` 中目前的未完成事项。
-2. 任何涉及到新表、新字段，首先确定 **Prisma Schema** 的设计。
-3. 任何涉及到前端界面的，尽量复用 Tailwind 和 Shadcn 的标准样式。
-4. 提供代码后，确保先阅读错误再修改。如果有类型错误，仔细使用终端进行 `npx tsc --noEmit` 校验，修改直到终端返回无错误再汇报。
-5. **请在一次性改写或重构复杂的服务层逻辑时，充分重构和验证。**
+1. 先读固定入口，避免重新扫描全仓库：`README.md`、`docs/architecture/ARCHITECTURE.md`、`docs/architecture/STANDARDS.md`、`docs/architecture/QUALITY_GATES.md`、`docs/architecture/DEVELOPMENT_WORKFLOW.md`。
+2. 当前待办以 `docs/architecture/BACKLOG.md` 和 `docs/plans/CORE_MODULES_DEV_PLAN.md` 为准，不再依赖不存在的 `TODO.md`。
+3. 任何涉及到新表、新字段，首先确定 **Prisma Schema** 的设计，并同步 migration、DTO、Service 测试和必要的 seed。
+4. 任何涉及到前端界面的，优先复用元数据、动态视图引擎、Tailwind 和 Shadcn/Radix 标准样式。
+5. 提供代码后，确保先阅读错误再修改。至少运行对应模块测试；合并前必须在根目录运行 `npm run validate`。
+6. 多 agent 协作时必须声明文件所有权。不要让多个 agent 同时修改 `schema.prisma`、`app.module.ts`、`ui-schema.ts`、`core/**`、`package-lock.json`。
+7. **请在一次性改写或重构复杂的服务层逻辑时，充分重构和验证。**
+
+### 5.1 Agent 任务卡片模板
+
+```md
+目标：
+范围：
+禁止修改：
+必须先读：
+验收命令：
+相关文档：
+相关文件：
+```

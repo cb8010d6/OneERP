@@ -433,32 +433,48 @@ export class InventoryService {
     companyId: string,
     orderId: string,
     payload: CreatePickingDto,
-    operatorId?: string,
+    _operatorId?: string,
   ) {
+    void _operatorId;
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, companyId },
       include: { items: true },
     });
 
     if (!order) throw new NotFoundException('销售订单不存在或无权限访问');
-    if (!order.items.length) throw new BadRequestException('销售订单无明细，无法创建拣货单');
+    if (!order.items.length)
+      throw new BadRequestException('销售订单无明细，无法创建拣货单');
 
     const existingPicking = await this.prisma.stockPicking.findFirst({
-      where: { companyId, referenceType: 'SALE_ORDER', referenceId: orderId, status: { notIn: ['CANCELLED'] } },
+      where: {
+        companyId,
+        referenceType: 'SALE_ORDER',
+        referenceId: orderId,
+        status: { notIn: ['CANCELLED'] },
+      },
     });
 
     if (existingPicking) {
-      return { pickingId: existingPicking.id, pickingNo: existingPicking.pickingNo, status: existingPicking.status, message: '该订单已存在拣货单，已返回' };
+      return {
+        pickingId: existingPicking.id,
+        pickingNo: existingPicking.pickingNo,
+        status: existingPicking.status,
+        message: '该订单已存在拣货单，已返回',
+      };
     }
 
-    const materialQuantityMap = new Map();
+    const materialQuantityMap = new Map<string, number>();
     for (const item of order.items) {
       const product = await this.prisma.product.findFirst({
         where: { id: item.productId, companyId },
         select: { id: true, materialId: true, name: true },
       });
-      if (!product) throw new BadRequestException(`订单项产品不存在：${item.productId}`);
-      if (!product.materialId) throw new BadRequestException(`产品 ${product.name} 未绑定主物料，无法创建拣货单`);
+      if (!product)
+        throw new BadRequestException(`订单项产品不存在：${item.productId}`);
+      if (!product.materialId)
+        throw new BadRequestException(
+          `产品 ${product.name} 未绑定主物料，无法创建拣货单`,
+        );
       const current = materialQuantityMap.get(product.materialId) ?? 0;
       materialQuantityMap.set(product.materialId, current + item.quantity);
     }
@@ -466,19 +482,38 @@ export class InventoryService {
     const pickingNo = `PICK-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
     const picking = await this.prisma.stockPicking.create({
       data: {
-        pickingNo, type: 'OUTBOUND', referenceType: 'SALE_ORDER', referenceId: orderId,
-        scheduledDate: payload.scheduledDate ? new Date(payload.scheduledDate) : null,
-        status: 'DRAFT', companyId,
+        pickingNo,
+        type: 'OUTBOUND',
+        referenceType: 'SALE_ORDER',
+        referenceId: orderId,
+        scheduledDate: payload.scheduledDate
+          ? new Date(payload.scheduledDate)
+          : null,
+        status: 'DRAFT',
+        companyId,
         moves: {
-          create: Array.from(materialQuantityMap.entries()).map(([materialId, quantity], index) => ({
-            lineNo: index + 1, materialId, sourceLocationId: payload.sourceLocationId ?? null, quantity, status: 'DRAFT', companyId,
-          })),
+          create: Array.from(materialQuantityMap.entries()).map(
+            ([materialId, quantity], index) => ({
+              lineNo: index + 1,
+              materialId,
+              sourceLocationId: payload.sourceLocationId ?? null,
+              quantity,
+              status: 'DRAFT',
+              companyId,
+            }),
+          ),
         },
       },
       include: { moves: true },
     });
 
-    return { pickingId: picking.id, pickingNo: picking.pickingNo, status: picking.status, moveCount: picking.moves.length, message: '拣货单已创建，状态为 DRAFT' };
+    return {
+      pickingId: picking.id,
+      pickingNo: picking.pickingNo,
+      status: picking.status,
+      moveCount: picking.moves.length,
+      message: '拣货单已创建，状态为 DRAFT',
+    };
   }
   async confirmStockPicking(
     companyId: string,
@@ -494,35 +529,63 @@ export class InventoryService {
     if (!picking) throw new NotFoundException('拣货单不存在或无权限访问');
 
     if (picking.status === 'DONE') {
-      return { pickingId: picking.id, pickingNo: picking.pickingNo, status: picking.status, message: '拣货单已确认完成，跳过重复处理' };
+      return {
+        pickingId: picking.id,
+        pickingNo: picking.pickingNo,
+        status: picking.status,
+        message: '拣货单已确认完成，跳过重复处理',
+      };
     }
 
-    if (picking.status === 'CANCELLED') throw new BadRequestException('拣货单已取消，无法确认');
-    if (!picking.moves.length) throw new BadRequestException('拣货单无明细行，无法确认');
+    if (picking.status === 'CANCELLED')
+      throw new BadRequestException('拣货单已取消，无法确认');
+    if (!picking.moves.length)
+      throw new BadRequestException('拣货单无明细行，无法确认');
 
     const referenceNo = `PICKING-${picking.pickingNo}`;
     const note = payload.note ?? `拣货单确认出库：${picking.pickingNo}`;
-    const confirmedLines: Array<{ moveId: string; materialId: string; quantity: number; transactionId: string }> = [];
-    const skippedLines: Array<{ moveId: string; materialId: string; message: string }> = [];
+    const confirmedLines: Array<{
+      moveId: string;
+      materialId: string;
+      quantity: number;
+      transactionId: string;
+    }> = [];
+    const skippedLines: Array<{
+      moveId: string;
+      materialId: string;
+      message: string;
+    }> = [];
 
     await this.prisma.$transaction(async (tx) => {
       for (const move of picking.moves) {
         if (move.status === 'DONE') {
-          skippedLines.push({ moveId: move.id, materialId: move.materialId, message: '该行已执行过，跳过' });
+          skippedLines.push({
+            moveId: move.id,
+            materialId: move.materialId,
+            message: '该行已执行过，跳过',
+          });
           continue;
         }
         if (move.status === 'CANCELLED') {
-          skippedLines.push({ moveId: move.id, materialId: move.materialId, message: '该行已取消，跳过' });
+          skippedLines.push({
+            moveId: move.id,
+            materialId: move.materialId,
+            message: '该行已取消，跳过',
+          });
           continue;
         }
 
         const lineNote = `${note} (行${move.lineNo})`;
         const transaction = await this.executeStockMove(tx, {
-          companyId, materialId: move.materialId, quantity: move.quantity,
+          companyId,
+          materialId: move.materialId,
+          quantity: move.quantity,
           sourceLocationId: move.sourceLocationId ?? undefined,
           destLocationId: move.destLocationId ?? undefined,
           batchNo: move.batchNo ?? undefined,
-          referenceNo, note: lineNote, operatorId: operatorId || 'SYSTEM',
+          referenceNo,
+          note: lineNote,
+          operatorId: operatorId || 'SYSTEM',
         });
 
         await tx.stockMove.update({
@@ -530,7 +593,12 @@ export class InventoryService {
           data: { status: 'DONE', quantityDone: move.quantity },
         });
 
-        confirmedLines.push({ moveId: move.id, materialId: move.materialId, quantity: move.quantity, transactionId: transaction.id });
+        confirmedLines.push({
+          moveId: move.id,
+          materialId: move.materialId,
+          quantity: move.quantity,
+          transactionId: transaction.id,
+        });
       }
 
       await tx.stockPicking.update({
@@ -548,14 +616,20 @@ export class InventoryService {
 
     for (const line of confirmedLines) {
       this.eventEmitter.emit('inventory.stock_depleted', {
-        companyId, referenceNo, materialId: line.materialId,
-        quantity: line.quantity, operatorId: operatorId || 'SYSTEM',
+        companyId,
+        referenceNo,
+        materialId: line.materialId,
+        quantity: line.quantity,
+        operatorId: operatorId || 'SYSTEM',
       });
     }
 
     return {
-      pickingId: picking.id, pickingNo: picking.pickingNo, status: 'DONE',
-      confirmedLines, skippedLines,
+      pickingId: picking.id,
+      pickingNo: picking.pickingNo,
+      status: 'DONE',
+      confirmedLines,
+      skippedLines,
       message: `拣货单已确认完成，${confirmedLines.length} 行已执行`,
     };
   }
@@ -571,9 +645,11 @@ export class InventoryService {
 
     const [data, total] = await Promise.all([
       this.prisma.stockPicking.findMany({
-        where, include: { moves: true },
+        where,
+        include: { moves: true },
         orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit, take: limit,
+        skip: (page - 1) * limit,
+        take: limit,
       }),
       this.prisma.stockPicking.count({ where }),
     ]);

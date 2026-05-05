@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { EntryPostingStatus, TaxNature, Prisma } from '@prisma/client';
+import { EntryPostingStatus, TaxNature } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaxService } from '../core/tax/tax.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
@@ -14,6 +14,21 @@ import {
   CreateVendorBillDto,
   RecordVendorBillPaymentDto,
 } from './dto/vendor-bill.dto';
+
+type ResolvedTaxCode = Awaited<ReturnType<TaxService['resolveTaxCode']>>;
+
+type CalculatedVendorBillLine = {
+  materialId: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  subTotal: number;
+  taxAmount: number;
+  taxRate: number;
+  taxCodeId: string | null;
+  accountId?: string;
+  description?: string;
+};
 
 @Injectable()
 export class VendorBillService {
@@ -44,12 +59,12 @@ export class VendorBillService {
       });
       if (!receipt) throw new NotFoundException('入库单不存在');
       if (receipt.partnerId !== dto.partnerId) {
-        throw new BadRequestException('入库单供应商与发票供应商不匹�?);
+        throw new BadRequestException('入库单供应商与发票供应商不匹配');
       }
     }
 
     if (!dto.lines || dto.lines.length === 0) {
-      throw new BadRequestException('采购发票至少需要一行明�?);
+      throw new BadRequestException('采购发票至少需要一行明细');
     }
 
     const resolvedTaxCode = await this.taxService.resolveTaxCode(
@@ -63,17 +78,7 @@ export class VendorBillService {
       dto.lines,
       resolvedTaxCode,
     );
-
-    const totalAmount = this.taxService.round2(
-      lineResults.reduce((sum, l) => sum + l.lineTotal, 0),
-    );
-    const totalSubTotal = this.taxService.round2(
-      lineResults.reduce((sum, l) => sum + l.subTotal, 0),
-    );
-    const totalTaxAmount = this.taxService.round2(
-      lineResults.reduce((sum, l) => sum + l.taxAmount, 0),
-    );
-
+    const totals = this.calculateTotals(lineResults);
     const invoiceNo = dto.invoiceNo ?? 'VB-' + Date.now();
 
     return this.prisma.$transaction(async (tx) => {
@@ -82,9 +87,9 @@ export class VendorBillService {
           invoiceNo,
           partnerId: dto.partnerId,
           receiptId: dto.receiptId ?? null,
-          amount: totalAmount,
-          subTotal: totalSubTotal,
-          taxAmount: totalTaxAmount,
+          amount: totals.totalAmount,
+          subTotal: totals.totalSubTotal,
+          taxAmount: totals.totalTaxAmount,
           taxRate: resolvedTaxCode.rate,
           taxCodeId: resolvedTaxCode.id ?? null,
           taxNature: TaxNature.INPUT,
@@ -94,17 +99,17 @@ export class VendorBillService {
           dueDate: new Date(dto.dueDate),
           notes: dto.notes ?? null,
           lines: {
-            create: lineResults.map((l) => ({
-              materialId: l.materialId,
-              quantity: l.quantity,
-              unitPrice: l.unitPrice,
-              lineTotal: l.lineTotal,
-              subTotal: l.subTotal,
-              taxAmount: l.taxAmount,
-              taxRate: l.taxRate,
-              taxCodeId: l.taxCodeId,
-              accountId: l.accountId ?? null,
-              description: l.description ?? null,
+            create: lineResults.map((line) => ({
+              materialId: line.materialId,
+              quantity: line.quantity,
+              unitPrice: line.unitPrice,
+              lineTotal: line.lineTotal,
+              subTotal: line.subTotal,
+              taxAmount: line.taxAmount,
+              taxRate: line.taxRate,
+              taxCodeId: line.taxCodeId,
+              accountId: line.accountId ?? null,
+              description: line.description ?? null,
             })),
           },
         },
@@ -121,7 +126,7 @@ export class VendorBillService {
             invoiceNo: created.invoiceNo,
             partnerId: dto.partnerId,
             receiptId: dto.receiptId ?? null,
-            amount: totalAmount,
+            amount: totals.totalAmount,
             lineCount: lineResults.length,
           },
           companyId,
@@ -132,7 +137,11 @@ export class VendorBillService {
     });
   }
 
-  async createDraftFromReceipt(companyId: string, receiptId: string, operatorId: string) {
+  async createDraftFromReceipt(
+    companyId: string,
+    receiptId: string,
+    operatorId: string,
+  ) {
     const receipt = await this.prisma.goodsReceipt.findFirst({
       where: { id: receiptId, companyId, status: 'CONFIRMED' },
       include: { lines: { include: { material: true } }, partner: true },
@@ -144,44 +153,83 @@ export class VendorBillService {
       select: { id: true },
     });
     if (existing) {
-      this.logger.warn(`入库�?${receipt.receiptNo} 已关联应付单，跳过`);
+      this.logger.warn(`入库单 ${receipt.receiptNo} 已关联应付单，跳过`);
       return existing;
     }
 
-    const resolvedTaxCode = await this.taxService.resolveTaxCode(companyId, null);
-    const lineResults = receipt.lines.map((line) => {
-      const unitPrice = Number(line.material?.unitPrice ?? 0);
-      const lineTotal = this.taxService.round2(line.quantity * unitPrice);
-      const bd = this.taxService.calcTaxBreakdown(lineTotal, resolvedTaxCode.rate, resolvedTaxCode.isTaxInclusive, TaxNature.INPUT);
-      return { materialId: line.materialId, quantity: line.quantity, unitPrice, lineTotal, subTotal: bd.subTotal, taxAmount: bd.taxAmount, taxRate: bd.taxRate, taxCodeId: resolvedTaxCode.id ?? null };
-    });
+    const resolvedTaxCode = await this.taxService.resolveTaxCode(
+      companyId,
+      null,
+    );
+    const lineResults: CalculatedVendorBillLine[] = receipt.lines.map(
+      (line) => {
+        const unitPrice = Number(line.material?.unitPrice ?? 0);
+        const lineTotal = this.taxService.round2(line.quantity * unitPrice);
+        const breakdown = this.taxService.calcTaxBreakdown(
+          lineTotal,
+          resolvedTaxCode.rate,
+          resolvedTaxCode.isTaxInclusive,
+          TaxNature.INPUT,
+        );
+        return {
+          materialId: line.materialId,
+          quantity: line.quantity,
+          unitPrice,
+          lineTotal,
+          subTotal: breakdown.subTotal,
+          taxAmount: breakdown.taxAmount,
+          taxRate: breakdown.taxRate,
+          taxCodeId: resolvedTaxCode.id ?? null,
+        };
+      },
+    );
 
-    const totalAmount = this.taxService.round2(lineResults.reduce((s, l) => s + l.lineTotal, 0));
-    const totalSubTotal = this.taxService.round2(lineResults.reduce((s, l) => s + l.subTotal, 0));
-    const totalTaxAmount = this.taxService.round2(lineResults.reduce((s, l) => s + l.taxAmount, 0));
+    const totals = this.calculateTotals(lineResults);
 
     const invoice = await this.prisma.$transaction(async (tx) => {
       const created = await tx.purchaseInvoice.create({
         data: {
-          invoiceNo: 'VB-' + Date.now(), partnerId: receipt.partnerId, receiptId,
-          amount: totalAmount, subTotal: totalSubTotal, taxAmount: totalTaxAmount,
-          taxRate: resolvedTaxCode.rate, taxCodeId: resolvedTaxCode.id ?? null,
-          taxNature: TaxNature.INPUT, status: 'DRAFT', postingStatus: EntryPostingStatus.DRAFT,
-          companyId, dueDate: new Date(Date.now() + 30 * 86400000),
+          invoiceNo: 'VB-' + Date.now(),
+          partnerId: receipt.partnerId,
+          receiptId,
+          amount: totals.totalAmount,
+          subTotal: totals.totalSubTotal,
+          taxAmount: totals.totalTaxAmount,
+          taxRate: resolvedTaxCode.rate,
+          taxCodeId: resolvedTaxCode.id ?? null,
+          taxNature: TaxNature.INPUT,
+          status: 'DRAFT',
+          postingStatus: EntryPostingStatus.DRAFT,
+          companyId,
+          dueDate: new Date(Date.now() + 30 * 86400000),
           notes: `自动生成自入库单 ${receipt.receiptNo}`,
-          lines: { create: lineResults.map((l) => ({ ...l })) },
+          lines: { create: lineResults },
         },
         include: { lines: true },
       });
 
       await tx.auditLog.create({
-        data: { userId: operatorId, action: 'AUTO_CREATE_VENDOR_BILL', entity: 'PurchaseInvoice', entityId: created.id, details: { invoiceNo: created.invoiceNo, receiptId, receiptNo: receipt.receiptNo, amount: totalAmount }, companyId },
+        data: {
+          userId: operatorId,
+          action: 'AUTO_CREATE_VENDOR_BILL',
+          entity: 'PurchaseInvoice',
+          entityId: created.id,
+          details: {
+            invoiceNo: created.invoiceNo,
+            receiptId,
+            receiptNo: receipt.receiptNo,
+            amount: totals.totalAmount,
+          },
+          companyId,
+        },
       });
 
       return created;
     });
 
-    this.logger.log(`入库�?${receipt.receiptNo} 自动生成应付草稿 ${invoice.invoiceNo}`);
+    this.logger.log(
+      `入库单 ${receipt.receiptNo} 自动生成应付草稿 ${invoice.invoiceNo}`,
+    );
     return invoice;
   }
 
@@ -193,12 +241,18 @@ export class VendorBillService {
         where,
         include: {
           partner: { select: { id: true, name: true, code: true } },
-          lines: { include: { material: { select: { id: true, name: true, sku: true } } } },
-          payments: true, taxCode: true,
+          lines: {
+            include: {
+              material: { select: { id: true, name: true, sku: true } },
+            },
+          },
+          payments: true,
+          taxCode: true,
           receipt: { select: { id: true, receiptNo: true } },
         },
         orderBy: { issuedDate: 'desc' },
-        skip: (page - 1) * limit, take: limit,
+        skip: (page - 1) * limit,
+        take: limit,
       }),
       this.prisma.purchaseInvoice.count({ where }),
     ]);
@@ -209,11 +263,14 @@ export class VendorBillService {
     const invoice = await this.prisma.purchaseInvoice.findFirst({
       where: { id, companyId },
       include: {
-        partner: true, lines: { include: { material: true, taxCode: true } },
-        payments: true, taxCode: true, receipt: { include: { lines: true } },
+        partner: true,
+        lines: { include: { material: true, taxCode: true } },
+        payments: true,
+        taxCode: true,
+        receipt: { include: { lines: true } },
       },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存�?);
+    if (!invoice) throw new NotFoundException('采购发票不存在');
     return invoice;
   }
 
@@ -222,35 +279,63 @@ export class VendorBillService {
       where: { id, companyId },
       select: { id: true, status: true, invoiceNo: true },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存�?);
-    if (invoice.status !== 'DRAFT') throw new BadRequestException('只有草稿状态的应付单才能确�?);
+    if (!invoice) throw new NotFoundException('采购发票不存在');
+    if (invoice.status !== 'DRAFT')
+      throw new BadRequestException('只有草稿状态的应付单才能确认');
 
     return this.prisma.$transaction(async (tx) => {
-      const result = await tx.purchaseInvoice.update({ where: { id }, data: { status: 'UNPAID' } });
+      const result = await tx.purchaseInvoice.update({
+        where: { id },
+        data: { status: 'UNPAID' },
+      });
       await tx.auditLog.create({
-        data: { userId: operatorId, action: 'CONFIRM_VENDOR_BILL', entity: 'PurchaseInvoice', entityId: id, details: { invoiceNo: invoice.invoiceNo }, companyId },
+        data: {
+          userId: operatorId,
+          action: 'CONFIRM_VENDOR_BILL',
+          entity: 'PurchaseInvoice',
+          entityId: id,
+          details: { invoiceNo: invoice.invoiceNo },
+          companyId,
+        },
       });
       return result;
     });
   }
 
-  async recordPayment(companyId: string, invoiceId: string, dto: RecordVendorBillPaymentDto) {
+  async recordPayment(
+    companyId: string,
+    invoiceId: string,
+    dto: RecordVendorBillPaymentDto,
+  ) {
     const invoice = await this.prisma.purchaseInvoice.findFirst({
       where: { id: invoiceId, companyId },
       include: { payments: true },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存�?);
-    if (invoice.status === 'DRAFT') throw new BadRequestException('请先确认应付单再登记付款');
+    if (!invoice) throw new NotFoundException('采购发票不存在');
+    if (invoice.status === 'DRAFT')
+      throw new BadRequestException('请先确认应付单再登记付款');
 
     return this.prisma.$transaction(async (tx) => {
       const payment = await tx.vendorBillPayment.create({
-        data: { invoiceId, amount: dto.amount, method: dto.method, notes: dto.notes ?? null },
+        data: {
+          invoiceId,
+          amount: dto.amount,
+          method: dto.method,
+          notes: dto.notes ?? null,
+        },
       });
-      const totalPaid = invoice.payments.reduce((sum, p) => sum + p.amount, 0) + dto.amount;
+      const totalPaid =
+        invoice.payments.reduce(
+          (sum, paymentItem) => sum + paymentItem.amount,
+          0,
+        ) + dto.amount;
       let newStatus = invoice.status;
       if (totalPaid >= invoice.amount) newStatus = 'PAID';
       else if (totalPaid > 0) newStatus = 'PARTIAL';
-      await tx.purchaseInvoice.update({ where: { id: invoiceId }, data: { status: newStatus } });
+      await tx.purchaseInvoice.update({
+        where: { id: invoiceId },
+        data: { status: newStatus },
+      });
       return payment;
     });
   }
@@ -258,14 +343,28 @@ export class VendorBillService {
   async post(companyId: string, invoiceId: string, operatorId: string) {
     const invoice = await this.prisma.purchaseInvoice.findFirst({
       where: { id: invoiceId, companyId },
-      include: { partner: { select: { id: true } }, taxCode: { include: { account: true, outputAccount: true, inputAccount: true } } },
+      include: {
+        partner: { select: { id: true } },
+        taxCode: {
+          include: { account: true, outputAccount: true, inputAccount: true },
+        },
+      },
     });
-    if (!invoice) throw new NotFoundException('采购发票不存�?);
-    // 三单匹配校验：过账前必须通过匹配
-    await this.threeWayMatchService.validateAndPersist(companyId, invoiceId, operatorId);
+    if (!invoice) throw new NotFoundException('采购发票不存在');
+
+    await this.threeWayMatchService.validateAndPersist(
+      companyId,
+      invoiceId,
+      operatorId,
+    );
 
     if (invoice.postingStatus === EntryPostingStatus.POSTED) {
-      return { invoiceId: invoice.id, invoiceNo: invoice.invoiceNo, postingStatus: invoice.postingStatus, message: '采购发票已过账，无需重复处理' };
+      return {
+        invoiceId: invoice.id,
+        invoiceNo: invoice.invoiceNo,
+        postingStatus: invoice.postingStatus,
+        message: '采购发票已过账，无需重复处理',
+      };
     }
 
     const amount = this.taxService.round2(Number(invoice.amount));
@@ -279,17 +378,39 @@ export class VendorBillService {
     const taxCodeId = invoice.taxCodeId ?? null;
     let taxAccountId: string | null = null;
     if (taxCodeId) {
-      const resolved = await this.taxService.resolveTaxCode(companyId, taxCodeId);
+      const resolved = await this.taxService.resolveTaxCode(
+        companyId,
+        taxCodeId,
+      );
       taxAccountId = this.taxService.getTaxAccountId(resolved);
     }
 
     await this.prisma.auditLog.create({
-      data: { userId: operatorId, action: 'POST_VENDOR_BILL', entity: 'PurchaseInvoice', entityId: invoice.id, details: { invoiceNo: invoice.invoiceNo, taxCodeId, taxRate: invoice.taxRate, taxNature: invoice.taxNature, taxAccountId, amount }, companyId },
+      data: {
+        userId: operatorId,
+        action: 'POST_VENDOR_BILL',
+        entity: 'PurchaseInvoice',
+        entityId: invoice.id,
+        details: {
+          invoiceNo: invoice.invoiceNo,
+          taxCodeId,
+          taxRate: invoice.taxRate,
+          taxNature: invoice.taxNature,
+          taxAccountId,
+          amount,
+        },
+        companyId,
+      },
     });
 
     this.eventEmitter.emit('finance.vendor_bill.posted', {
-      companyId, idempotencyKey: 'vendor_bill_posted:' + invoice.id,
-      invoiceId: invoice.id, taxCodeId, taxAccountId, taxRate: invoice.taxRate ?? 0.13, operatorId,
+      companyId,
+      idempotencyKey: 'vendor_bill_posted:' + invoice.id,
+      invoiceId: invoice.id,
+      taxCodeId,
+      taxAccountId,
+      taxRate: invoice.taxRate ?? 0.13,
+      operatorId,
     });
 
     return updated;
@@ -297,21 +418,63 @@ export class VendorBillService {
 
   private async calculateLines(
     companyId: string,
-    lines: Array<{ materialId: string; quantity: number; unitPrice: number; taxCodeId?: string; description?: string }>,
-    defaultTaxCode: Awaited<ReturnType<TaxService['resolveTaxCode']>>,
-  ) {
-    const results: Array<{ materialId: string; quantity: number; unitPrice: number; lineTotal: number; subTotal: number; taxAmount: number; taxRate: number; taxCodeId: string | null; accountId?: string; description?: string }> = [];
+    lines: Array<{
+      materialId: string;
+      quantity: number;
+      unitPrice: number;
+      taxCodeId?: string;
+      accountId?: string;
+      description?: string;
+    }>,
+    defaultTaxCode: ResolvedTaxCode,
+  ): Promise<CalculatedVendorBillLine[]> {
+    const results: CalculatedVendorBillLine[] = [];
     for (const line of lines) {
-      const material = await this.prisma.material.findFirst({ where: { id: line.materialId }, select: { id: true } });
-      if (!material) throw new NotFoundException(`物料不存�? ${line.materialId}`);
+      const material = await this.prisma.material.findFirst({
+        where: { id: line.materialId, companyId },
+        select: { id: true },
+      });
+      if (!material)
+        throw new NotFoundException(`物料不存在: ${line.materialId}`);
 
-      let lineTaxCode = defaultTaxCode;
-      if (line.taxCodeId) lineTaxCode = await this.taxService.resolveTaxCode(companyId, line.taxCodeId);
+      const lineTaxCode = line.taxCodeId
+        ? await this.taxService.resolveTaxCode(companyId, line.taxCodeId)
+        : defaultTaxCode;
 
       const lineTotal = this.taxService.round2(line.quantity * line.unitPrice);
-      const bd = this.taxService.calcTaxBreakdown(lineTotal, lineTaxCode.rate, lineTaxCode.isTaxInclusive, TaxNature.INPUT);
-      results.push({ materialId: line.materialId, quantity: line.quantity, unitPrice: line.unitPrice, lineTotal, subTotal: bd.subTotal, taxAmount: bd.taxAmount, taxRate: bd.taxRate, taxCodeId: lineTaxCode.id ?? null, accountId: line.accountId, description: line.description });
+      const breakdown = this.taxService.calcTaxBreakdown(
+        lineTotal,
+        lineTaxCode.rate,
+        lineTaxCode.isTaxInclusive,
+        TaxNature.INPUT,
+      );
+      results.push({
+        materialId: line.materialId,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal,
+        subTotal: breakdown.subTotal,
+        taxAmount: breakdown.taxAmount,
+        taxRate: breakdown.taxRate,
+        taxCodeId: lineTaxCode.id ?? null,
+        accountId: line.accountId,
+        description: line.description,
+      });
     }
     return results;
+  }
+
+  private calculateTotals(lines: CalculatedVendorBillLine[]) {
+    return {
+      totalAmount: this.taxService.round2(
+        lines.reduce((sum, line) => sum + line.lineTotal, 0),
+      ),
+      totalSubTotal: this.taxService.round2(
+        lines.reduce((sum, line) => sum + line.subTotal, 0),
+      ),
+      totalTaxAmount: this.taxService.round2(
+        lines.reduce((sum, line) => sum + line.taxAmount, 0),
+      ),
+    };
   }
 }

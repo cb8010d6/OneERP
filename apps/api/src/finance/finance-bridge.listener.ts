@@ -130,11 +130,17 @@ export class FinanceBridgeListener {
 
       if (invoice?.invoiceNo) {
         const existing = await this.prisma.journalEntry.findFirst({
-          where: { companyId: payload.companyId, ref: invoice.invoiceNo, journal: { code: 'PUR' } },
+          where: {
+            companyId: payload.companyId,
+            ref: invoice.invoiceNo,
+            journal: { code: 'PUR' },
+          },
           select: { id: true },
         });
         if (existing) {
-          this.logger.debug(`幂等跳过采购凭证: ref=${invoice.invoiceNo} 已存在 (id=${existing.id})`);
+          this.logger.debug(
+            `幂等跳过采购凭证: ref=${invoice.invoiceNo} 已存在 (id=${existing.id})`,
+          );
           return;
         }
       }

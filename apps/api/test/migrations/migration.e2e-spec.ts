@@ -66,7 +66,10 @@ async function dropAllTables(client: Client): Promise<void> {
 }
 
 /** 获取指定表的所有列名 */
-async function getColumns(client: Client, tableName: string): Promise<Set<string>> {
+async function getColumns(
+  client: Client,
+  tableName: string,
+): Promise<Set<string>> {
   const res = await client.query(
     `SELECT column_name FROM information_schema.columns
      WHERE table_schema = 'public' AND table_name = $1`,
@@ -76,7 +79,10 @@ async function getColumns(client: Client, tableName: string): Promise<Set<string
 }
 
 /** 检查表是否存在 */
-async function tableExists(client: Client, tableName: string): Promise<boolean> {
+async function tableExists(
+  client: Client,
+  tableName: string,
+): Promise<boolean> {
   const res = await client.query(
     `SELECT EXISTS (
        SELECT 1 FROM information_schema.tables
@@ -91,12 +97,38 @@ async function tableExists(client: Client, tableName: string): Promise<boolean> 
 // 按 Prisma schema 期望的完整表清单
 // ---------------------------------------------------------------------------
 const EXPECTED_TABLES = [
-  'Company', 'User', 'Role', 'UserCompanyRole', 'Department', 'Partner',
-  'TaxCode', 'Order', 'OrderItem', 'Warehouse', 'StockLocation', 'Material',
-  'ProductCategory', 'Product', 'Bom', 'BomLine', 'StockQuant', 'FileRecord',
-  'InventoryTransaction', 'Workflow', 'WorkflowState', 'WorkflowTransition',
-  'WorkOrder', 'WorkReport', 'Invoice', 'Payment', 'Account', 'Journal',
-  'JournalEntry', 'JournalEntryLine', 'EventDlq', 'AuditLog',
+  'Company',
+  'User',
+  'Role',
+  'UserCompanyRole',
+  'Department',
+  'Partner',
+  'TaxCode',
+  'Order',
+  'OrderItem',
+  'Warehouse',
+  'StockLocation',
+  'Material',
+  'ProductCategory',
+  'Product',
+  'Bom',
+  'BomLine',
+  'StockQuant',
+  'FileRecord',
+  'InventoryTransaction',
+  'Workflow',
+  'WorkflowState',
+  'WorkflowTransition',
+  'WorkOrder',
+  'WorkReport',
+  'Invoice',
+  'Payment',
+  'Account',
+  'Journal',
+  'JournalEntry',
+  'JournalEntryLine',
+  'EventDlq',
+  'AuditLog',
 ];
 
 // ---------------------------------------------------------------------------
@@ -109,7 +141,9 @@ describe('Prisma 迁移集成测试', () => {
 
   beforeAll(async () => {
     if (!databaseUrl) {
-      throw new Error('DATABASE_URL 环境变量未设置。请指向测试 PostgreSQL 数据库。');
+      throw new Error(
+        'DATABASE_URL 环境变量未设置。请指向测试 PostgreSQL 数据库。',
+      );
     }
     client = new Client({ connectionString: databaseUrl });
     await client.connect();
@@ -148,8 +182,17 @@ describe('Prisma 迁移集成测试', () => {
     it('TaxCode 表应当包含全部字段', async () => {
       const cols = await getColumns(client, 'TaxCode');
       const expectedCols = [
-        'id', 'code', 'name', 'rate', 'isTaxInclusive', 'isDefault',
-        'active', 'accountId', 'companyId', 'createdAt', 'updatedAt',
+        'id',
+        'code',
+        'name',
+        'rate',
+        'isTaxInclusive',
+        'isDefault',
+        'active',
+        'accountId',
+        'companyId',
+        'createdAt',
+        'updatedAt',
       ];
       for (const col of expectedCols) {
         expect(cols.has(col)).toBe(true);
@@ -323,21 +366,27 @@ describe('Prisma 迁移集成测试', () => {
     });
 
     it('应当能插入 Partner 基础数据', async () => {
-      const res = await client.query(`
+      const res = await client.query(
+        `
         INSERT INTO "Partner" ("id", "name", "companyId", "updatedAt")
         VALUES (gen_random_uuid(), '测试客户', $1, NOW())
         RETURNING "id"
-      `, [companyId]);
+      `,
+        [companyId],
+      );
       partnerId = res.rows[0].id;
       expect(partnerId).toBeTruthy();
     });
 
     it('应当能创建 TaxCode 主数据', async () => {
-      const res = await client.query(`
+      const res = await client.query(
+        `
         INSERT INTO "TaxCode" ("id", "code", "name", "rate", "companyId", "updatedAt")
         VALUES (gen_random_uuid(), 'VAT_13', '增值税 13%', 0.13, $1, NOW())
         RETURNING "id", "code", "rate"
-      `, [companyId]);
+      `,
+        [companyId],
+      );
       expect(res.rows[0].code).toBe('VAT_13');
       expect(Number(res.rows[0].rate)).toBeCloseTo(0.13);
     });
@@ -346,17 +395,23 @@ describe('Prisma 迁移集成测试', () => {
       let orderId: string;
 
       it('应当能创建不含 taxCodeId 的历史订单（模拟旧数据）', async () => {
-        const res = await client.query(`
+        const res = await client.query(
+          `
           INSERT INTO "Order" ("id", "orderNo", "partnerId", "salesId", "companyId", "status", "totalAmount", "updatedAt")
           VALUES (gen_random_uuid(), 'ORD-HIST-001', $1, $2, $3, 'DRAFT', 1000, NOW())
           RETURNING "id"
-        `, [partnerId, userId, companyId]);
+        `,
+          [partnerId, userId, companyId],
+        );
         orderId = res.rows[0].id;
 
-        const row = await client.query(`
+        const row = await client.query(
+          `
           SELECT "subTotal", "taxTotal", "taxCodeId"
           FROM "Order" WHERE "id" = $1
-        `, [orderId]);
+        `,
+          [orderId],
+        );
 
         expect(Number(row.rows[0].subTotal)).toBe(0);
         expect(Number(row.rows[0].taxTotal)).toBe(0);
@@ -364,15 +419,21 @@ describe('Prisma 迁移集成测试', () => {
       });
 
       it('应当能创建不含 taxCodeId 的历史订单行', async () => {
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO "OrderItem" ("id", "orderId", "productId", "quantity", "unitPrice", "totalPrice", "updatedAt")
           VALUES (gen_random_uuid(), $1, 'PROD-001', 10, 100, 1000, NOW())
-        `, [orderId]);
+        `,
+          [orderId],
+        );
 
-        const row = await client.query(`
+        const row = await client.query(
+          `
           SELECT "subTotal", "taxAmount", "taxRate", "taxCodeId"
           FROM "OrderItem" WHERE "orderId" = $1
-        `, [orderId]);
+        `,
+          [orderId],
+        );
 
         expect(Number(row.rows[0].subTotal)).toBe(0);
         expect(Number(row.rows[0].taxAmount)).toBe(0);
@@ -396,15 +457,19 @@ describe('Prisma 迁移集成测试', () => {
       let taxCodeId: string;
 
       it('应当能查询已创建的 TaxCode', async () => {
-        const res = await client.query(`
+        const res = await client.query(
+          `
           SELECT "id" FROM "TaxCode" WHERE "code" = 'VAT_13' AND "companyId" = $1
-        `, [companyId]);
+        `,
+          [companyId],
+        );
         expect(res.rowCount).toBe(1);
         taxCodeId = res.rows[0].id;
       });
 
       it('新订单应能关联 taxCodeId 并记录快照', async () => {
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO "Order" (
             "id", "orderNo", "partnerId", "salesId", "companyId",
             "status", "totalAmount", "subTotal", "taxTotal", "taxCodeId", "updatedAt"
@@ -412,7 +477,9 @@ describe('Prisma 迁移集成测试', () => {
             gen_random_uuid(), 'ORD-NEW-001', $1, $2, $3,
             'DRAFT', 1130, 1000, 130, $4, NOW()
           )
-        `, [partnerId, userId, companyId, taxCodeId]);
+        `,
+          [partnerId, userId, companyId, taxCodeId],
+        );
 
         const row = await client.query(`
           SELECT "subTotal", "taxTotal", "taxCodeId"
@@ -430,7 +497,8 @@ describe('Prisma 迁移集成测试', () => {
         `);
         const orderId = orderRes.rows[0].id;
 
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO "OrderItem" (
             "id", "orderId", "productId", "quantity", "unitPrice", "totalPrice",
             "subTotal", "taxAmount", "taxRate", "taxCodeId", "updatedAt"
@@ -438,12 +506,17 @@ describe('Prisma 迁移集成测试', () => {
             gen_random_uuid(), $1, 'PROD-002', 10, 100, 1130,
             1000, 130, 0.13, $2, NOW()
           )
-        `, [orderId, taxCodeId]);
+        `,
+          [orderId, taxCodeId],
+        );
 
-        const row = await client.query(`
+        const row = await client.query(
+          `
           SELECT "subTotal", "taxAmount", "taxRate", "taxCodeId"
           FROM "OrderItem" WHERE "orderId" = $1
-        `, [orderId]);
+        `,
+          [orderId],
+        );
 
         expect(Number(row.rows[0].subTotal)).toBe(1000);
         expect(Number(row.rows[0].taxAmount)).toBe(130);
@@ -459,13 +532,16 @@ describe('Prisma 迁移集成测试', () => {
         `);
         const orderId = orderRes.rows[0].id;
 
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO "Invoice" (
             "id", "invoiceNo", "orderId", "amount", "status", "companyId", "updatedAt"
           ) VALUES (
             gen_random_uuid(), 'INV-HIST-001', $1, 1000, 'UNPAID', $2, NOW()
           )
-        `, [orderId, companyId]);
+        `,
+          [orderId, companyId],
+        );
 
         const row = await client.query(`
           SELECT "subTotal", "taxAmount", "taxCodeId"
@@ -481,11 +557,15 @@ describe('Prisma 迁移集成测试', () => {
         const orderRes = await client.query(`
           SELECT "id" FROM "Order" WHERE "orderNo" = 'ORD-NEW-001'
         `);
-        const taxCodeRes = await client.query(`
+        const taxCodeRes = await client.query(
+          `
           SELECT "id" FROM "TaxCode" WHERE "code" = 'VAT_13' AND "companyId" = $1
-        `, [companyId]);
+        `,
+          [companyId],
+        );
 
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO "Invoice" (
             "id", "invoiceNo", "orderId", "amount",
             "subTotal", "taxAmount", "taxCodeId",
@@ -495,7 +575,9 @@ describe('Prisma 迁移集成测试', () => {
             1000, 130, $2,
             'UNPAID', $3, 'DRAFT', NOW()
           )
-        `, [orderRes.rows[0].id, taxCodeRes.rows[0].id, companyId]);
+        `,
+          [orderRes.rows[0].id, taxCodeRes.rows[0].id, companyId],
+        );
 
         const row = await client.query(`
           SELECT "subTotal", "taxAmount", "taxCodeId"
@@ -511,10 +593,13 @@ describe('Prisma 迁移集成测试', () => {
     describe('TaxCode 约束与索引验证', () => {
       it('同一公司下不允许重复 code', async () => {
         await expect(
-          client.query(`
+          client.query(
+            `
             INSERT INTO "TaxCode" ("id", "code", "name", "rate", "companyId", "updatedAt")
             VALUES (gen_random_uuid(), 'VAT_13', '重复税码', 0.13, $1, NOW())
-          `, [companyId]),
+          `,
+            [companyId],
+          ),
         ).rejects.toThrow(/unique/i);
       });
 
@@ -526,10 +611,13 @@ describe('Prisma 迁移集成测试', () => {
         `);
         const company2Id = res.rows[0].id;
 
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO "TaxCode" ("id", "code", "name", "rate", "companyId", "updatedAt")
           VALUES (gen_random_uuid(), 'VAT_13', '增值税 13%', 0.13, $1, NOW())
-        `, [company2Id]);
+        `,
+          [company2Id],
+        );
 
         const count = await client.query(`
           SELECT COUNT(*)::int AS cnt FROM "TaxCode" WHERE "code" = 'VAT_13'
@@ -558,7 +646,9 @@ describe('Prisma 迁移集成测试', () => {
         if (orderRes.rowCount === 0) return;
 
         const { orderId, taxCodeId } = orderRes.rows[0];
-        await client.query(`DELETE FROM "TaxCode" WHERE "id" = $1`, [taxCodeId]);
+        await client.query(`DELETE FROM "TaxCode" WHERE "id" = $1`, [
+          taxCodeId,
+        ]);
 
         const checkRes = await client.query(
           `SELECT "taxCodeId" FROM "Order" WHERE "id" = $1`,

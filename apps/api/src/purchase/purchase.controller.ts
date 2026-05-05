@@ -8,7 +8,12 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { PurchaseService } from './purchase.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
@@ -22,7 +27,9 @@ import {
   ScanReceiveDto,
 } from './dto/purchase.dto';
 
-interface CurrentUserPayload { id: string }
+interface CurrentUserPayload {
+  id: string;
+}
 
 @ApiTags('采购管理 (Purchase)')
 @ApiBearerAuth()
@@ -52,7 +59,12 @@ export class PurchaseController {
     @Query('status') status?: string,
     @Query('search') search?: string,
   ) {
-    return this.purchaseService.getPurchaseOrders(companyId, pagination, status, search);
+    return this.purchaseService.getPurchaseOrders(
+      companyId,
+      pagination,
+      status,
+      search,
+    );
   }
 
   @Get('orders/pending')
@@ -77,7 +89,11 @@ export class PurchaseController {
     @CurrentCompany() companyId: string,
     @Body() body: UpdatePurchaseOrderStatusDto,
   ) {
-    return this.purchaseService.updatePurchaseOrderStatus(orderId, companyId, body);
+    return this.purchaseService.updatePurchaseOrderStatus(
+      orderId,
+      companyId,
+      body,
+    );
   }
 
   @Post('orders/receive')

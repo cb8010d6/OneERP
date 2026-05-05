@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { TaxNature, Prisma } from '@prisma/client';
+import { TaxNature } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /** 税码解析结果，附带 fallback 标记 */
@@ -175,7 +175,13 @@ export class TaxService {
     const safeRate = Math.max(0, Math.min(1, Number(taxRate ?? 0)));
     const subTotal = this.round2(total / (1 + safeRate));
     const taxAmount = this.round2(total - subTotal);
-    return { subTotal, taxAmount, total: this.round2(total), taxRate: safeRate, taxNature };
+    return {
+      subTotal,
+      taxAmount,
+      total: this.round2(total),
+      taxRate: safeRate,
+      taxNature,
+    };
   }
 
   // ─── 内部方法 ──────────────────────────────────────

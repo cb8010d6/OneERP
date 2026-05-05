@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 interface WorkflowTargetConfig {
@@ -100,7 +101,7 @@ interface WorkflowTransitionTransaction {
         action: string;
         entity: string;
         entityId: string;
-        details: Record<string, unknown>;
+        details: Prisma.InputJsonValue;
         companyId: string;
       };
     }): Promise<unknown>;
@@ -201,7 +202,7 @@ export class WorkflowService {
     companyId: string,
     operatorId: string,
     note?: string,
-    extraData?: Record<string, unknown>,
+    extraData?: Prisma.InputJsonObject,
   ): Promise<WorkflowTransitionResult> {
     const normalizedModel = this.normalizeModelName(modelName);
     const target = WORKFLOW_TARGETS[normalizedModel];
@@ -224,11 +225,12 @@ export class WorkflowService {
       whereCondition[target.companyField] = companyId;
     }
 
-    // @ts-expect-error TODO(strict): Prisma $transaction overload inference issue
     const { updatedRecord, matchedTransition }: WorkflowTransitionTxResult =
-      // @ts-expect-error TODO(strict): Prisma transaction client typing needs full Prisma.TransactionClient
-      await this.prisma.$transaction(async (tx: WorkflowTransitionTransaction): Promise<WorkflowTransitionTxResult> => {
-          const txDelegate = tx[target.delegate as WorkflowDelegateName];
+      await this.prisma.$transaction(
+        async (tx): Promise<WorkflowTransitionTxResult> => {
+          const workflowTx = tx as unknown as WorkflowTransitionTransaction;
+          const txDelegate =
+            workflowTx[target.delegate as WorkflowDelegateName];
 
           if (!txDelegate) {
             throw new BadRequestException(`模型 ${modelName} delegate 不存在`);
@@ -239,7 +241,11 @@ export class WorkflowService {
             throw new NotFoundException('目标业务单据不存在或无权限访问');
           }
 
-          const currentState = String(record[target.statusField] ?? '');
+          const rawState = record[target.statusField];
+          const currentState =
+            typeof rawState === 'string' || typeof rawState === 'number'
+              ? String(rawState)
+              : '';
           const matched = workflow.transitions.find(
             (item) =>
               item.action === action && item.fromState.value === currentState,
@@ -269,7 +275,7 @@ export class WorkflowService {
             where: { id: recordId },
           });
 
-          await tx.auditLog.create({
+          await workflowTx.auditLog.create({
             data: {
               userId: operatorId,
               action: 'WORKFLOW_TRANSITION',

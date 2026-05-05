@@ -1,15 +1,10 @@
-import {
-  BadRequestException,
-  Injectable,
-  Logger,
-  NotFoundException,
-} from "@nestjs/common";
-import { EventEmitter2 } from "@nestjs/event-emitter";
-import { EntryPostingStatus, TaxNature, Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
-import { TaxService } from "../core/tax/tax.service";
-import { CreateInvoiceDto, CreatePaymentDto } from "./dto/finance.dto";
-import { PaginationDto } from "../core/dto/pagination.dto";
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { EntryPostingStatus, Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { TaxService } from '../core/tax/tax.service';
+import { CreateInvoiceDto, CreatePaymentDto } from './dto/finance.dto';
+import { PaginationDto } from '../core/dto/pagination.dto';
 
 @Injectable()
 export class FinanceService {
@@ -30,12 +25,12 @@ export class FinanceService {
       where: { id: dto.orderId, companyId },
       select: { id: true, taxCodeId: true },
     });
-    if (!order) throw new NotFoundException("找不到销售订单");
+    if (!order) throw new NotFoundException('找不到销售订单');
 
     const resolvedTaxCode = await this.taxService.resolveTaxCode(
       companyId,
       dto.taxCodeId ?? order.taxCodeId,
-      { operatorId, entity: "Invoice", entityId: "new" },
+      { operatorId, entity: 'Invoice', entityId: 'new' },
     );
 
     const amount = this.taxService.round2(Number(dto.amount));
@@ -47,7 +42,7 @@ export class FinanceService {
 
     const invoice = await this.prisma.invoice.create({
       data: {
-        invoiceNo: "INV-" + Date.now(),
+        invoiceNo: 'INV-' + Date.now(),
         orderId: dto.orderId,
         amount,
         subTotal: breakdown.subTotal,
@@ -56,7 +51,7 @@ export class FinanceService {
         taxNature: breakdown.taxNature,
         taxCodeId: resolvedTaxCode.id ?? null,
         dueDate: new Date(dto.dueDate),
-        status: "UNPAID",
+        status: 'UNPAID',
         postingStatus: EntryPostingStatus.DRAFT,
         companyId,
       },
@@ -65,8 +60,8 @@ export class FinanceService {
     await this.prisma.auditLog.create({
       data: {
         userId: operatorId,
-        action: "CREATE_INVOICE",
-        entity: "Invoice",
+        action: 'CREATE_INVOICE',
+        entity: 'Invoice',
         entityId: invoice.id,
         details: {
           amount,
@@ -93,7 +88,7 @@ export class FinanceService {
       this.prisma.invoice.findMany({
         where,
         include: { order: true, payments: true, taxCode: true },
-        orderBy: { issuedDate: "desc" },
+        orderBy: { issuedDate: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -112,7 +107,7 @@ export class FinanceService {
       where: { id: invoiceId, companyId },
       include: { payments: true },
     });
-    if (!inv) throw new NotFoundException("发票不存在");
+    if (!inv) throw new NotFoundException('发票不存在');
 
     return this.prisma.$transaction(async (tx) => {
       const payment = await tx.payment.create({
@@ -127,8 +122,8 @@ export class FinanceService {
         inv.payments.reduce((sum, p) => sum + p.amount, 0) + dto.amount;
 
       let newStatus = inv.status;
-      if (totalPaid >= inv.amount) newStatus = "PAID";
-      else if (totalPaid > 0) newStatus = "PARTIAL";
+      if (totalPaid >= inv.amount) newStatus = 'PAID';
+      else if (totalPaid > 0) newStatus = 'PARTIAL';
 
       await tx.invoice.update({
         where: { id: invoiceId },
@@ -143,11 +138,7 @@ export class FinanceService {
    * 过账发票 — 使用保存在发票上的价税快照，禁止重新按当前税率覆盖历史金额。
    * 只有在 subTotal/taxAmount 均为 0 的历史遗留数据上才做一次性的兜底计算。
    */
-  async postInvoice(
-    companyId: string,
-    invoiceId: string,
-    operatorId: string,
-  ) {
+  async postInvoice(companyId: string, invoiceId: string, operatorId: string) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { id: invoiceId, companyId },
       include: {
@@ -156,7 +147,7 @@ export class FinanceService {
       },
     });
     if (!invoice) {
-      throw new NotFoundException("发票不存在");
+      throw new NotFoundException('发票不存在');
     }
 
     if (invoice.postingStatus === EntryPostingStatus.POSTED) {
@@ -164,7 +155,7 @@ export class FinanceService {
         invoiceId: invoice.id,
         invoiceNo: invoice.invoiceNo,
         postingStatus: invoice.postingStatus,
-        message: "发票已过账，无需重复处理",
+        message: '发票已过账，无需重复处理',
       };
     }
 
@@ -181,12 +172,15 @@ export class FinanceService {
       const breakdown = this.taxService.calcTaxFromTotal(
         amount,
         fallbackRate,
-        invoice.taxNature as TaxNature,
+        invoice.taxNature,
       );
       subTotal = breakdown.subTotal;
       taxAmount = breakdown.taxAmount;
       this.logger.warn(
-        "发票缺少价税快照，过账时兜底计算: invoiceNo=" + invoice.invoiceNo + " rate=" + fallbackRate,
+        '发票缺少价税快照，过账时兜底计算: invoiceNo=' +
+          invoice.invoiceNo +
+          ' rate=' +
+          fallbackRate,
       );
     }
 
@@ -209,15 +203,18 @@ export class FinanceService {
     const taxCodeId = invoice.taxCodeId ?? invoice.order?.taxCodeId ?? null;
     let taxAccountId: string | null = null;
     if (taxCodeId) {
-      const resolved = await this.taxService.resolveTaxCode(companyId, taxCodeId);
+      const resolved = await this.taxService.resolveTaxCode(
+        companyId,
+        taxCodeId,
+      );
       taxAccountId = this.taxService.getTaxAccountId(resolved);
     }
 
     await this.prisma.auditLog.create({
       data: {
         userId: operatorId,
-        action: "POST_INVOICE",
-        entity: "invoice",
+        action: 'POST_INVOICE',
+        entity: 'invoice',
         entityId: invoice.id,
         details: {
           invoiceNo: invoice.invoiceNo,
@@ -231,9 +228,9 @@ export class FinanceService {
       },
     });
 
-    this.eventEmitter.emit("finance.invoice.posted", {
+    this.eventEmitter.emit('finance.invoice.posted', {
       companyId,
-      idempotencyKey: "invoice_posted:" + invoice.id,
+      idempotencyKey: 'invoice_posted:' + invoice.id,
       invoiceId: invoice.id,
       taxCodeId,
       taxAccountId,

@@ -2,7 +2,7 @@
 
 > **最后更新**: 2026-05-05  
 > **维护者**: Core Team / 架构师  
-> **关联文档**: [STANDARDS.md](./STANDARDS.md) · [PROJECT_PLAN_AND_STATUS.md](../plans/PROJECT_PLAN_AND_STATUS.md)
+> **关联文档**: [STANDARDS.md](./STANDARDS.md) · [QUALITY_GATES.md](./QUALITY_GATES.md) · [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) · [PROJECT_PLAN_AND_STATUS.md](../plans/PROJECT_PLAN_AND_STATUS.md)
 
 ---
 
@@ -287,6 +287,21 @@ GitHub Actions
 | 税务引擎 | ✅ 60% | TaxCode 模型 + 动态解析已落地 |
 | 安全加固 | ⚠️ 40% | 应用层租户隔离，RLS 待增强 |
 | 可观测性 | ⚠️ 20% | 基础日志，无 APM/告警 |
+
+---
+
+## 11. Agent 接手原则
+
+本仓库不要求 agent 每次从零理解。接手任务时先读固定入口：
+
+1. `README.md`
+2. `docs/architecture/ARCHITECTURE.md`
+3. `docs/architecture/STANDARDS.md`
+4. `docs/architecture/QUALITY_GATES.md`
+5. `docs/architecture/DEVELOPMENT_WORKFLOW.md`
+6. 任务涉及的模块文件与测试
+
+更多分支、CI、多 agent 协作和新手维护流程见 [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md)。
 
 ---
 

@@ -615,9 +615,37 @@ export class MetadataService {
         companyScoped: true,
         fields: [
           { name: 'invoiceNo', label: '发票号', type: 'string' },
-          { name: 'partnerId', label: '供应商', type: 'reference', reference: { model: 'partner', labelField: 'name', valueField: 'id', relationField: 'partner' } },
-          { name: 'taxCodeId', label: '税码', type: 'reference', reference: { model: 'taxCode', labelField: 'name', valueField: 'id', relationField: 'taxCode' } },
-          { name: 'taxNature', label: '税务属性', type: 'select', options: [{ label: '进项税', value: 'INPUT' }, { label: '销项税', value: 'OUTPUT' }] },
+          {
+            name: 'partnerId',
+            label: '供应商',
+            type: 'reference',
+            reference: {
+              model: 'partner',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'partner',
+            },
+          },
+          {
+            name: 'taxCodeId',
+            label: '税码',
+            type: 'reference',
+            reference: {
+              model: 'taxCode',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'taxCode',
+            },
+          },
+          {
+            name: 'taxNature',
+            label: '税务属性',
+            type: 'select',
+            options: [
+              { label: '进项税', value: 'INPUT' },
+              { label: '销项税', value: 'OUTPUT' },
+            ],
+          },
           { name: 'status', label: '状态', type: 'string' },
           { name: 'subTotal', label: '未税金额', type: 'number' },
           { name: 'taxAmount', label: '税额', type: 'number' },
@@ -625,9 +653,29 @@ export class MetadataService {
           { name: 'dueDate', label: '到期日', type: 'date' },
         ],
         views: {
-          form: { fields: ['invoiceNo', 'partnerId', 'taxCodeId', 'taxNature', 'status', 'amount', 'dueDate'] },
+          form: {
+            fields: [
+              'invoiceNo',
+              'partnerId',
+              'taxCodeId',
+              'taxNature',
+              'status',
+              'amount',
+              'dueDate',
+            ],
+          },
           list: {
-            columns: ['invoiceNo', 'partnerId', 'taxCodeId', 'taxNature', 'status', 'subTotal', 'taxAmount', 'amount', 'dueDate'],
+            columns: [
+              'invoiceNo',
+              'partnerId',
+              'taxCodeId',
+              'taxNature',
+              'status',
+              'subTotal',
+              'taxAmount',
+              'amount',
+              'dueDate',
+            ],
             defaultSort: { createdAt: 'desc' },
             searchFields: ['invoiceNo', 'status'],
           },

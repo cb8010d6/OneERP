@@ -92,9 +92,9 @@ describe('TaxService', () => {
 
     it('should throw when explicit taxCodeId not found', async () => {
       prisma.taxCode.findFirst.mockResolvedValue(null);
-      await expect(
-        service.resolveTaxCode('c1', 'nonexistent'),
-      ).rejects.toThrow('税码不存在或已停用');
+      await expect(service.resolveTaxCode('c1', 'nonexistent')).rejects.toThrow(
+        '税码不存在或已停用',
+      );
     });
 
     it('should return default tax code when no explicit id', async () => {

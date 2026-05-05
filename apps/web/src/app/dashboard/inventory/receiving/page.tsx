@@ -3,16 +3,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/api';
 import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  Hash,
+  Loader2,
+  MapPin,
   Package,
   Scan,
   Search,
-  CheckCircle2,
-  Loader2,
   Truck,
-  MapPin,
-  Hash,
-  AlertTriangle,
-  ChevronDown,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -60,13 +60,14 @@ interface StockLocation {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    CONFIRMED: { label: 'ÒÑÈ·ÈÏ', cls: 'erp-badge--info' },
-    PARTIALLY_RECEIVED: { label: '²¿·ÖÊÕ»õ', cls: 'erp-badge--pending' },
-    RECEIVED: { label: 'ÒÑÊÕ»õ', cls: 'erp-badge--success' },
+    CONFIRMED: { label: 'å·²ç¡®è®¤', cls: 'erp-badge--info' },
+    PARTIALLY_RECEIVED: { label: 'éƒ¨åˆ†æ”¶è´§', cls: 'erp-badge--pending' },
+    RECEIVED: { label: 'å·²æ”¶è´§', cls: 'erp-badge--success' },
   };
   const s = map[status] ?? { label: status, cls: '' };
   return <span className={`erp-badge ${s.cls}`}>{s.label}</span>;
 }
+
 export default function ReceivingPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
   const [locations, setLocations] = useState<StockLocation[]>([]);
@@ -93,7 +94,7 @@ export default function ReceivingPage() {
       const res = await api.get<PurchaseOrder[]>('/purchase/orders/pending');
       setOrders(res.data ?? []);
     } catch {
-      toast.error('¼ÓÔØ²É¹ºµ¥Ê§°Ü');
+      toast.error('åŠ è½½é‡‡è´­å•å¤±è´¥');
     } finally {
       setLoading(false);
     }
@@ -108,7 +109,7 @@ export default function ReceivingPage() {
       setWarehouses(whRes.data ?? []);
       setLocations(locRes.data ?? []);
     } catch {
-      toast.error('¼ÓÔØ¿âÎ»ĞÅÏ¢Ê§°Ü');
+      toast.error('åŠ è½½åº“ä½ä¿¡æ¯å¤±è´¥');
     }
   }, []);
 
@@ -135,12 +136,13 @@ export default function ReceivingPage() {
   const qtyError = useMemo(() => {
     if (!quantity || !selectedItem) return null;
     const num = Number(quantity);
-    if (isNaN(num) || num <= 0) return 'ÊıÁ¿±ØĞë´óÓÚ 0';
-    if (num > selectedItem.remainingQty) return `³¬¹ı¿ÉÊÕ»õÊıÁ¿ (${selectedItem.remainingQty})`;
+    if (Number.isNaN(num) || num <= 0) return 'æ”¶è´§æ•°é‡å¿…é¡»å¤§äº 0';
+    if (num > selectedItem.remainingQty) return `ä¸èƒ½è¶…è¿‡å¾…æ”¶æ•°é‡ (${selectedItem.remainingQty})`;
     return null;
   }, [quantity, selectedItem]);
 
   const isValid = !!selectedOrderId && !!selectedItemId && !!selectedLocationId && !!quantity && !qtyError;
+
   const handleSubmit = async () => {
     if (!isValid || !selectedOrder || !selectedItem) return;
     setSubmitting(true);
@@ -154,7 +156,7 @@ export default function ReceivingPage() {
         note: note.trim() || undefined,
       };
       const res = await api.post('/purchase/orders/receive', payload);
-      toast.success(res.data?.message ?? 'ÊÕ»õ³É¹¦');
+      toast.success(res.data?.message ?? 'æ”¶è´§æˆåŠŸ');
       setQuantity('');
       setBatchNo('');
       setNote('');
@@ -163,8 +165,8 @@ export default function ReceivingPage() {
     } catch (err: unknown) {
       const msg =
         err && typeof err === 'object' && 'response' in err
-          ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? 'ÊÕ»õÊ§°Ü')
-          : 'ÊÕ»õÊ§°Ü';
+          ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? 'æ”¶è´§å¤±è´¥')
+          : 'æ”¶è´§å¤±è´¥';
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -173,7 +175,7 @@ export default function ReceivingPage() {
 
   const handleScan = async (sku: string) => {
     if (!sku.trim() || !selectedLocationId) {
-      toast.error('ÇëÏÈÑ¡ÔñÄ¿±ê¿âÎ»');
+      toast.error('è¯·å…ˆé€‰æ‹©ç›®æ ‡åº“ä½');
       return;
     }
     setSubmitting(true);
@@ -185,13 +187,13 @@ export default function ReceivingPage() {
         batchNo: batchNo.trim() || undefined,
       };
       const res = await api.post('/purchase/orders/scan-receive', payload);
-      toast.success(res.data?.message ?? 'É¨ÂëÊÕ»õ³É¹¦');
+      toast.success(res.data?.message ?? 'æ‰«ç æ”¶è´§æˆåŠŸ');
       await fetchOrders();
     } catch (err: unknown) {
       const msg =
         err && typeof err === 'object' && 'response' in err
-          ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? 'É¨ÂëÊÕ»õÊ§°Ü')
-          : 'É¨ÂëÊÕ»õÊ§°Ü';
+          ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? 'æ‰«ç æ”¶è´§å¤±è´¥')
+          : 'æ‰«ç æ”¶è´§å¤±è´¥';
       toast.error(msg);
     } finally {
       setSubmitting(false);
@@ -206,10 +208,10 @@ export default function ReceivingPage() {
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight text-slate-900">
             <Truck className="h-7 w-7 text-blue-600" />
-            ÊÕ»õÖ´ĞĞ
+            æ”¶è´§æ‰§è¡Œ
           </h1>
           <p className="mt-0.5 text-sm text-slate-500">
-            Ñ¡Ôñ²É¹ºµ¥¡¢¿âÎ»£¬ÊäÈëÅú´ÎºÍÊıÁ¿Íê³ÉÊÕ»õÈë¿â¡£Ö§³ÖÉ¨ÂëÇ¹¿ìËÙÊÕ»õ¡£
+            é€‰æ‹©é‡‡è´­å•ã€åº“ä½ã€æ‰¹æ¬¡å’Œæ•°é‡å®Œæˆæ”¶è´§å…¥åº“ï¼Œæ”¯æŒæ‰«ç æªå¿«é€Ÿæ”¶è´§ã€‚
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -226,7 +228,7 @@ export default function ReceivingPage() {
             }`}
           >
             <Scan className="h-4 w-4" />
-            É¨ÂëÄ£Ê½
+            æ‰«ç æ¨¡å¼
           </button>
           <button
             type="button"
@@ -235,15 +237,16 @@ export default function ReceivingPage() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
             <Loader2 className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Ë¢ĞÂ
+            åˆ·æ–°
           </button>
         </div>
       </div>
+
       {scanMode && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
             <Scan className="h-4 w-4" />
-            É¨ÂëÇ¹ÊÕ»õÄ£Ê½ ¨C É¨ÈëÎïÁÏÌõÂë×Ô¶¯Æ¥Åä×î½ü²É¹ºµ¥²¢ÊÕ»õ 1 ¼ş
+            æ‰«ç æªæ”¶è´§æ¨¡å¼ï¼šæ‰«æç‰©æ–™ç¼–ç åè‡ªåŠ¨åŒ¹é…å¾…æ”¶é‡‡è´­å•å¹¶æ”¶è´§ 1 ä»¶
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -254,7 +257,7 @@ export default function ReceivingPage() {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void handleScan(scanBuffer);
               }}
-              placeholder="½«¹â±ê¾Û½¹´Ë´¦£¬È»ºóÉ¨Âë..."
+              placeholder="å…‰æ ‡åœåœ¨æ­¤å¤„åæ‰«ç ..."
               className="h-9 flex-1 rounded-lg border border-blue-300 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
             />
             <button
@@ -264,13 +267,13 @@ export default function ReceivingPage() {
               className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-              È·ÈÏ
+              ç¡®è®¤
             </button>
           </div>
           {!selectedLocationId && (
             <p className="mt-2 text-xs text-amber-600">
-              <AlertTriangle className="inline h-3 w-3 mr-1" />
-              ÇëÏÈÔÚÏÂ·½Ñ¡ÔñÄ¿±ê¿âÎ»ºóÔÙÉ¨Âë
+              <AlertTriangle className="mr-1 inline h-3 w-3" />
+              è¯·å…ˆåœ¨ä¸‹æ–¹é€‰æ‹©ç›®æ ‡åº“ä½å†æ‰«ç 
             </p>
           )}
         </div>
@@ -280,11 +283,11 @@ export default function ReceivingPage() {
         <div className="erp-card space-y-5 p-5">
           <h2 className="flex items-center gap-2 text-lg font-bold text-slate-800">
             <Package className="h-5 w-5 text-blue-600" />
-            ÊÕ»õĞÅÏ¢
+            æ”¶è´§ä¿¡æ¯
           </h2>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">²É¹ºµ¥</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">é‡‡è´­å•</label>
             <div className="relative">
               <select
                 value={selectedOrderId}
@@ -294,10 +297,10 @@ export default function ReceivingPage() {
                 }}
                 className="h-10 w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100"
               >
-                <option value="">-- Ñ¡Ôñ²É¹ºµ¥ --</option>
+                <option value="">-- é€‰æ‹©é‡‡è´­å• --</option>
                 {orders.map((o) => (
                   <option key={o.id} value={o.id}>
-                    {o.orderNo} | {o.supplier.name} | {o.items.length} Ïî´ıÊÕ
+                    {o.orderNo} | {o.supplier.name} | {o.items.length} ä¸ªç‰©æ–™
                   </option>
                 ))}
               </select>
@@ -307,7 +310,7 @@ export default function ReceivingPage() {
 
           {selectedOrder && (
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">ÎïÁÏÃ÷Ï¸</label>
+              <label className="mb-1 block text-sm font-medium text-slate-700">è®¢å•æ˜ç»†</label>
               <div className="relative">
                 <select
                   value={selectedItemId}
@@ -317,10 +320,10 @@ export default function ReceivingPage() {
                   }}
                   className="h-10 w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100"
                 >
-                  <option value="">-- Ñ¡ÔñÎïÁÏ --</option>
+                  <option value="">-- é€‰æ‹©ç‰©æ–™ --</option>
                   {selectedOrder.items.map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.material.name} ({item.material.sku}) | ¿ÉÊÕ: {item.remainingQty} {item.material.unit}
+                      {item.material.name} ({item.material.sku}) | å¾…æ”¶: {item.remainingQty} {item.material.unit}
                     </option>
                   ))}
                 </select>
@@ -332,23 +335,24 @@ export default function ReceivingPage() {
           {selectedItem && (
             <div className="rounded-lg bg-slate-50 p-3 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-slate-500">²É¹ºÊıÁ¿</span>
+                <span className="text-slate-500">é‡‡è´­æ•°é‡</span>
                 <span className="font-mono font-semibold">{selectedItem.quantity} {selectedItem.material.unit}</span>
               </div>
-              <div className="flex items-center justify-between mt-1">
-                <span className="text-slate-500">ÒÑÊÕ»õ</span>
+              <div className="mt-1 flex items-center justify-between">
+                <span className="text-slate-500">å·²æ”¶è´§</span>
                 <span className="font-mono">{selectedItem.receivedQty} {selectedItem.material.unit}</span>
               </div>
-              <div className="flex items-center justify-between mt-1 border-t border-slate-200 pt-1">
-                <span className="text-slate-500 font-medium">¿ÉÊÕ»õ</span>
+              <div className="mt-1 flex items-center justify-between border-t border-slate-200 pt-1">
+                <span className="font-medium text-slate-500">å¾…æ”¶è´§</span>
                 <span className="font-mono font-bold text-blue-600">{selectedItem.remainingQty} {selectedItem.material.unit}</span>
               </div>
             </div>
           )}
+
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">
-              <MapPin className="inline h-3.5 w-3.5 mr-1" />
-              Ä¿±ê²Ö¿â
+              <MapPin className="mr-1 inline h-3.5 w-3.5" />
+              ç›®æ ‡ä»“åº“
             </label>
             <div className="relative">
               <select
@@ -359,7 +363,7 @@ export default function ReceivingPage() {
                 }}
                 className="h-10 w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100"
               >
-                <option value="">-- È«²¿²Ö¿â --</option>
+                <option value="">-- å…¨éƒ¨ä»“åº“ --</option>
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>{w.name}</option>
                 ))}
@@ -370,8 +374,8 @@ export default function ReceivingPage() {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">
-              <MapPin className="inline h-3.5 w-3.5 mr-1" />
-              Ä¿±ê¿âÎ» <span className="text-red-500">*</span>
+              <MapPin className="mr-1 inline h-3.5 w-3.5" />
+              ç›®æ ‡åº“ä½ <span className="text-red-500">*</span>
             </label>
             <div className="relative">
               <select
@@ -379,7 +383,7 @@ export default function ReceivingPage() {
                 onChange={(e) => setSelectedLocationId(e.target.value)}
                 className="h-10 w-full appearance-none rounded-lg border border-slate-200 bg-white pl-3 pr-8 text-sm outline-none focus:ring-2 focus:ring-blue-100"
               >
-                <option value="">-- Ñ¡Ôñ¿âÎ» --</option>
+                <option value="">-- é€‰æ‹©åº“ä½ --</option>
                 {filteredLocations.map((l) => (
                   <option key={l.id} value={l.id}>{l.name}</option>
                 ))}
@@ -390,50 +394,48 @@ export default function ReceivingPage() {
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">
-              <Hash className="inline h-3.5 w-3.5 mr-1" />
-              Åú´ÎºÅ£¨¿ÉÑ¡£¬Ö§³ÖÉ¨Ãè£©
+              <Hash className="mr-1 inline h-3.5 w-3.5" />
+              æ‰¹æ¬¡å·ï¼ˆå¯é€‰ï¼Œæ”¯æŒæ‰«ç ï¼‰
             </label>
             <input
               type="text"
               value={batchNo}
               onChange={(e) => setBatchNo(e.target.value)}
-              placeholder="ÊäÈë»òÉ¨ÃèÅú´ÎºÅ£¬Áô¿Õ×Ô¶¯Éú³É"
+              placeholder="è¾“å…¥æˆ–æ‰«ææ‰¹æ¬¡å·ï¼Œç•™ç©ºåˆ™è‡ªåŠ¨ç”Ÿæˆ"
               className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-100"
             />
           </div>
 
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">
-              ÊÕ»õÊıÁ¿ <span className="text-red-500">*</span>
+              æ”¶è´§æ•°é‡ <span className="text-red-500">*</span>
             </label>
             <input
               type="number"
               value={quantity}
               onChange={(e) => setQuantity(e.target.value)}
-              placeholder={selectedItem ? `×î´ó ${selectedItem.remainingQty}` : 'ÇëÊäÈëÊıÁ¿'}
+              placeholder={selectedItem ? `æœ€å¤š ${selectedItem.remainingQty}` : 'è¯·è¾“å…¥æ•°é‡'}
               min="0.01"
               max={selectedItem?.remainingQty}
               step="0.01"
               className={`h-10 w-full rounded-lg border bg-white px-3 text-sm outline-none focus:ring-2 ${
-                qtyError
-                  ? 'border-red-300 focus:ring-red-100'
-                  : 'border-slate-200 focus:ring-blue-100'
+                qtyError ? 'border-red-300 focus:ring-red-100' : 'border-slate-200 focus:ring-blue-100'
               }`}
             />
             {qtyError && (
               <p className="mt-1 text-xs text-red-500">
-                <AlertTriangle className="inline h-3 w-3 mr-1" />
+                <AlertTriangle className="mr-1 inline h-3 w-3" />
                 {qtyError}
               </p>
             )}
           </div>
 
           <div>
-            <label className="mb-1 block text-sm font-medium text-slate-700">±¸×¢£¨¿ÉÑ¡£©</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">å¤‡æ³¨ï¼ˆå¯é€‰ï¼‰</label>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
-              placeholder="ÊÕ»õ±¸×¢..."
+              placeholder="æ”¶è´§å¤‡æ³¨..."
               rows={2}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
             />
@@ -446,28 +448,29 @@ export default function ReceivingPage() {
             className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
           >
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            È·ÈÏÊÕ»õÈë¿â
+            ç¡®è®¤æ”¶è´§å…¥åº“
           </button>
         </div>
+
         <div className="erp-card p-5">
           <h2 className="mb-4 flex items-center gap-2 text-lg font-bold text-slate-800">
             <Search className="h-5 w-5 text-blue-600" />
-            ´ıÊÕ»õÃ÷Ï¸
+            å¾…æ”¶è´§æ˜ç»†
           </h2>
 
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-14 text-sm text-slate-500">
               <Loader2 className="h-5 w-5 animate-spin" />
-              ¼ÓÔØÖĞ...
+              åŠ è½½ä¸­...
             </div>
           ) : orders.length === 0 ? (
-            <div className="py-14 text-center text-sm text-slate-500">ÔİÎŞ´ıÊÕ»õ²É¹ºµ¥</div>
+            <div className="py-14 text-center text-sm text-slate-500">æš‚æ— å¾…æ”¶è´§é‡‡è´­å•</div>
           ) : (
-            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+            <div className="max-h-[600px] space-y-3 overflow-y-auto pr-1">
               {orders.map((order) => (
                 <div
                   key={order.id}
-                  className={`rounded-lg border p-3 transition cursor-pointer ${
+                  className={`cursor-pointer rounded-lg border p-3 transition ${
                     selectedOrderId === order.id
                       ? 'border-blue-300 bg-blue-50/60'
                       : 'border-slate-200 bg-white hover:border-slate-300'
@@ -477,13 +480,11 @@ export default function ReceivingPage() {
                     setSelectedItemId('');
                   }}
                 >
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="mb-2 flex items-center justify-between">
                     <span className="font-mono text-sm font-semibold text-slate-800">{order.orderNo}</span>
                     <StatusBadge status={order.status} />
                   </div>
-                  <div className="text-xs text-slate-500 mb-2">
-                    ¹©Ó¦ÉÌ: {order.supplier.name}
-                  </div>
+                  <div className="mb-2 text-xs text-slate-500">ä¾›åº”å•†: {order.supplier.name}</div>
                   <div className="space-y-1">
                     {order.items.map((item) => {
                       const pct = item.quantity > 0 ? (item.receivedQty / item.quantity) * 100 : 0;

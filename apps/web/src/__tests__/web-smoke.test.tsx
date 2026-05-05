@@ -26,14 +26,6 @@ const localStorageMock = (() => {
   };
 })();
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
-Object.defineProperty(global, 'window', {
-  value: {
-    location: { href: '' },
-    addEventListener: jest.fn(),
-    removeEventListener: jest.fn(),
-  },
-  writable: true,
-});
 
 /* next/navigation */
 const mockRouterPush = jest.fn();
@@ -58,6 +50,7 @@ jest.mock('@/lib/dynamic-resource', () => ({
 const mockApiGet = jest.fn();
 const mockApiPost = jest.fn();
 jest.mock('@/lib/api', () => ({
+  __esModule: true,
   default: { get: (...a: any[]) => mockApiGet(...a), post: (...a: any[]) => mockApiPost(...a) },
 }));
 
@@ -284,13 +277,16 @@ describe('Smoke · 引用字段选择', () => {
 const mockSetAuth = jest.fn();
 jest.mock('@/store/authStore', () => ({
   useAuthStore: Object.assign(
-    (selector: any) => selector({
-      setAuth: mockSetAuth,
-      currentCompanyId: 'c1',
-      token: 'test-token',
-      user: { id: 'u1', username: 'admin', role: 'admin' },
-      companies: [{ id: 'c1', name: 'TestCo', role: 'owner' }],
-    }),
+    (selector?: any) => {
+      const state = {
+        setAuth: mockSetAuth,
+        currentCompanyId: 'c1',
+        token: 'test-token',
+        user: { id: 'u1', username: 'admin', role: 'admin' },
+        companies: [{ id: 'c1', name: 'TestCo', role: 'owner' }],
+      };
+      return typeof selector === 'function' ? selector(state) : state;
+    },
     { getState: jest.fn() },
   ),
 }));
@@ -384,7 +380,11 @@ describe('Smoke · 订单详情 Timeline', () => {
 
   it('加载订单号和状态', async () => {
     render(<OrderDetailPage />);
-    await waitFor(() => { expect(screen.getByText('SO-2025-0001')).toBeInTheDocument(); });
+    await waitFor(() => {
+      expect(
+        screen.getByText((_, element) => element?.textContent === '订单 SO-2025-0001'),
+      ).toBeInTheDocument();
+    });
     expect(screen.getByText('草稿')).toBeInTheDocument();
   });
 

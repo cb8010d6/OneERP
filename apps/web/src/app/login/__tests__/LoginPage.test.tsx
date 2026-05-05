@@ -18,6 +18,7 @@ jest.mock('next/navigation', () => ({
 /* ---------- Mock API ---------- */
 const mockApiPost = jest.fn();
 jest.mock('../../../lib/api', () => ({
+  __esModule: true,
   default: { post: (...a: any[]) => mockApiPost(...a) },
 }));
 

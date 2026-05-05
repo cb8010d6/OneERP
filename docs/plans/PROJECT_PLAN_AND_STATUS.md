@@ -58,4 +58,16 @@
 
 ---
 
-> _详见根目录 `ENGINEERING_STANDARDS.md` 获取完整的防腐化编码守则与验证规则。这套基建保证了本项目能在极小代码量下拓展成百上千张业务模型，具备工业级可维护性。_
+---
+
+## 四、当前主线治理策略（2026-05-05）
+
+项目不建议重写。接下来先做治理收口，再做业务扩展：
+
+1. 冻结 `main` 为发布分支，日常开发迁移到 `develop`。
+2. 所有 agent 任务从 `develop` 切 `agent/<scope>/<task>` 分支。
+3. 单个 PR 只处理一个业务边界，避免多 agent 同时改 schema、core、lockfile。
+4. 合入 `develop` 前必须通过 `npm run validate`。
+5. 稳定批次从 `develop` 发 PR 到 `main`，再触发部署。
+
+详见 `docs/architecture/DEVELOPMENT_WORKFLOW.md`、`docs/architecture/STANDARDS.md` 与 `docs/architecture/QUALITY_GATES.md`。

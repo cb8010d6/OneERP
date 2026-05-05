@@ -1,22 +1,20 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import api from '@/lib/api';
-import Link from 'next/link';
 import {
-  Package,
-  Warehouse,
   AlertTriangle,
-  RefreshCw,
-  ChevronRight,
+  CheckCircle2,
   ChevronDown,
+  ChevronRight,
+  Loader2,
+  Package,
+  RefreshCw,
   Scan,
   Search,
-  CheckCircle2,
-  Loader2,
-  Truck,
+  Warehouse,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import api from '@/lib/api';
 
 interface LedgerRow {
   locationId: string;
@@ -48,37 +46,39 @@ interface LocationGroup {
   lowCount: number;
 }
 
-/** Build a two-level tree: Warehouse > Location > rows */
 function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
-  const whMap = new Map<string, WarehouseGroup>();
+  const warehouseMap = new Map<string, WarehouseGroup>();
 
   for (const row of rows) {
-    const whKey = row.warehouseId ?? '__NO_WH__';
-    if (!whMap.has(whKey)) {
-      whMap.set(whKey, {
+    const warehouseKey = row.warehouseId ?? '__NO_WAREHOUSE__';
+    let warehouse = warehouseMap.get(warehouseKey);
+
+    if (!warehouse) {
+      warehouse = {
         warehouseId: row.warehouseId,
-        warehouseName: row.warehouseName ?? '(未分配仓�?',
+        warehouseName: row.warehouseName ?? '未分配仓库',
         locations: [],
         totalRows: 0,
         lowCount: 0,
-      });
+      };
+      warehouseMap.set(warehouseKey, warehouse);
     }
-    const wh = whMap.get(whKey)!;
 
-    let loc = wh.locations.find((l) => l.locationId === row.locationId);
-    if (!loc) {
-      loc = { locationId: row.locationId, locationName: row.locationName, rows: [], lowCount: 0 };
-      wh.locations.push(loc);
+    let location = warehouse.locations.find((item) => item.locationId === row.locationId);
+    if (!location) {
+      location = { locationId: row.locationId, locationName: row.locationName, rows: [], lowCount: 0 };
+      warehouse.locations.push(location);
     }
-    loc.rows.push(row);
+
+    location.rows.push(row);
+    warehouse.totalRows += 1;
     if (row.isLow) {
-      loc.lowCount++;
-      wh.lowCount++;
+      location.lowCount += 1;
+      warehouse.lowCount += 1;
     }
-    wh.totalRows++;
   }
 
-  return Array.from(whMap.values()).sort((a, b) =>
+  return Array.from(warehouseMap.values()).sort((a, b) =>
     a.warehouseName.localeCompare(b.warehouseName, 'zh-CN'),
   );
 }
@@ -86,12 +86,13 @@ function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
 function QtyCell({ row }: { row: LedgerRow }) {
   if (row.isLow) {
     return (
-      <span className="erp-badge erp-badge--danger flex items-center gap-1">
+      <span className="erp-badge erp-badge--danger inline-flex items-center gap-1">
         <AlertTriangle className="h-3 w-3" />
         {row.netQty.toLocaleString()} {row.materialUnit}
       </span>
     );
   }
+
   return (
     <span className="font-mono tabular-nums text-gray-800">
       {row.netQty.toLocaleString()} {row.materialUnit}
@@ -103,10 +104,8 @@ export default function InventoryPage() {
   const [rows, setRows] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [expandedWh, setExpandedWh] = useState<Set<string>>(new Set());
-  const [expandedLoc, setExpandedLoc] = useState<Set<string>>(new Set());
-
-  // Barcode scan mode
+  const [expandedWarehouses, setExpandedWarehouses] = useState<Set<string>>(new Set());
+  const [expandedLocations, setExpandedLocations] = useState<Set<string>>(new Set());
   const [scanMode, setScanMode] = useState(false);
   const [scanBuffer, setScanBuffer] = useState('');
   const [scanning, setScanning] = useState(false);
@@ -115,8 +114,8 @@ export default function InventoryPage() {
   const fetchLedger = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await api.get<LedgerRow[]>('/inventory/realtime-ledger');
-      setRows(res.data ?? []);
+      const response = await api.get<LedgerRow[]>('/inventory/realtime-ledger');
+      setRows(response.data ?? []);
     } catch (error) {
       console.error('Failed to fetch realtime ledger', error);
       toast.error('加载库存台账失败');
@@ -126,85 +125,81 @@ export default function InventoryPage() {
   }, []);
 
   useEffect(() => {
-    fetchLedger();
+    void fetchLedger();
   }, [fetchLedger]);
 
-  // Filter rows by search
   const filteredRows = useMemo(() => {
-    if (!search.trim()) return rows;
-    const kw = search.toLowerCase();
+    const keyword = search.trim().toLowerCase();
+    if (!keyword) return rows;
+
     return rows.filter(
-      (r) =>
-        r.materialName.toLowerCase().includes(kw) ||
-        r.materialSku.toLowerCase().includes(kw) ||
-        r.locationName.toLowerCase().includes(kw) ||
-        (r.warehouseName ?? '').toLowerCase().includes(kw),
+      (row) =>
+        row.materialName.toLowerCase().includes(keyword) ||
+        row.materialSku.toLowerCase().includes(keyword) ||
+        row.locationName.toLowerCase().includes(keyword) ||
+        (row.warehouseName ?? '').toLowerCase().includes(keyword),
     );
   }, [rows, search]);
 
   const tree = useMemo(() => buildTree(filteredRows), [filteredRows]);
 
-  // Auto-expand all warehouses and locations when data first arrives
-  const hasData = rows.length > 0;
   useEffect(() => {
-    if (!hasData || tree.length === 0) return;
-    const newWh = new Set<string>();
-    const newLoc = new Set<string>();
-    for (const wh of tree) {
-      newWh.add(wh.warehouseId ?? '__NO_WH__');
-      for (const loc of wh.locations) {
-        newLoc.add(loc.locationId);
-      }
+    if (rows.length === 0 || tree.length === 0) return;
+
+    const warehouseKeys = new Set<string>();
+    const locationKeys = new Set<string>();
+    for (const warehouse of tree) {
+      warehouseKeys.add(warehouse.warehouseId ?? '__NO_WAREHOUSE__');
+      for (const location of warehouse.locations) locationKeys.add(location.locationId);
     }
-    setExpandedWh(newWh);
-    setExpandedLoc(newLoc);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasData]);
 
-  const toggleWh = (key: string) => {
-    setExpandedWh((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
+    setExpandedWarehouses(warehouseKeys);
+    setExpandedLocations(locationKeys);
+    // Expand only when initial data arrives; user toggles should not be reset on every search.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
+
+  const totalMaterials = useMemo(() => new Set(rows.map((row) => row.materialId)).size, [rows]);
+  const totalLocations = useMemo(() => new Set(rows.map((row) => row.locationId)).size, [rows]);
+  const totalLow = useMemo(() => rows.filter((row) => row.isLow).length, [rows]);
+
+  const toggleWarehouse = (key: string) => {
+    setExpandedWarehouses((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  const toggleLoc = (key: string) => {
-    setExpandedLoc((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
+  const toggleLocation = (key: string) => {
+    setExpandedLocations((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  // Summary stats
-  const totalMaterials = useMemo(() => new Set(rows.map((r) => r.materialId)).size, [rows]);
-  const totalLocations = useMemo(() => new Set(rows.map((r) => r.locationId)).size, [rows]);
-  const totalLow = useMemo(() => rows.filter((r) => r.isLow).length, [rows]);
-
-  // Barcode scan handler
   const handleScanSubmit = useCallback(
     async (sku: string) => {
-      if (!sku.trim()) return;
+      const materialSku = sku.trim();
+      if (!materialSku) return;
+
       setScanning(true);
       try {
-        await api.post('/inventory/scan', { materialSku: sku.trim(), quantity: 1 });
-        toast.success(`扫码出库成功�?{sku.trim()}`);
+        await api.post('/inventory/scan', { materialSku, quantity: 1 });
+        toast.success(`扫码出库成功：${materialSku}`);
         await fetchLedger();
-      } catch (err: unknown) {
-        const msg =
-          err && typeof err === 'object' && 'response' in err
-            ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? '出库失败')
+      } catch (error: unknown) {
+        const message =
+          error && typeof error === 'object' && 'response' in error
+            ? String(
+                (error as { response?: { data?: { message?: string } } }).response?.data?.message ??
+                  '出库失败',
+              )
             : '出库失败';
-        toast.error(msg);
+        toast.error(message);
       } finally {
         setScanning(false);
         setScanBuffer('');
@@ -216,7 +211,6 @@ export default function InventoryPage() {
 
   return (
     <div className="h-full space-y-5 bg-slate-50/40 p-6">
-      {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-black tracking-tight text-slate-900">
@@ -224,7 +218,7 @@ export default function InventoryPage() {
             实时库存台账
           </h1>
           <p className="mt-0.5 text-sm text-slate-500">
-            基于 Kysely 聚合查询，支持层级钻取与低库存预警�?
+            基于聚合查询的库存视图，支持层级钻取与低库存预警。
           </p>
         </div>
 
@@ -232,10 +226,8 @@ export default function InventoryPage() {
           <button
             type="button"
             onClick={() => {
-              setScanMode((v) => !v);
-              if (!scanMode) {
-                setTimeout(() => scanInputRef.current?.focus(), 100);
-              }
+              setScanMode((value) => !value);
+              if (!scanMode) setTimeout(() => scanInputRef.current?.focus(), 100);
             }}
             className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
               scanMode
@@ -248,7 +240,7 @@ export default function InventoryPage() {
           </button>
           <button
             type="button"
-            onClick={fetchLedger}
+            onClick={() => void fetchLedger()}
             disabled={loading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
@@ -258,23 +250,20 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Barcode Scan Panel */}
       {scanMode && (
         <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
             <Scan className="h-4 w-4" />
-            扫码枪出库模�?�?扫入物料条码后自动扣�?1 件库�?
+            扫码枪出库模式：扫入物料条码后自动扣减 1 件库存。
           </div>
           <div className="flex items-center gap-2">
             <input
               ref={scanInputRef}
               type="text"
               value={scanBuffer}
-              onChange={(e) => setScanBuffer(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  void handleScanSubmit(scanBuffer);
-                }
+              onChange={(event) => setScanBuffer(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void handleScanSubmit(scanBuffer);
               }}
               placeholder="将光标聚焦此处，然后扫码..."
               className="h-9 flex-1 rounded-lg border border-blue-300 bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-blue-200"
@@ -285,15 +274,18 @@ export default function InventoryPage() {
               onClick={() => void handleScanSubmit(scanBuffer)}
               className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {scanning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
               确认
             </button>
           </div>
         </div>
       )}
 
-      {/* Stats Bar */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div className="erp-card flex items-center gap-3 p-4">
           <div className="rounded-lg bg-blue-50 p-2 text-blue-600">
             <Package className="h-5 w-5" />
@@ -303,6 +295,7 @@ export default function InventoryPage() {
             <div className="erp-stat-value text-xl font-bold text-slate-900">{totalMaterials}</div>
           </div>
         </div>
+
         <div className="erp-card flex items-center gap-3 p-4">
           <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600">
             <Warehouse className="h-5 w-5" />
@@ -312,12 +305,13 @@ export default function InventoryPage() {
             <div className="erp-stat-value text-xl font-bold text-slate-900">{totalLocations}</div>
           </div>
         </div>
+
         <div className={`erp-card flex items-center gap-3 p-4 ${totalLow > 0 ? 'border-amber-200 bg-amber-50/60' : ''}`}>
           <div className={`rounded-lg p-2 ${totalLow > 0 ? 'bg-amber-100 text-amber-600' : 'bg-green-50 text-green-600'}`}>
             <AlertTriangle className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500">低库存预�?/div>
+            <div className="text-xs font-medium text-slate-500">低库存预警</div>
             <div className={`erp-stat-value text-xl font-bold ${totalLow > 0 ? 'text-amber-700' : 'text-green-700'}`}>
               {totalLow}
             </div>
@@ -325,29 +319,28 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      {/* Search */}
       <div className="relative w-full max-w-sm">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <input
           type="text"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="按物料名、SKU、库位搜�?.."
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="按物料名、SKU、库位搜索..."
           className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-100"
         />
       </div>
 
-      {/* Ledger Table */}
       <div className="erp-card overflow-hidden">
-        {/* Table header */}
-        <div className="grid border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500"
-          style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}>
+        <div
+          className="grid border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500"
+          style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}
+        >
           <div className="pl-8">物料</div>
           <div>SKU</div>
-          <div className="text-right">净库存�?/div>
-          <div className="text-right">最低库�?/div>
-          <div className="text-right">批次�?/div>
-          <div className="text-right">状�?/div>
+          <div className="text-right">净库存</div>
+          <div className="text-right">最低库存</div>
+          <div className="text-right">批次数</div>
+          <div className="text-right">状态</div>
         </div>
 
         {loading ? (
@@ -358,62 +351,54 @@ export default function InventoryPage() {
         ) : tree.length === 0 ? (
           <div className="py-14 text-center text-sm text-slate-500">暂无库存数据</div>
         ) : (
-          tree.map((wh) => {
-            const whKey = wh.warehouseId ?? '__NO_WH__';
-            const whOpen = expandedWh.has(whKey);
+          tree.map((warehouse) => {
+            const warehouseKey = warehouse.warehouseId ?? '__NO_WAREHOUSE__';
+            const warehouseOpen = expandedWarehouses.has(warehouseKey);
 
             return (
-              <div key={whKey}>
-                {/* Warehouse row */}
+              <div key={warehouseKey}>
                 <button
                   type="button"
-                  onClick={() => toggleWh(whKey)}
+                  onClick={() => toggleWarehouse(warehouseKey)}
                   className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2 text-left hover:bg-slate-100/60"
                 >
-                  {whOpen ? (
+                  {warehouseOpen ? (
                     <ChevronDown className="h-4 w-4 flex-shrink-0 text-slate-400" />
                   ) : (
                     <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-400" />
                   )}
                   <Warehouse className="h-4 w-4 flex-shrink-0 text-slate-500" />
-                  <span className="text-sm font-semibold text-slate-800">{wh.warehouseName}</span>
+                  <span className="text-sm font-semibold text-slate-800">{warehouse.warehouseName}</span>
                   <span className="ml-1 text-xs text-slate-400">
-                    ({wh.totalRows} 条明�?
-                    {wh.lowCount > 0 && (
-                      <span className="ml-1 text-amber-600">, {wh.lowCount} 低库�?/span>
-                    )})
+                    ({warehouse.totalRows} 条明细{warehouse.lowCount > 0 ? `, ${warehouse.lowCount} 低库存` : ''})
                   </span>
                 </button>
 
-                {whOpen &&
-                  wh.locations.map((loc) => {
-                    const locOpen = expandedLoc.has(loc.locationId);
+                {warehouseOpen &&
+                  warehouse.locations.map((location) => {
+                    const locationOpen = expandedLocations.has(location.locationId);
+
                     return (
-                      <div key={loc.locationId}>
-                        {/* Location row */}
+                      <div key={location.locationId}>
                         <button
                           type="button"
-                          onClick={() => toggleLoc(loc.locationId)}
+                          onClick={() => toggleLocation(location.locationId)}
                           className="flex w-full items-center gap-2 border-b border-slate-100 bg-white px-3 py-1.5 pl-8 text-left hover:bg-slate-50/60"
                         >
-                          {locOpen ? (
+                          {locationOpen ? (
                             <ChevronDown className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                           ) : (
                             <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                           )}
                           <Package className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
-                          <span className="text-xs font-semibold text-slate-600">{loc.locationName}</span>
+                          <span className="text-xs font-semibold text-slate-600">{location.locationName}</span>
                           <span className="text-xs text-slate-400">
-                            ({loc.rows.length} 种物�?
-                            {loc.lowCount > 0 && (
-                              <span className="ml-1 text-amber-600">, {loc.lowCount} 低库�?/span>
-                            )})
+                            ({location.rows.length} 种物料{location.lowCount > 0 ? `, ${location.lowCount} 低库存` : ''})
                           </span>
                         </button>
 
-                        {/* Material rows */}
-                        {locOpen &&
-                          loc.rows.map((row) => (
+                        {locationOpen &&
+                          location.rows.map((row) => (
                             <div
                               key={`${row.locationId}-${row.materialId}`}
                               className={`grid items-center border-b border-slate-100 px-3 py-1.5 pl-14 text-xs ${
@@ -432,7 +417,7 @@ export default function InventoryPage() {
                               <div className="text-right text-slate-500">{row.batchCount}</div>
                               <div className="text-right">
                                 {row.isLow ? (
-                                  <span className="erp-badge erp-badge--pending">低库�?/span>
+                                  <span className="erp-badge erp-badge--pending">低库存</span>
                                 ) : (
                                   <span className="erp-badge erp-badge--success">正常</span>
                                 )}
@@ -449,7 +434,7 @@ export default function InventoryPage() {
       </div>
 
       <div className="text-right text-xs text-slate-400">
-        �?{filteredRows.length} 条库存明�?· 单击仓库/库位行展开/折叠
+        共 {filteredRows.length} 条库存明细 · 单击仓库/库位行展开或折叠
       </div>
     </div>
   );

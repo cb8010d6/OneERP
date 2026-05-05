@@ -14,12 +14,16 @@ import { Type } from 'class-transformer';
 // ---- 行项 DTO ----
 
 export class AddPurchaseOrderLineDto {
-  @ApiPropertyOptional({ description: '物料ID（materialId 与 productId 二选一）' })
+  @ApiPropertyOptional({
+    description: '物料ID（materialId 与 productId 二选一）',
+  })
   @IsOptional()
   @IsString()
   materialId?: string;
 
-  @ApiPropertyOptional({ description: '产品ID（materialId 与 productId 二选一）' })
+  @ApiPropertyOptional({
+    description: '产品ID（materialId 与 productId 二选一）',
+  })
   @IsOptional()
   @IsString()
   productId?: string;

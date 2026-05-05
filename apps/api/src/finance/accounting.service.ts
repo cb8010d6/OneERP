@@ -1,7 +1,12 @@
-﻿import { BadRequestException, Injectable, Logger } from "@nestjs/common";
-import { EntryPostingStatus, JournalType, TaxNature, Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
-import { TaxService } from "../core/tax/tax.service";
+﻿import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  EntryPostingStatus,
+  JournalType,
+  TaxNature,
+  Prisma,
+} from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { TaxService } from '../core/tax/tax.service';
 
 interface JournalLineInput {
   accountCode: string;
@@ -48,36 +53,37 @@ export class AccountingService {
     });
 
     const unitCost = Number(payload.unitCost ?? material?.unitPrice ?? 0);
-    const amount = this.taxService.round2(unitCost * Number(payload.quantity ?? 0));
+    const amount = this.taxService.round2(
+      unitCost * Number(payload.quantity ?? 0),
+    );
     if (amount <= 0) {
-      this.logger.warn(
-        "跳过零成本库存出库凭�? material=" + payload.materialId,
-      );
+      this.logger.warn('跳过零成本库存出库凭�? material=' + payload.materialId);
       return null;
     }
 
     return this.createBalancedEntry({
       companyId: payload.companyId,
-      journalCode: "INV",
-      journalName: "Inventory Journal",
+      journalCode: 'INV',
+      journalName: 'Inventory Journal',
       journalType: JournalType.INVENTORY,
       ref: payload.referenceNo,
-      description: "库存出库自动凭证: " + (material?.name ?? payload.materialId),
+      description:
+        '库存出库自动凭证: ' + (material?.name ?? payload.materialId),
       createdBy: payload.operatorId,
       lines: [
         {
-          accountCode: "6401",
-          accountName: "主营业务成本",
-          accountType: "EXPENSE",
+          accountCode: '6401',
+          accountName: '主营业务成本',
+          accountType: 'EXPENSE',
           debit: amount,
-          memo: "库存出库结转成本",
+          memo: '库存出库结转成本',
         },
         {
-          accountCode: "1405",
-          accountName: "库存商品",
-          accountType: "ASSET",
+          accountCode: '1405',
+          accountName: '库存商品',
+          accountType: 'ASSET',
           credit: amount,
-          memo: "库存出库结转成本",
+          memo: '库存出库结转成本',
         },
       ],
     });
@@ -106,12 +112,12 @@ export class AccountingService {
     });
 
     if (!invoice) {
-      throw new BadRequestException("发票不存在，无法生成凭证");
+      throw new BadRequestException('发票不存在，无法生成凭证');
     }
 
     const amount = this.taxService.round2(Number(invoice.amount));
     if (amount <= 0) {
-      throw new BadRequestException("发票金额必须大于0");
+      throw new BadRequestException('发票金额必须大于0');
     }
 
     // 使用发票快照中的价税数据，不重新计算
@@ -122,19 +128,24 @@ export class AccountingService {
       // 仅对历史遗留数据做兜�?
       const fallbackRate = Math.max(
         0,
-        Math.min(1, Number(invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)),
+        Math.min(
+          1,
+          Number(
+            invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13,
+          ),
+        ),
       );
       revenue = this.taxService.round2(amount / (1 + fallbackRate));
       tax = this.taxService.round2(amount - revenue);
       this.logger.warn(
-        "发票未包含税额快照，使用兜底税率计算: invoice=" + invoice.invoiceNo,
+        '发票未包含税额快照，使用兜底税率计算: invoice=' + invoice.invoiceNo,
       );
     }
 
     // 确定税务科目
-    let taxAccountCode = "222101";
-    let taxAccountName = "应交税费-销项税";
-    let taxAccountType = "LIABILITY";
+    let taxAccountCode = '222101';
+    let taxAccountName = '应交税费-销项税';
+    let taxAccountType = 'LIABILITY';
 
     if (payload.taxAccountId) {
       const account = await this.prisma.account.findFirst({
@@ -147,10 +158,11 @@ export class AccountingService {
       }
     } else if (invoice.taxCode) {
       const tc = invoice.taxCode;
-      const nature = (tc.taxNature as TaxNature) ?? TaxNature.OUTPUT;
-      const accountId = nature === TaxNature.INPUT
-        ? (tc.inputAccountId ?? tc.accountId)
-        : (tc.outputAccountId ?? tc.accountId);
+      const nature = tc.taxNature ?? TaxNature.OUTPUT;
+      const accountId =
+        nature === TaxNature.INPUT
+          ? (tc.inputAccountId ?? tc.accountId)
+          : (tc.outputAccountId ?? tc.accountId);
       if (accountId) {
         const account = await this.prisma.account.findFirst({
           where: { id: accountId, companyId: payload.companyId },
@@ -162,42 +174,43 @@ export class AccountingService {
         }
       } else {
         this.logger.warn(
-          "未配置税码会计科目，使用默认销项税科目: invoice=" + invoice.invoiceNo,
+          '未配置税码会计科目，使用默认销项税科目: invoice=' +
+            invoice.invoiceNo,
         );
       }
     }
 
     return this.createBalancedEntry({
       companyId: payload.companyId,
-      journalCode: "SAL",
-      journalName: "Sales Journal",
+      journalCode: 'SAL',
+      journalName: 'Sales Journal',
       journalType: JournalType.SALES,
       ref: invoice.invoiceNo,
-      description: "销售开票自动凭�? " + invoice.invoiceNo,
+      description: '销售开票自动凭�? ' + invoice.invoiceNo,
       createdBy: payload.operatorId,
       lines: [
         {
-          accountCode: "1122",
-          accountName: "应收账款",
-          accountType: "ASSET",
+          accountCode: '1122',
+          accountName: '应收账款',
+          accountType: 'ASSET',
           debit: amount,
           partnerId: invoice.order.partnerId,
-          memo: "应收 " + invoice.invoiceNo,
+          memo: '应收 ' + invoice.invoiceNo,
         },
         {
-          accountCode: "6001",
-          accountName: "主营业务收入",
-          accountType: "REVENUE",
+          accountCode: '6001',
+          accountName: '主营业务收入',
+          accountType: 'REVENUE',
           credit: revenue,
           partnerId: invoice.order.partnerId,
-          memo: "收入 " + invoice.invoiceNo,
+          memo: '收入 ' + invoice.invoiceNo,
         },
         {
           accountCode: taxAccountCode,
           accountName: taxAccountName,
           accountType: taxAccountType,
           credit: tax,
-          memo: "销项税 " + invoice.invoiceNo,
+          memo: '销项税 ' + invoice.invoiceNo,
         },
       ],
     });
@@ -215,22 +228,36 @@ export class AccountingService {
       where: { id: payload.invoiceId, companyId: payload.companyId },
       include: {
         partner: { select: { id: true, name: true } },
-        taxCode: { include: { account: true, outputAccount: true, inputAccount: true } },
+        taxCode: {
+          include: { account: true, outputAccount: true, inputAccount: true },
+        },
         lines: { include: { account: true } },
       },
     });
     if (!invoice) throw new BadRequestException('Purchase invoice not found');
 
     const amount = this.taxService.round2(Number(invoice.amount));
-    if (amount <= 0) throw new BadRequestException('Purchase invoice amount must be > 0');
+    if (amount <= 0)
+      throw new BadRequestException('Purchase invoice amount must be > 0');
 
     let subTotal = this.taxService.round2(Number(invoice.subTotal ?? 0));
     let taxAmount = this.taxService.round2(Number(invoice.taxAmount ?? 0));
     if (subTotal <= 0 && taxAmount <= 0) {
-      const fallbackRate = Math.max(0, Math.min(1, Number(invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)));
+      const fallbackRate = Math.max(
+        0,
+        Math.min(
+          1,
+          Number(
+            invoice.taxRate ?? payload.taxRate ?? invoice.taxCode?.rate ?? 0.13,
+          ),
+        ),
+      );
       subTotal = this.taxService.round2(amount / (1 + fallbackRate));
       taxAmount = this.taxService.round2(amount - subTotal);
-      this.logger.warn('Purchase invoice missing tax snapshot, using fallback rate: ' + invoice.invoiceNo);
+      this.logger.warn(
+        'Purchase invoice missing tax snapshot, using fallback rate: ' +
+          invoice.invoiceNo,
+      );
     }
 
     // ---- Resolve input tax account ----
@@ -238,15 +265,30 @@ export class AccountingService {
     let taxAccountName = 'Tax Payable - Input Tax';
     let taxAccountType = 'LIABILITY';
     if (payload.taxAccountId) {
-      const account = await this.prisma.account.findFirst({ where: { id: payload.taxAccountId, companyId: payload.companyId } });
-      if (account) { taxAccountCode = account.code; taxAccountName = account.name; taxAccountType = account.type; }
+      const account = await this.prisma.account.findFirst({
+        where: { id: payload.taxAccountId, companyId: payload.companyId },
+      });
+      if (account) {
+        taxAccountCode = account.code;
+        taxAccountName = account.name;
+        taxAccountType = account.type;
+      }
     } else if (invoice.taxCode) {
       const tc = invoice.taxCode;
-      const nature = (tc.taxNature as TaxNature) ?? TaxNature.INPUT;
-      const accountId = nature === TaxNature.INPUT ? (tc.inputAccountId ?? tc.accountId) : (tc.outputAccountId ?? tc.accountId);
+      const nature = tc.taxNature ?? TaxNature.INPUT;
+      const accountId =
+        nature === TaxNature.INPUT
+          ? (tc.inputAccountId ?? tc.accountId)
+          : (tc.outputAccountId ?? tc.accountId);
       if (accountId) {
-        const account = await this.prisma.account.findFirst({ where: { id: accountId, companyId: payload.companyId } });
-        if (account) { taxAccountCode = account.code; taxAccountName = account.name; taxAccountType = account.type; }
+        const account = await this.prisma.account.findFirst({
+          where: { id: accountId, companyId: payload.companyId },
+        });
+        if (account) {
+          taxAccountCode = account.code;
+          taxAccountName = account.name;
+          taxAccountType = account.type;
+        }
       }
     }
 
@@ -268,8 +310,21 @@ export class AccountingService {
       createdBy: payload.operatorId,
       lines: [
         ...debitLines,
-        { accountCode: taxAccountCode, accountName: taxAccountName, accountType: taxAccountType, debit: taxAmount, memo: 'Input Tax ' + invoice.invoiceNo },
-        { accountCode: '2202', accountName: 'Accounts Payable', accountType: 'LIABILITY', credit: amount, partnerId: invoice.partnerId, memo: 'AP ' + invoice.invoiceNo },
+        {
+          accountCode: taxAccountCode,
+          accountName: taxAccountName,
+          accountType: taxAccountType,
+          debit: taxAmount,
+          memo: 'Input Tax ' + invoice.invoiceNo,
+        },
+        {
+          accountCode: '2202',
+          accountName: 'Accounts Payable',
+          accountType: 'LIABILITY',
+          credit: amount,
+          partnerId: invoice.partnerId,
+          memo: 'AP ' + invoice.invoiceNo,
+        },
       ],
     });
   }
@@ -289,7 +344,10 @@ export class AccountingService {
     partnerId: string,
     fallbackSubTotal: number,
   ): JournalLineInput[] {
-    const accountMap = new Map<string, { code: string; name: string; type: string; amount: number }>();
+    const accountMap = new Map<
+      string,
+      { code: string; name: string; type: string; amount: number }
+    >();
 
     if (lines.length > 0) {
       for (const line of lines) {
@@ -300,17 +358,31 @@ export class AccountingService {
           const key = line.account.code;
           const existing = accountMap.get(key);
           if (existing) {
-            existing.amount = this.taxService.round2(existing.amount + lineSubTotal);
+            existing.amount = this.taxService.round2(
+              existing.amount + lineSubTotal,
+            );
           } else {
-            accountMap.set(key, { code: line.account.code, name: line.account.name, type: line.account.type, amount: lineSubTotal });
+            accountMap.set(key, {
+              code: line.account.code,
+              name: line.account.name,
+              type: line.account.type,
+              amount: lineSubTotal,
+            });
           }
         } else {
           const key = '1401';
           const existing = accountMap.get(key);
           if (existing) {
-            existing.amount = this.taxService.round2(existing.amount + lineSubTotal);
+            existing.amount = this.taxService.round2(
+              existing.amount + lineSubTotal,
+            );
           } else {
-            accountMap.set(key, { code: '1401', name: 'Inventory/Raw Materials', type: 'ASSET', amount: lineSubTotal });
+            accountMap.set(key, {
+              code: '1401',
+              name: 'Inventory/Raw Materials',
+              type: 'ASSET',
+              amount: lineSubTotal,
+            });
           }
         }
       }
@@ -318,7 +390,12 @@ export class AccountingService {
 
     // Fallback: if no line-level data, use invoice-level subTotal
     if (accountMap.size === 0) {
-      accountMap.set('1401', { code: '1401', name: 'Inventory/Raw Materials', type: 'ASSET', amount: fallbackSubTotal });
+      accountMap.set('1401', {
+        code: '1401',
+        name: 'Inventory/Raw Materials',
+        type: 'ASSET',
+        amount: fallbackSubTotal,
+      });
     }
 
     const result: JournalLineInput[] = [];
@@ -335,13 +412,14 @@ export class AccountingService {
       }
     }
     return result;
-  }  async createBalancedEntry(input: CreateBalancedEntryInput) {
+  }
+  async createBalancedEntry(input: CreateBalancedEntryInput) {
     await this.ensureDefaultMasterData(input.companyId);
 
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(
-        "SELECT pg_advisory_xact_lock(hashtext($1))",
-        "journal-entry-" + input.companyId,
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        'journal-entry-' + input.companyId,
       );
 
       const lines = input.lines.map((line) => ({
@@ -360,7 +438,7 @@ export class AccountingService {
 
       if (totalDebit !== totalCredit) {
         throw new BadRequestException(
-          "借贷不平�? debit=" + totalDebit + ", credit=" + totalCredit,
+          '借贷不平�? debit=' + totalDebit + ', credit=' + totalCredit,
         );
       }
 
@@ -421,7 +499,7 @@ export class AccountingService {
         include: {
           lines: {
             include: { account: true },
-            orderBy: { lineNo: "asc" },
+            orderBy: { lineNo: 'asc' },
           },
           journal: true,
         },
@@ -439,16 +517,16 @@ export class AccountingService {
 
   private async ensureDefaultMasterData(companyId: string) {
     await this.prisma.journal.upsert({
-      where: { companyId_code: { companyId, code: "GEN" } },
+      where: { companyId_code: { companyId, code: 'GEN' } },
       update: {
-        name: "General Journal",
+        name: 'General Journal',
         type: JournalType.GENERAL,
         isActive: true,
       },
       create: {
         companyId,
-        code: "GEN",
-        name: "General Journal",
+        code: 'GEN',
+        name: 'General Journal',
         type: JournalType.GENERAL,
       },
     });
@@ -484,26 +562,29 @@ export class AccountingService {
 
   private validateLines(lines: Array<{ debit: number; credit: number }>) {
     if (!lines.length) {
-      throw new BadRequestException("凭证分录不能为空");
+      throw new BadRequestException('凭证分录不能为空');
     }
 
     for (const line of lines) {
       if (line.debit < 0 || line.credit < 0) {
-        throw new BadRequestException("分录金额不能为负数");
+        throw new BadRequestException('分录金额不能为负数');
       }
       if (
         (line.debit === 0 && line.credit === 0) ||
         (line.debit > 0 && line.credit > 0)
       ) {
-        throw new BadRequestException("每行分录必须仅填写借方或贷方");
+        throw new BadRequestException('每行分录必须仅填写借方或贷方');
       }
     }
   }
 
   private generateEntryNo() {
     const now = new Date();
-    const datePart = now.getFullYear() + String(now.getMonth() + 1).padStart(2, "0") + String(now.getDate()).padStart(2, "0");
+    const datePart =
+      now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0');
     const suffix = String(now.getTime()).slice(-6);
-    return "JE-" + datePart + "-" + suffix;
+    return 'JE-' + datePart + '-' + suffix;
   }
 }

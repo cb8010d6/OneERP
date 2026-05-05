@@ -103,6 +103,16 @@ Job 2: build-web → Docker Build & Push to GHCR
 Job 3: deploy    → (placeholder, 需配置 SSH/Docker Compose)
 ```
 
+### 3.3 分支门禁建议
+
+| 分支 | 允许来源 | 必须检查 | 触发结果 |
+| ---- | -------- | -------- | -------- |
+| `agent/*` | 本地任务分支 | 模块级测试 + 需要时 `npm run validate` | 开 PR 到 `develop` |
+| `develop` | `agent/*` / `fix/*` PR | `commitlint` + `validate` | 集成测试分支 |
+| `main` | `develop` PR | `commitlint` + `validate` + 人工 review | 触发部署 |
+
+建议在 GitHub Branch protection 中禁止直接 push 到 `main` 和 `develop`。
+
 ---
 
 ## 4. 本地开发工作流
@@ -209,3 +219,5 @@ docs(arch): add architecture baseline document
 | `CORS_ORIGINS`     | CORS 白名单    | `localhost:3000,5173,8080`                     |
 | `REDIS_HOST`       | Redis 地址     | `localhost`                                    |
 | `MINIO_ENDPOINT`   | MinIO 地址     | `localhost`                                    |
+
+> 注意：当前 CI workflow 只启动 PostgreSQL service。若测试真实访问 Redis 或 MinIO，需要在 `.github/workflows/ci.yml` 中增加对应 service；若测试只验证业务逻辑，应使用 mock 或本地降级，避免 CI 因外部服务缺失而不稳定。

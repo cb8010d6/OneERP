@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsObject } from 'class-validator';
 import { IsOptional, IsString } from 'class-validator';
+import { Prisma } from '@prisma/client';
 
 export class TransitionWorkflowDto {
   @ApiProperty({ description: '动作编码，如 ship/cancel/start' })
@@ -20,5 +21,5 @@ export class TransitionWorkflowDto {
   @IsOptional()
   @IsObject()
   @Type(() => Object)
-  data?: Record<string, unknown>;
+  data?: Prisma.InputJsonObject;
 }

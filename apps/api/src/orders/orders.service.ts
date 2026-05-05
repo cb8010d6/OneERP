@@ -3,12 +3,12 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
-} from "@nestjs/common";
-import { TaxNature, Prisma } from "@prisma/client";
-import { PrismaService } from "../prisma/prisma.service";
-import { TaxService } from "../core/tax/tax.service";
-import { PaginationDto } from "../core/dto/pagination.dto";
-import { EventQueueService } from "../core/events/event-queue.service";
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { TaxService } from '../core/tax/tax.service';
+import { PaginationDto } from '../core/dto/pagination.dto';
+import { EventQueueService } from '../core/events/event-queue.service';
 
 interface CreateOrderItemInput {
   productId: string;
@@ -37,9 +37,15 @@ export class OrdersService {
   ) {}
 
   async createOrder(companyId: string, userId: string, data: CreateOrderInput) {
-    const { partnerId, items, aiSummary, expectedDate, notes, taxCodeId } = data;
+    const { partnerId, items, aiSummary, expectedDate, notes, taxCodeId } =
+      data;
 
-    const orderNo = "ORD-" + new Date().getFullYear() + String(new Date().getMonth() + 1).padStart(2, "0") + "-" + Math.floor(1000 + Math.random() * 9000);
+    const orderNo =
+      'ORD-' +
+      new Date().getFullYear() +
+      String(new Date().getMonth() + 1).padStart(2, '0') +
+      '-' +
+      Math.floor(1000 + Math.random() * 9000);
 
     let totalAmount = 0;
     let subTotal = 0;
@@ -48,7 +54,7 @@ export class OrdersService {
     const baseTaxCode = await this.taxService.resolveTaxCode(
       companyId,
       taxCodeId,
-      { operatorId: userId, entity: "Order", entityId: "new" },
+      { operatorId: userId, entity: 'Order', entityId: 'new' },
     );
 
     const orderItems = await Promise.all(
@@ -88,7 +94,7 @@ export class OrdersService {
         companyId,
         salesId: userId,
         partnerId,
-        status: "DRAFT",
+        status: 'DRAFT',
         totalAmount,
         subTotal: this.taxService.round2(subTotal),
         taxTotal: this.taxService.round2(taxTotal),
@@ -107,8 +113,8 @@ export class OrdersService {
     });
 
     await this.eventQueueService.publish({
-      eventName: "order.created",
-      idempotencyKey: "order_created:" + created.id,
+      eventName: 'order.created',
+      idempotencyKey: 'order_created:' + created.id,
       companyId,
       payload: {
         orderId: created.id,
@@ -134,8 +140,8 @@ export class OrdersService {
     if (status) where.status = status;
     if (search) {
       where.OR = [
-        { orderNo: { contains: search, mode: "insensitive" } },
-        { partner: { name: { contains: search, mode: "insensitive" } } },
+        { orderNo: { contains: search, mode: 'insensitive' } },
+        { partner: { name: { contains: search, mode: 'insensitive' } } },
       ];
     }
 
@@ -146,7 +152,7 @@ export class OrdersService {
           partner: true,
           salesPerson: { select: { id: true, name: true } },
         },
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -171,7 +177,7 @@ export class OrdersService {
         },
       },
     });
-    if (!order) throw new NotFoundException("该订单不存在或您无权查看");
+    if (!order) throw new NotFoundException('该订单不存在或您无权查看');
     return order;
   }
 
@@ -179,9 +185,9 @@ export class OrdersService {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, companyId },
     });
-    if (!order) throw new NotFoundException("订单不存在或无权操作");
-    if (order.status !== "DRAFT")
-      throw new BadRequestException("只能删除草稿状态的订单");
+    if (!order) throw new NotFoundException('订单不存在或无权操作');
+    if (order.status !== 'DRAFT')
+      throw new BadRequestException('只能删除草稿状态的订单');
 
     await this.prisma.orderItem.deleteMany({ where: { orderId } });
     return this.prisma.order.delete({ where: { id: orderId } });
@@ -249,16 +255,16 @@ export class OrdersService {
     });
 
     if (!order) {
-      throw new NotFoundException("该订单不存在或您无权查看");
+      throw new NotFoundException('该订单不存在或您无权查看');
     }
 
     const logs = await this.prisma.auditLog.findMany({
       where: {
         companyId,
-        entity: { in: ["order", "sale_order"] },
+        entity: { in: ['order', 'sale_order'] },
         entityId: orderId,
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' },
       include: {
         user: {
           select: { id: true, name: true, email: true },

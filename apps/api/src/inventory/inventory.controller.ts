@@ -122,7 +122,10 @@ export class InventoryController {
     @Body() payload: CreatePickingDto,
   ) {
     return this.inventoryService.createSaleOrderPicking(
-      companyId, orderId, payload, user.id,
+      companyId,
+      orderId,
+      payload,
+      user.id,
     );
   }
 
@@ -135,7 +138,10 @@ export class InventoryController {
     @Body() payload: ConfirmPickingDto,
   ) {
     return this.inventoryService.confirmStockPicking(
-      companyId, pickingId, payload, user.id,
+      companyId,
+      pickingId,
+      payload,
+      user.id,
     );
   }
 
@@ -188,7 +194,9 @@ export class InventoryController {
   }
 
   @Post('posting/sale-order/:orderId/ship')
-  @ApiOperation({ summary: '按销售订单自动过账并出库（便捷方法，内部走 Picking 流程）' })
+  @ApiOperation({
+    summary: '按销售订单自动过账并出库（便捷方法，内部走 Picking 流程）',
+  })
   async postSaleOrderShipment(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: CurrentUserPayload,

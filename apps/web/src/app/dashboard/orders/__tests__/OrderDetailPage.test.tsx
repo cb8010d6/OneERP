@@ -22,13 +22,17 @@ jest.mock('next/navigation', () => ({
 const mockApiGet = jest.fn();
 const mockApiPost = jest.fn();
 jest.mock('../../../../lib/api', () => ({
+  __esModule: true,
   default: { get: (...a: any[]) => mockApiGet(...a), post: (...a: any[]) => mockApiPost(...a) },
 }));
 
 /* ---------- Mock authStore ---------- */
 jest.mock('../../../../store/authStore', () => ({
   useAuthStore: Object.assign(
-    (selector: any) => selector({ currentCompanyId: 'c1' }),
+    (selector?: any) => {
+      const state = { currentCompanyId: 'c1' };
+      return typeof selector === 'function' ? selector(state) : state;
+    },
     { getState: jest.fn() },
   ),
 }));
@@ -72,7 +76,7 @@ const mockTimelineEvents = {
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import OrderDetailPage from '../page';
+import OrderDetailPage from '../[id]/page';
 
 describe('OrderDetailPage 冒烟测试', () => {
   beforeEach(() => {
@@ -88,7 +92,9 @@ describe('OrderDetailPage 冒烟测试', () => {
   it('加载成功后显示订单号和状态标签', async () => {
     render(<OrderDetailPage />);
     await waitFor(() => {
-      expect(screen.getByText('SO-2025-0001')).toBeInTheDocument();
+      expect(
+        screen.getByText((_, element) => element?.textContent === '订单 SO-2025-0001'),
+      ).toBeInTheDocument();
     });
     expect(screen.getByText('草稿')).toBeInTheDocument();
   });

@@ -4,7 +4,6 @@ import { TaxCodeController } from './tax-code.controller';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
-import { TaxNature } from '@prisma/client';
 
 describe('TaxCodeController', () => {
   let controller: TaxCodeController;

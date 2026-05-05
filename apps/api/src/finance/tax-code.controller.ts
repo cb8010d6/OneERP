@@ -84,10 +84,7 @@ export class TaxCodeController {
 
   @Get(':id')
   @ApiOperation({ summary: '获取税码详情' })
-  async getById(
-    @CurrentCompany() companyId: string,
-    @Param('id') id: string,
-  ) {
+  async getById(@CurrentCompany() companyId: string, @Param('id') id: string) {
     const taxCode = await this.prisma.taxCode.findFirst({
       where: { id, companyId },
       include: {

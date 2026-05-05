@@ -13,7 +13,10 @@ import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
-import { CreateVendorBillDto, RecordVendorBillPaymentDto } from './dto/vendor-bill.dto';
+import {
+  CreateVendorBillDto,
+  RecordVendorBillPaymentDto,
+} from './dto/vendor-bill.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import type { JwtUserPayload } from '../core/http/request.types';
 import { ThreeWayMatchService } from './three-way-match.service';
@@ -23,7 +26,10 @@ import { ThreeWayMatchService } from './three-way-match.service';
 @UseGuards(JwtAuthGuard, TenantGuard)
 @Controller('finance/vendor-bills')
 export class VendorBillController {
-  constructor(private readonly vendorBillService: VendorBillService, private readonly threeWayMatchService: ThreeWayMatchService) {}
+  constructor(
+    private readonly vendorBillService: VendorBillService,
+    private readonly threeWayMatchService: ThreeWayMatchService,
+  ) {}
 
   @Post()
   @ApiOperation({ summary: '创建采购发票（应付单）' })
@@ -46,10 +52,7 @@ export class VendorBillController {
 
   @Get(':id')
   @ApiOperation({ summary: '获取采购发票详情' })
-  async findOne(
-    @CurrentCompany() companyId: string,
-    @Param('id') id: string,
-  ) {
+  async findOne(@CurrentCompany() companyId: string, @Param('id') id: string) {
     return this.vendorBillService.findOne(companyId, id);
   }
 
@@ -93,4 +96,3 @@ export class VendorBillController {
     return this.threeWayMatchService.validateAndPersist(companyId, id, user.id);
   }
 }
-
