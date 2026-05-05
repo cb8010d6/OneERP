@@ -441,6 +441,7 @@ model InventoryTransaction {
 
   material        Material       @relation(fields: [materialId], references: [id])
   sourceLocation  StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
+  stockMove       StockMove?     @relation(fields: [stockMoveId], references: [id], onDelete: SetNull)
   destLocation    StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
 
   @@index([companyId, materialId])
@@ -688,6 +689,169 @@ model EventDlq {
   @@index([status, nextRetryAt])
   @@index([eventName])
   @@index([eventName, idempotencyKey])
+}
+
+
+// ==========================================
+// 采购与入库模块
+// ==========================================
+
+enum PurchaseOrderStatus {
+  DRAFT
+  CONFIRMED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  CONFIRMED
+  CLOSED
+  CANCELLED
+}
+
+enum PickingType {
+  INBOUND
+  OUTBOUND
+  INTERNAL_TRANSFER
+}
+
+enum PickingStatus {
+  DRAFT
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+enum MoveStatus {
+  DRAFT
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id           String             @id @default(uuid())
+  orderNo      String             @unique
+  partnerId    String
+  status       PurchaseOrderStatus @default(DRAFT)
+  orderDate    DateTime           @default(now())
+  expectedDate DateTime?
+  notes        String?
+  companyId    String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  company  Company            @relation(fields: [companyId], references: [id])
+  partner  Partner            @relation(fields: [partnerId], references: [id])
+  lines    PurchaseOrderLine[]
+  receipts GoodsReceipt[]
+
+  @@index([companyId, status])
+  @@index([partnerId])
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid())
+  orderId         String
+  productId       String
+  materialId      String
+  quantity        Float
+  receivedQuantity Float  @default(0)
+  unitPrice       Float
+  uom             String  @default("pcs")
+
+  order    PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+  material Material      @relation(fields: [materialId], references: [id])
+
+  @@index([orderId])
+}
+
+model GoodsReceipt {
+  id           String             @id @default(uuid())
+  receiptNo    String             @unique
+  orderId      String?
+  partnerId    String
+  status       GoodsReceiptStatus @default(DRAFT)
+  receiptDate  DateTime           @default(now())
+  notes        String?
+  companyId    String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  company  Company           @relation(fields: [companyId], references: [id])
+  partner  Partner           @relation(fields: [partnerId], references: [id])
+  order    PurchaseOrder?    @relation(fields: [orderId], references: [id])
+  lines    GoodsReceiptLine[]
+
+  @@index([companyId, status])
+  @@index([partnerId])
+}
+
+model GoodsReceiptLine {
+  id          String  @id @default(uuid())
+  receiptId   String
+  productId   String
+  materialId  String
+  locationId  String
+  quantity    Float
+  batchNo     String?
+
+  receipt  GoodsReceipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+  material Material      @relation(fields: [materialId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+
+  @@index([receiptId])
+}
+
+model StockPicking {
+  id             String      @id @default(uuid())
+  pickingNo      String      @unique
+  type           PickingType
+  status         PickingStatus @default(DRAFT)
+  scheduledDate  DateTime?
+  completedDate  DateTime?
+  sourceLocationId String?
+  destLocationId   String?
+  notes          String?
+  companyId      String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  company        Company        @relation(fields: [companyId], references: [id])
+  sourceLocation StockLocation? @relation("PickingSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation   StockLocation? @relation("PickingDestLocation", fields: [destLocationId], references: [id])
+  moves          StockMove[]
+
+  @@index([companyId, status])
+}
+
+model StockMove {
+  id             String      @id @default(uuid())
+  pickingId      String
+  productId      String
+  materialId     String
+  quantity       Float
+  sourceLocationId String?
+  destLocationId   String?
+  status         MoveStatus  @default(DRAFT)
+  batchNo        String?
+  companyId      String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  picking        StockPicking  @relation(fields: [pickingId], references: [id], onDelete: Cascade)
+  product        Product       @relation(fields: [productId], references: [id])
+  material       Material      @relation(fields: [materialId], references: [id])
+  sourceLocation StockLocation? @relation("PickingSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation   StockLocation? @relation("PickingDestLocation", fields: [destLocationId], references: [id])
+
+  @@index([pickingId])
+  @@index([companyId, materialId])
 }
 
 model AuditLog {
