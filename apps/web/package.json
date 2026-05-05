@@ -41,13 +41,14 @@
     "identity-obj-proxy": "^3.0.0",
     "jest": "^30.0.0",
     "jest-environment-jsdom": "^30.0.0",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4",
     "ts-jest": "^29.2.5",
     "typescript": "^5"
   },
   "jest": {
     "testEnvironment": "jsdom",
-    "setupFilesAfterSetup": [
+    "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.ts"
     ],
     "moduleNameMapper": {

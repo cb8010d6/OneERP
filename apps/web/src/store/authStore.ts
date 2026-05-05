@@ -49,7 +49,7 @@ function isJwtTokenLikelyValid(token: string | null): boolean {
     const padded = payloadBase64.padEnd(Math.ceil(payloadBase64.length / 4) * 4, '=');
     const decoded = JSON.parse(atob(padded)) as { exp?: number };
 
-    if (!decoded.exp) {
+    if (decoded.exp == null) {
       return true;
     }
 
