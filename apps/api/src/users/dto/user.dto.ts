@@ -10,17 +10,17 @@ import {
 export class CreateUserDto {
   @ApiProperty({ description: '邮箱（登录账号）' })
   @IsEmail()
-  email: string;
+  email!: string;
 
   @ApiProperty({ description: '密码（至少6位）' })
   @IsString()
   @MinLength(6)
-  password: string;
+  password!: string;
 
   @ApiProperty({ description: '姓名' })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  name!: string;
 
   @ApiPropertyOptional({ description: '角色ID（不填则使用默认角色）' })
   @IsOptional()

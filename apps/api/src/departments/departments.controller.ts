@@ -17,7 +17,7 @@ import { IsString } from 'class-validator';
 
 export class CreateDepartmentDto {
   @IsString()
-  name: string;
+  name!: string;
 }
 
 @ApiTags('组织架构 (Departments)')

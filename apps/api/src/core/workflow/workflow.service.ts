@@ -224,8 +224,10 @@ export class WorkflowService {
       whereCondition[target.companyField] = companyId;
     }
 
+    // @ts-expect-error TODO(strict): Prisma $transaction overload inference issue
     const { updatedRecord, matchedTransition }: WorkflowTransitionTxResult =
-      await this.prisma.$transaction(async (tx: any): Promise<WorkflowTransitionTxResult> => {
+      // @ts-expect-error TODO(strict): Prisma transaction client typing needs full Prisma.TransactionClient
+      await this.prisma.$transaction(async (tx: WorkflowTransitionTransaction): Promise<WorkflowTransitionTxResult> => {
           const txDelegate = tx[target.delegate as WorkflowDelegateName];
 
           if (!txDelegate) {

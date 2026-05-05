@@ -48,7 +48,7 @@ describe('FinanceController', () => {
 
       const result = await controller.createInvoice(
         'c1',
-        { id: 'u1' },
+        { id: 'u1', email: 'test@example.com' },
         {
           orderId: 'o1',
           amount: 1000,
@@ -95,7 +95,7 @@ describe('FinanceController', () => {
       const expected = { id: 'inv1', postingStatus: 'POSTED' };
       mockFinanceService.postInvoice.mockResolvedValue(expected);
 
-      const result = await controller.postInvoice('c1', { id: 'u1' }, 'inv1', {
+      const result = await controller.postInvoice('c1', { id: 'u1', email: 'test@example.com' }, 'inv1', {
         taxRate: 0.13,
       });
 

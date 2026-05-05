@@ -84,7 +84,7 @@ describe('ProductionController', () => {
 
       const result = await controller.submitWorkReport(
         'c1',
-        { id: 'u1' },
+        { id: 'u1', email: 'test@example.com' },
         'wo1',
         { goodQty: 10, defectQty: 1 },
       );

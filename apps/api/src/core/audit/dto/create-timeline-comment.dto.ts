@@ -8,5 +8,5 @@ export class CreateTimelineCommentDto {
   })
   @IsString()
   @MinLength(1)
-  content: string;
+  content!: string;
 }

@@ -64,7 +64,7 @@ export class CrudController {
   create(
     @Param('modelName') modelName: string,
     @CurrentCompany() companyId: string,
-    @Body() body: Record<string, any>,
+    @Body() body: Record<string, unknown>,
   ) {
     return this.crudService.create(modelName, body, companyId);
   }
@@ -75,7 +75,7 @@ export class CrudController {
     @Param('modelName') modelName: string,
     @Param('id') id: string,
     @CurrentCompany() companyId: string,
-    @Body() body: Record<string, any>,
+    @Body() body: Record<string, unknown>,
   ) {
     return this.crudService.update(modelName, id, body, companyId);
   }

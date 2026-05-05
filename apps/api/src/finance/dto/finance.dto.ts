@@ -12,12 +12,12 @@ export class CreateInvoiceDto {
   @ApiProperty({ description: '关联订单ID' })
   @IsString()
   @IsNotEmpty()
-  orderId: string;
+  orderId!: string;
 
   @ApiProperty({ description: '发票金额' })
   @IsNumber()
   @Min(0)
-  amount: number;
+  amount!: number;
 
   @ApiProperty({ description: '税码ID (建议填写，未填将使用默认税码)', required: false })
   @IsOptional()
@@ -26,19 +26,19 @@ export class CreateInvoiceDto {
 
   @ApiProperty({ description: '计划收款日期 (ISO string)' })
   @IsString()
-  dueDate: string;
+  dueDate!: string;
 }
 
 export class CreatePaymentDto {
   @ApiProperty({ description: '支付金额' })
   @IsNumber()
   @Min(1)
-  amount: number;
+  amount!: number;
 
   @ApiProperty({ description: '支付方式: BANK_TRANSFER, ALIPAY, WECHAT' })
   @IsString()
   @IsNotEmpty()
-  method: string;
+  method!: string;
 }
 
 export class PostInvoiceDto {

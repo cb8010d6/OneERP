@@ -11,17 +11,17 @@ export class CreateInboundDto {
   @ApiProperty({ description: '目标库位ID' })
   @IsString()
   @IsNotEmpty()
-  destLocationId: string;
+  destLocationId!: string;
 
   @ApiProperty({ description: '物料ID' })
   @IsString()
   @IsNotEmpty()
-  materialId: string;
+  materialId!: string;
 
   @ApiProperty({ description: '入库数量' })
   @IsNumber()
   @Min(1)
-  quantity: number;
+  quantity!: number;
 
   @ApiPropertyOptional({ description: '批次号' })
   @IsOptional()
@@ -43,12 +43,12 @@ export class CreateStockMoveDto {
   @ApiProperty({ description: '物料ID' })
   @IsString()
   @IsNotEmpty()
-  materialId: string;
+  materialId!: string;
 
   @ApiProperty({ description: '流转数量' })
   @IsNumber()
   @Min(1)
-  quantity: number;
+  quantity!: number;
 
   @ApiPropertyOptional({ description: '批次号' })
   @IsOptional()
@@ -82,19 +82,19 @@ export class ScanOutboundDto {
   @ApiProperty({ description: '物料SKU码' })
   @IsString()
   @IsNotEmpty()
-  materialSku: string;
+  materialSku!: string;
 
   @ApiProperty({ description: '出库数量' })
   @IsNumber()
   @Min(1)
-  quantity: number;
+  quantity!: number;
 }
 
 export class ApproveOutboundDto {
   @ApiProperty({ description: '确认的出库数量' })
   @IsNumber()
   @Min(1)
-  quantity: number;
+  quantity!: number;
 }
 
 export class SaleOrderShipmentDto {
@@ -118,17 +118,17 @@ export class PurchaseInboundPostingDto {
   @ApiProperty({ description: '采购单号' })
   @IsString()
   @IsNotEmpty()
-  purchaseNo: string;
+  purchaseNo!: string;
 
   @ApiProperty({ description: '物料ID' })
   @IsString()
   @IsNotEmpty()
-  materialId: string;
+  materialId!: string;
 
   @ApiProperty({ description: '入库数量' })
   @IsNumber()
   @Min(1)
-  quantity: number;
+  quantity!: number;
 
   @ApiPropertyOptional({ description: '目标库位ID' })
   @IsOptional()

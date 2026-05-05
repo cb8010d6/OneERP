@@ -12,11 +12,11 @@ import {
 class AIToolOverrideDto {
   @ApiProperty({ description: '工具名称', example: 'create_resource' })
   @IsString()
-  toolName: string;
+  toolName!: string;
 
   @ApiProperty({ description: '工具参数' })
   @IsObject()
-  args: Record<string, unknown>;
+  args!: Record<string, unknown>;
 }
 
 export class AICommandDto {
@@ -26,7 +26,7 @@ export class AICommandDto {
   })
   @IsString()
   @MinLength(2)
-  input: string;
+  input!: string;
 
   @ApiProperty({
     description: '是否仅返回草稿而不执行写操作',
@@ -52,7 +52,7 @@ export class AIChat2DashDto {
   @ApiProperty({ description: '分析型问题', example: '过去一周订单状态分布' })
   @IsString()
   @MinLength(2)
-  input: string;
+  input!: string;
 }
 
 export class AIChat2SqlDto {
@@ -62,5 +62,5 @@ export class AIChat2SqlDto {
   })
   @IsString()
   @MinLength(2)
-  input: string;
+  input!: string;
 }

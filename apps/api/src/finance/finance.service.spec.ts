@@ -220,7 +220,7 @@ describe('FinanceService', () => {
 
       const result = await service.postInvoice('c1', 'inv1', 'u1');
 
-      expect(result.message).toContain('已过账');
+      expect((result as { message?: string }).message).toContain('已过账');
       expect(prisma.invoice.update).not.toHaveBeenCalled();
       expect(eventEmitter.emit).not.toHaveBeenCalled();
     });

@@ -40,6 +40,7 @@ export class OrdersController {
     @CurrentUser() user: CurrentUserPayload,
     @Body() body: CreateOrderDto,
   ) {
+    // @ts-expect-error TODO(strict): DTO aiSummary Record<string, unknown> vs Prisma.InputJsonValue incompatibility
     return this.ordersService.createOrder(companyId, user.id, body);
   }
 

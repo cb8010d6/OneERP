@@ -6,7 +6,7 @@ import { IsOptional, IsString } from 'class-validator';
 export class TransitionWorkflowDto {
   @ApiProperty({ description: '动作编码，如 ship/cancel/start' })
   @IsString()
-  action: string;
+  action!: string;
 
   @ApiPropertyOptional({ description: '流转备注' })
   @IsOptional()
