@@ -15,6 +15,7 @@ interface StockDepletedPayload {
 interface InvoicePostedPayload {
   companyId: string;
   invoiceId: string;
+  taxCodeId?: string | null;
   taxRate?: number;
   operatorId?: string;
 }

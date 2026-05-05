@@ -1,16 +1,57 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { EntryPostingStatus } from '@prisma/client';
+import { EntryPostingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateInvoiceDto, CreatePaymentDto } from './dto/finance.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 
 @Injectable()
 export class FinanceService {
+  private readonly logger = new Logger(FinanceService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  private round2(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private calcTaxFromTotal(total: number, taxRate: number) {
+    const safeRate = Math.max(0, Math.min(1, Number(taxRate ?? 0)));
+    const subTotal = this.round2(total / (1 + safeRate));
+    const taxAmount = this.round2(total - subTotal);
+    return { subTotal, taxAmount, taxRate: safeRate };
+  }
+
+  private async resolveTaxCode(companyId: string, taxCodeId?: string | null) {
+    if (taxCodeId) {
+      const taxCode = await this.prisma.taxCode.findFirst({
+        where: { id: taxCodeId, companyId, active: true },
+      });
+      if (!taxCode) {
+        throw new BadRequestException('税码不存在或已停用，请确认税码选择');
+      }
+      return { ...taxCode, isFallback: false };
+    }
+
+    const defaultTaxCode = await this.prisma.taxCode.findFirst({
+      where: { companyId, isDefault: true, active: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (defaultTaxCode) {
+      return { ...defaultTaxCode, isFallback: false };
+    }
+
+    this.logger.warn(`未配置默认税码，发票将使用 13% 默认税率: ${companyId}`);
+    return { id: null, rate: 0.13, isFallback: true };
+  }
 
   async createInvoice(
     companyId: string,
@@ -19,14 +60,26 @@ export class FinanceService {
   ) {
     const order = await this.prisma.order.findFirst({
       where: { id: dto.orderId, companyId },
+      select: { id: true, taxCodeId: true },
     });
     if (!order) throw new NotFoundException('找不到销售订单');
+
+    const resolvedTaxCode = await this.resolveTaxCode(
+      companyId,
+      dto.taxCodeId ?? order.taxCodeId,
+    );
+
+    const amount = this.round2(Number(dto.amount));
+    const breakdown = this.calcTaxFromTotal(amount, resolvedTaxCode.rate);
 
     const invoice = await this.prisma.invoice.create({
       data: {
         invoiceNo: `INV-${Date.now()}`,
         orderId: dto.orderId,
-        amount: dto.amount,
+        amount,
+        subTotal: breakdown.subTotal,
+        taxAmount: breakdown.taxAmount,
+        taxCodeId: resolvedTaxCode.id ?? null,
         dueDate: new Date(dto.dueDate),
         status: 'UNPAID',
         postingStatus: EntryPostingStatus.DRAFT,
@@ -41,7 +94,13 @@ export class FinanceService {
         action: 'CREATE_INVOICE',
         entity: 'Invoice',
         entityId: invoice.id,
-        details: { amount: dto.amount, orderId: dto.orderId },
+        details: {
+          amount,
+          orderId: dto.orderId,
+          taxCodeId: resolvedTaxCode.id ?? null,
+          taxRate: resolvedTaxCode.rate ?? 0,
+          taxFallback: resolvedTaxCode.isFallback ?? false,
+        },
         companyId,
       },
     });
@@ -107,10 +166,12 @@ export class FinanceService {
     companyId: string,
     invoiceId: string,
     operatorId: string,
+    taxCodeId?: string,
     taxRate?: number,
   ) {
     const invoice = await this.prisma.invoice.findFirst({
       where: { id: invoiceId, companyId },
+      include: { order: { select: { taxCodeId: true } } },
     });
     if (!invoice) {
       throw new NotFoundException('发票不存在');
@@ -125,11 +186,36 @@ export class FinanceService {
       };
     }
 
+    const resolvedTaxCode = await this.resolveTaxCode(
+      companyId,
+      taxCodeId ?? invoice.taxCodeId ?? invoice.order?.taxCodeId,
+    );
+    const amount = this.round2(Number(invoice.amount));
+    let subTotal = this.round2(Number(invoice.subTotal ?? 0));
+    let taxAmount = this.round2(Number(invoice.taxAmount ?? 0));
+    const shouldRecalc = subTotal <= 0 && taxAmount <= 0 && amount > 0;
+
+    if (shouldRecalc) {
+      const fallbackRate = taxRate ?? resolvedTaxCode.rate ?? 0.13;
+      const breakdown = this.calcTaxFromTotal(amount, fallbackRate);
+      subTotal = breakdown.subTotal;
+      taxAmount = breakdown.taxAmount;
+    }
+
+    const updateData: Prisma.InvoiceUpdateInput = {
+      postingStatus: EntryPostingStatus.POSTED,
+    };
+    if (shouldRecalc) {
+      updateData.subTotal = subTotal;
+      updateData.taxAmount = taxAmount;
+    }
+    if (!invoice.taxCodeId && resolvedTaxCode.id) {
+      updateData.taxCodeId = resolvedTaxCode.id;
+    }
+
     const updated = await this.prisma.invoice.update({
       where: { id: invoice.id },
-      data: {
-        postingStatus: EntryPostingStatus.POSTED,
-      },
+      data: updateData,
     });
 
     await this.prisma.auditLog.create({
@@ -138,7 +224,12 @@ export class FinanceService {
         action: 'POST_INVOICE',
         entity: 'invoice',
         entityId: invoice.id,
-        details: { invoiceNo: invoice.invoiceNo, taxRate: taxRate ?? 0.13 },
+        details: {
+          invoiceNo: invoice.invoiceNo,
+          taxCodeId: invoice.taxCodeId ?? resolvedTaxCode.id ?? null,
+          taxRate: taxRate ?? resolvedTaxCode.rate ?? 0.13,
+          taxFallback: resolvedTaxCode.isFallback ?? false,
+        },
         companyId,
       },
     });
@@ -146,7 +237,8 @@ export class FinanceService {
     this.eventEmitter.emit('finance.invoice.posted', {
       companyId,
       invoiceId: invoice.id,
-      taxRate: taxRate ?? 0.13,
+      taxCodeId: invoice.taxCodeId ?? resolvedTaxCode.id ?? null,
+      taxRate: taxRate ?? resolvedTaxCode.rate ?? 0.13,
       operatorId,
     });
 

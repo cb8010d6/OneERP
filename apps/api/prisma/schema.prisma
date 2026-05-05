@@ -44,6 +44,7 @@ model Company {
   journals    Journal[]
   journalEntries JournalEntry[]
   eventDlqRecords EventDlq[]
+  taxCodes    TaxCode[]
 }
 
 enum PartnerType {
@@ -149,6 +150,30 @@ model Partner {
   @@index([companyId, type])
 }
 
+model TaxCode {
+  id             String   @id @default(uuid())
+  code           String
+  name           String
+  rate           Float    @default(0)
+  isTaxInclusive Boolean  @default(true)
+  isDefault      Boolean  @default(false)
+  active         Boolean  @default(true)
+  accountId      String?
+  companyId      String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company   Company  @relation(fields: [companyId], references: [id])
+  account   Account? @relation(fields: [accountId], references: [id])
+  orders    Order[]
+  orderItems OrderItem[]
+  invoices  Invoice[]
+
+  @@unique([companyId, code])
+  @@index([companyId, active])
+  @@index([accountId])
+}
+
 // ==========================================
 // 销售与订单引擎
 // ==========================================
@@ -161,6 +186,9 @@ model Order {
   companyId    String
   status       String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
   totalAmount  Float     @default(0)
+  subTotal     Float     @default(0)
+  taxTotal     Float     @default(0)
+  taxCodeId    String?
   aiSummary    Json? // 存放 AI 抓取的客户需求 JSON 结构
   customAttributes Json?
   expectedDate DateTime? // 预计交付日期
@@ -172,6 +200,7 @@ model Order {
   partner     Partner     @relation(fields: [partnerId], references: [id])
   salesPerson User        @relation("UserOrders", fields: [salesId], references: [id])
   company     Company     @relation(fields: [companyId], references: [id])
+  taxCode     TaxCode?    @relation(fields: [taxCodeId], references: [id])
   items       OrderItem[]
   workOrders  WorkOrder[]
   invoices    Invoice[]
@@ -184,9 +213,14 @@ model OrderItem {
   quantity   Int
   unitPrice  Float
   totalPrice Float
+  subTotal   Float   @default(0)
+  taxAmount  Float   @default(0)
+  taxRate    Float   @default(0)
+  taxCodeId  String?
   customAttributes Json?
 
-  order Order @relation(fields: [orderId], references: [id])
+  order   Order    @relation(fields: [orderId], references: [id])
+  taxCode TaxCode? @relation(fields: [taxCodeId], references: [id])
 }
 
 // ==========================================
@@ -488,6 +522,9 @@ model Invoice {
   invoiceNo  String    @unique
   orderId    String
   amount     Float
+  subTotal   Float    @default(0)
+  taxAmount  Float    @default(0)
+  taxCodeId  String?
   status     String // "UNPAID", "PARTIAL", "PAID"
   postingStatus EntryPostingStatus @default(DRAFT)
   companyId  String
@@ -495,6 +532,7 @@ model Invoice {
   issuedDate DateTime  @default(now())
 
   order    Order     @relation(fields: [orderId], references: [id])
+  taxCode  TaxCode?  @relation(fields: [taxCodeId], references: [id])
   payments Payment[]
 }
 
@@ -523,6 +561,7 @@ model Account {
   children Account[] @relation("AccountTree")
   company  Company   @relation(fields: [companyId], references: [id])
   lines    JournalEntryLine[]
+  taxCodes TaxCode[]
 
   @@unique([companyId, code])
   @@index([companyId, parentId])

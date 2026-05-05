@@ -104,6 +104,7 @@ describe('FinanceController', () => {
         'c1',
         'inv1',
         'u1',
+        undefined,
         0.13,
       );
     });
