@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Building2, Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table } from 'lucide-react';
+import { Building2, Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table, ClipboardList } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
@@ -19,6 +19,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navItems = [
     { icon: LayoutDashboard, label: '概览', href: '/dashboard' },
     { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales' },
+    { icon: ClipboardList, label: '采购订单', href: '/dashboard/dynamic/purchaseOrder' },
     { icon: Package, label: '生产与库存', href: '/dashboard/inventory' },
     { icon: FileText, label: '图纸文档', href: '/dashboard/files' },
     { icon: Users, label: '客户管理', href: '/dashboard/customers' },

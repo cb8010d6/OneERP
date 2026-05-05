@@ -606,6 +606,125 @@ export class MetadataService {
         },
       },
     ],
+    [
+      'purchaseOrder',
+      {
+        model: 'purchaseOrder',
+        label: '采购订单',
+        description: '采购订单主数据，管理供应商采购业务。',
+        companyScoped: true,
+        fields: [
+          { name: 'orderNo', label: '采购单号', type: 'string', required: true },
+          {
+            name: 'partnerId',
+            label: '供应商',
+            type: 'reference',
+            required: true,
+            reference: {
+              model: 'partner',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'partner',
+            },
+          },
+          {
+            name: 'taxCodeId',
+            label: '税码',
+            type: 'reference',
+            reference: {
+              model: 'taxCode',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'taxCode',
+            },
+          },
+          { name: 'status', label: '状态', type: 'string' },
+          { name: 'subTotal', label: '未税金额', type: 'number' },
+          { name: 'taxTotal', label: '税额', type: 'number' },
+          { name: 'totalAmount', label: '总金额', type: 'number' },
+          { name: 'orderDate', label: '下单日期', type: 'date' },
+          { name: 'expectedDate', label: '预计到货', type: 'date' },
+          { name: 'notes', label: '备注', type: 'text' },
+        ],
+        views: {
+          form: {
+            sections: [
+              { title: '基础信息', fields: ['orderNo', 'partnerId', 'taxCodeId', 'status', 'orderDate', 'expectedDate'] },
+              { title: '金额信息', fields: ['subTotal', 'taxTotal', 'totalAmount'] },
+              { title: '备注', fields: ['notes'] },
+            ],
+          },
+          list: {
+            columns: ['orderNo', 'partnerId', 'status', 'subTotal', 'taxTotal', 'totalAmount', 'orderDate', 'expectedDate'],
+            defaultSort: { createdAt: 'desc' },
+            searchFields: ['orderNo', 'status'],
+          },
+          kanban: {
+            statusField: 'status',
+            columns: [
+              { value: 'DRAFT', label: '草稿', color: 'bg-slate-50' },
+              { value: 'PENDING', label: '待审批', color: 'bg-amber-50' },
+              { value: 'APPROVED', label: '已批准', color: 'bg-sky-50' },
+              { value: 'ORDERED', label: '已下单', color: 'bg-indigo-50' },
+              { value: 'RECEIVED', label: '已收货', color: 'bg-emerald-50' },
+              { value: 'CANCELLED', label: '已取消', color: 'bg-rose-50' },
+            ],
+          },
+        },
+      },
+    ],
+    [
+      'purchaseOrderLine',
+      {
+        model: 'purchaseOrderLine',
+        label: '采购订单行',
+        description: '采购订单明细行项目。',
+        companyScoped: true,
+        fields: [
+          {
+            name: 'purchaseOrderId',
+            label: '采购订单',
+            type: 'reference',
+            required: true,
+            reference: {
+              model: 'purchaseOrder',
+              labelField: 'orderNo',
+              valueField: 'id',
+              relationField: 'purchaseOrder',
+            },
+          },
+          {
+            name: 'materialId',
+            label: '物料',
+            type: 'reference',
+            required: true,
+            reference: {
+              model: 'material',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'material',
+            },
+          },
+          { name: 'quantity', label: '数量', type: 'number', required: true },
+          { name: 'unitPrice', label: '单价', type: 'number', required: true },
+          { name: 'subTotal', label: '未税金额', type: 'number' },
+          { name: 'taxAmount', label: '税额', type: 'number' },
+          { name: 'totalPrice', label: '含税金额', type: 'number' },
+          { name: 'receivedQty', label: '已收货数量', type: 'number' },
+          { name: 'notes', label: '备注', type: 'text' },
+        ],
+        views: {
+          form: {
+            fields: ['purchaseOrderId', 'materialId', 'quantity', 'unitPrice', 'subTotal', 'taxAmount', 'totalPrice', 'receivedQty', 'notes'],
+          },
+          list: {
+            columns: ['purchaseOrderId', 'materialId', 'quantity', 'unitPrice', 'subTotal', 'taxAmount', 'totalPrice', 'receivedQty'],
+            defaultSort: { createdAt: 'desc' },
+            searchFields: ['purchaseOrderId', 'materialId'],
+          },
+        },
+      },
+    ],
   ]);
 
   async listSchemas(companyId?: string) {
