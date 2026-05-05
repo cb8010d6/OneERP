@@ -19,7 +19,9 @@ import { TenantGuard } from '../core/guards/tenant.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
 import {
+  ConfirmPickingDto,
   CreateInboundDto,
+  CreatePickingDto,
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
   ReversePurchaseInboundDto,
@@ -87,6 +89,58 @@ export class InventoryController {
     return this.inventoryService.getRealtimeLedger(companyId);
   }
 
+  // ---- Stock Picking Endpoints ----
+
+  @Get('pickings')
+  @ApiOperation({ summary: '获取拣货单列表（支持分页）' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, type: String })
+  async getPickings(
+    @CurrentCompany() companyId: string,
+    @Query() pagination: PaginationDto,
+    @Query('status') status?: string,
+  ) {
+    return this.inventoryService.getPickings(companyId, pagination, status);
+  }
+
+  @Get('pickings/:pickingId')
+  @ApiOperation({ summary: '获取拣货单详情' })
+  async getPickingById(
+    @Param('pickingId') pickingId: string,
+    @CurrentCompany() companyId: string,
+  ) {
+    return this.inventoryService.getPickingById(pickingId, companyId);
+  }
+
+  @Post('pickings/sale-order/:orderId')
+  @ApiOperation({ summary: '为销售订单创建出库拣货单（DRAFT）' })
+  async createSaleOrderPicking(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('orderId') orderId: string,
+    @Body() payload: CreatePickingDto,
+  ) {
+    return this.inventoryService.createSaleOrderPicking(
+      companyId, orderId, payload, user.id,
+    );
+  }
+
+  @Post('pickings/:pickingId/confirm')
+  @ApiOperation({ summary: '确认拣货单，执行库存扣减（幂等）' })
+  async confirmStockPicking(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Param('pickingId') pickingId: string,
+    @Body() payload: ConfirmPickingDto,
+  ) {
+    return this.inventoryService.confirmStockPicking(
+      companyId, pickingId, payload, user.id,
+    );
+  }
+
+  // ---- Legacy / Convenience Endpoints ----
+
   @Post('inbound')
   @ApiOperation({ summary: '新建入库单' })
   async createInbound(
@@ -134,7 +188,7 @@ export class InventoryController {
   }
 
   @Post('posting/sale-order/:orderId/ship')
-  @ApiOperation({ summary: '按销售订单自动过账并出库' })
+  @ApiOperation({ summary: '按销售订单自动过账并出库（便捷方法，内部走 Picking 流程）' })
   async postSaleOrderShipment(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: CurrentUserPayload,

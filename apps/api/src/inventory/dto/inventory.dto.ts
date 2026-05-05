@@ -181,3 +181,26 @@ export class ReversePurchaseInboundDto {
   @IsString()
   note?: string;
 }
+
+export class CreatePickingDto {
+  @ApiPropertyOptional({ description: '来源库位ID（整单出库时统一指定）' })
+  @IsOptional()
+  @IsString()
+  sourceLocationId?: string;
+
+  @ApiPropertyOptional({ description: '目标库位ID（整单入库时统一指定）' })
+  @IsOptional()
+  @IsString()
+  destLocationId?: string;
+
+  @ApiPropertyOptional({ description: '计划执行日期' })
+  @IsOptional()
+  scheduledDate?: string;
+}
+
+export class ConfirmPickingDto {
+  @ApiPropertyOptional({ description: '备注' })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
