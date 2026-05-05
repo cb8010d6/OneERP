@@ -16,13 +16,14 @@ import { CurrentUser } from '../core/decorators/current-user.decorator';
 import { CreateVendorBillDto, RecordVendorBillPaymentDto } from './dto/vendor-bill.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import type { JwtUserPayload } from '../core/http/request.types';
+import { ThreeWayMatchService } from './three-way-match.service';
 
 @ApiTags('应付管理 (Vendor Bill)')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard)
 @Controller('finance/vendor-bills')
 export class VendorBillController {
-  constructor(private readonly vendorBillService: VendorBillService) {}
+  constructor(private readonly vendorBillService: VendorBillService, private readonly threeWayMatchService: ThreeWayMatchService) {}
 
   @Post()
   @ApiOperation({ summary: '创建采购发票（应付单）' })
@@ -81,4 +82,15 @@ export class VendorBillController {
   ) {
     return this.vendorBillService.post(companyId, id, user.id);
   }
+
+  @Post(':id/match')
+  @ApiOperation({ summary: '执行三单匹配校验 (PO↔GR↔Bill)' })
+  async match(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') id: string,
+  ) {
+    return this.threeWayMatchService.validateAndPersist(companyId, id, user.id);
+  }
 }
+

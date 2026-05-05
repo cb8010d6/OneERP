@@ -9,6 +9,7 @@ import { EntryPostingStatus, TaxNature, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TaxService } from '../core/tax/tax.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { ThreeWayMatchService } from './three-way-match.service';
 import {
   CreateVendorBillDto,
   RecordVendorBillPaymentDto,
@@ -22,6 +23,7 @@ export class VendorBillService {
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
     private readonly taxService: TaxService,
+    private readonly threeWayMatchService: ThreeWayMatchService,
   ) {}
 
   async create(
@@ -258,6 +260,9 @@ export class VendorBillService {
       include: { partner: { select: { id: true } }, taxCode: { include: { account: true, outputAccount: true, inputAccount: true } } },
     });
     if (!invoice) throw new NotFoundException('采购发票不存在');
+    // 三单匹配校验：过账前必须通过匹配
+    await this.threeWayMatchService.validateAndPersist(companyId, invoiceId, operatorId);
+
     if (invoice.postingStatus === EntryPostingStatus.POSTED) {
       return { invoiceId: invoice.id, invoiceNo: invoice.invoiceNo, postingStatus: invoice.postingStatus, message: '采购发票已过账，无需重复处理' };
     }

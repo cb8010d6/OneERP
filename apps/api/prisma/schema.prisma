@@ -592,6 +592,7 @@ model PurchaseInvoice {
   taxCodeId       String?
   taxNature       TaxNature @default(INPUT)
   status          String // "DRAFT", "UNPAID", "PARTIAL", "PAID"
+  matchStatus  ThreeWayMatchStatus @default(NOT_APPLICABLE)
   postingStatus   EntryPostingStatus @default(DRAFT)
   companyId       String
   dueDate         DateTime?
@@ -788,6 +789,14 @@ enum MoveStatus {
   CANCELLED
 }
 
+enum ThreeWayMatchStatus {
+  MATCHED
+  MISMATCH
+  PENDING_REVIEW
+  NOT_APPLICABLE
+}
+
+
 model PurchaseOrder {
   id           String             @id @default(uuid())
   orderNo      String             @unique
@@ -796,6 +805,9 @@ model PurchaseOrder {
   orderDate    DateTime           @default(now())
   expectedDate DateTime?
   notes        String?
+  subTotal     Float              @default(0)
+  taxTotal     Float              @default(0)
+  totalAmount  Float              @default(0)
   companyId    String
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -812,16 +824,23 @@ model PurchaseOrder {
 model PurchaseOrderLine {
   id              String  @id @default(uuid())
   orderId         String
-  productId       String
-  materialId      String
+  lineNo          Int     @default(1)
+  productId       String?
+  materialId      String?
+  description     String?
   quantity        Float
   receivedQuantity Float  @default(0)
   unitPrice       Float
+  taxRate         Float   @default(0)
+  taxAmount       Float   @default(0)
+  subTotal        Float   @default(0)
+  totalAmount     Float   @default(0)
+  companyId       String
   uom             String  @default("pcs")
 
   order    PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product  Product       @relation(fields: [productId], references: [id])
-  material Material      @relation(fields: [materialId], references: [id])
+  product  Product?      @relation(fields: [productId], references: [id])
+  material Material?     @relation(fields: [materialId], references: [id])
 
   @@index([orderId])
 }
