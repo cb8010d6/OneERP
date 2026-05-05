@@ -6,7 +6,12 @@
   "scripts": {
     "seed": "npm --prefix apps/api run seed",
     "prepare": "husky",
-    "commitlint": "commitlint --config commitlint.config.cjs --from=HEAD~1 --to=HEAD"
+    "commitlint": "commitlint --config commitlint.config.cjs --from=HEAD~1 --to=HEAD",
+    "typecheck": "npm --prefix apps/api run typecheck && npm --prefix apps/web run typecheck",
+    "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint",
+    "test": "npm --prefix apps/api run test -- --passWithNoTests",
+    "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "validate": "npm --prefix apps/api run prisma:validate && npm --prefix apps/api run prisma:generate && npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "dependencies": {
     "@nestjs/event-emitter": "^3.0.1",

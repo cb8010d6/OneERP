@@ -30,8 +30,8 @@ jobs:
       - name: Validate commit messages
         run: npx commitlint --config commitlint.config.cjs --from=${{ github.event.pull_request.base.sha }} --to=${{ github.event.pull_request.head.sha }}
 
-  # ---- API: Lint + Test + Build ----
-  api:
+  # ---- Validate: prisma validate -> prisma generate -> typecheck -> lint -> test -> build ----
+  validate:
     runs-on: ubuntu-latest
 
     services:
@@ -71,56 +71,20 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install dependencies
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install API dependencies
         run: npm ci
         working-directory: apps/api
 
-      - name: Validate Prisma schema
-        run: npx prisma validate --schema=./prisma/schema.prisma
-        working-directory: apps/api
-
-      - name: Generate Prisma Client
-        run: npx prisma generate --schema=./prisma/schema.prisma
-        working-directory: apps/api
+      - name: Install Web dependencies
+        run: npm ci
+        working-directory: apps/web
 
       - name: Run Prisma migrations
         run: npx prisma migrate deploy --schema=./prisma/schema.prisma
         working-directory: apps/api
 
-      - name: Lint API
-        run: npm run lint
-        working-directory: apps/api
-
-      - name: Run unit tests
-        run: npm test -- --passWithNoTests
-        working-directory: apps/api
-
-      - name: Build API
-        run: npm run build
-        working-directory: apps/api
-
-  # ---- Web: Lint + Build ----
-  web:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: apps/web
-
-      - name: Lint Web
-        run: npm run lint
-        working-directory: apps/web
-
-      - name: Build Web
-        run: npm run build
-        working-directory: apps/web
+      - name: Validate
+        run: npm run validate
