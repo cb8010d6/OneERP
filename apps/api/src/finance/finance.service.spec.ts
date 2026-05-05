@@ -3,6 +3,7 @@ import { FinanceService } from './finance.service';
 
 type MockPrisma = {
   order: { findFirst: jest.Mock };
+  taxCode: { findFirst: jest.Mock };
   invoice: {
     create: jest.Mock;
     findMany: jest.Mock;
@@ -23,6 +24,7 @@ type MockTx = {
 describe('FinanceService', () => {
   const prisma: MockPrisma = {
     order: { findFirst: jest.fn() },
+    taxCode: { findFirst: jest.fn() },
     invoice: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -178,6 +180,11 @@ describe('FinanceService', () => {
         id: 'inv1',
         invoiceNo: 'INV-123',
         postingStatus: 'DRAFT',
+        amount: 1000,
+        subTotal: 0,
+        taxAmount: 0,
+        taxCodeId: null,
+        order: { taxCodeId: null },
       });
       prisma.invoice.update.mockResolvedValue({
         id: 'inv1',
@@ -186,18 +193,19 @@ describe('FinanceService', () => {
       });
       prisma.auditLog.create.mockResolvedValue({});
 
-      const result = await service.postInvoice('c1', 'inv1', 'u1', 0.13);
+      const result = await service.postInvoice('c1', 'inv1', 'u1', undefined, 0.13);
 
       expect(result.postingStatus).toBe('POSTED');
       expect(prisma.invoice.update).toHaveBeenCalledWith({
         where: { id: 'inv1' },
-        data: { postingStatus: 'POSTED' },
+        data: expect.objectContaining({ postingStatus: 'POSTED' }),
       });
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'finance.invoice.posted',
         expect.objectContaining({
           companyId: 'c1',
           invoiceId: 'inv1',
+          taxCodeId: null,
           taxRate: 0.13,
         }),
       );

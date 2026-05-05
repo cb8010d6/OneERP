@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -12,11 +13,13 @@ interface CreateOrderItemInput {
   productId: string;
   quantity: number;
   unitPrice: number;
+  taxCodeId?: string;
 }
 
 interface CreateOrderInput {
   partnerId: string;
   items?: CreateOrderItemInput[];
+  taxCodeId?: string;
   aiSummary?: Prisma.InputJsonValue;
   expectedDate?: string | Date | null;
   notes?: string | null;
@@ -24,28 +27,109 @@ interface CreateOrderInput {
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private prisma: PrismaService,
     private readonly eventQueueService: EventQueueService,
   ) {}
 
+  private round2(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private calcTaxBreakdown(
+    baseAmount: number,
+    taxRate: number,
+    isTaxInclusive: boolean,
+  ) {
+    const safeRate = Math.max(0, Math.min(1, Number(taxRate ?? 0)));
+    if (isTaxInclusive) {
+      const subTotal = this.round2(baseAmount / (1 + safeRate));
+      const taxAmount = this.round2(baseAmount - subTotal);
+      return {
+        subTotal,
+        taxAmount,
+        total: this.round2(baseAmount),
+      };
+    }
+
+    const subTotal = this.round2(baseAmount);
+    const taxAmount = this.round2(subTotal * safeRate);
+    const total = this.round2(subTotal + taxAmount);
+    return { subTotal, taxAmount, total };
+  }
+
+  private async resolveTaxCode(companyId: string, taxCodeId?: string | null) {
+    if (taxCodeId) {
+      const taxCode = await this.prisma.taxCode.findFirst({
+        where: { id: taxCodeId, companyId, active: true },
+      });
+      if (!taxCode) {
+        throw new BadRequestException('税码不存在或已停用，请确认税码选择');
+      }
+      return { ...taxCode, isFallback: false };
+    }
+
+    const defaultTaxCode = await this.prisma.taxCode.findFirst({
+      where: { companyId, isDefault: true, active: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (defaultTaxCode) {
+      return { ...defaultTaxCode, isFallback: false };
+    }
+
+    this.logger.warn(
+      `未配置默认税码，订单将使用 13% 默认税率: companyId=${companyId}`,
+    );
+    return {
+      id: null,
+      rate: 0.13,
+      isTaxInclusive: true,
+      isFallback: true,
+    };
+  }
+
   async createOrder(companyId: string, userId: string, data: CreateOrderInput) {
-    const { partnerId, items, aiSummary, expectedDate, notes } = data;
+    const { partnerId, items, aiSummary, expectedDate, notes, taxCodeId } = data;
 
     // 自动生成订单号
     const orderNo = `ORD-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     let totalAmount = 0;
-    const orderItems = (items ?? []).map((item) => {
-      const totalPrice = item.quantity * item.unitPrice;
-      totalAmount += totalPrice;
-      return {
-        productId: item.productId,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice,
-      };
-    });
+    let subTotal = 0;
+    let taxTotal = 0;
+
+    const baseTaxCode = await this.resolveTaxCode(companyId, taxCodeId);
+    const orderItems = await Promise.all(
+      (items ?? []).map(async (item) => {
+        const resolvedTaxCode = item.taxCodeId
+          ? await this.resolveTaxCode(companyId, item.taxCodeId)
+          : baseTaxCode;
+
+        const lineBase = item.quantity * item.unitPrice;
+        const breakdown = this.calcTaxBreakdown(
+          lineBase,
+          resolvedTaxCode.rate,
+          resolvedTaxCode.isTaxInclusive,
+        );
+
+        totalAmount += breakdown.total;
+        subTotal += breakdown.subTotal;
+        taxTotal += breakdown.taxAmount;
+
+        return {
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: breakdown.total,
+          subTotal: breakdown.subTotal,
+          taxAmount: breakdown.taxAmount,
+          taxRate: Number(resolvedTaxCode.rate ?? 0),
+          taxCodeId: resolvedTaxCode.id ?? null,
+        };
+      }),
+    );
 
     const created = await this.prisma.order.create({
       data: {
@@ -55,6 +139,9 @@ export class OrdersService {
         partnerId,
         status: 'DRAFT',
         totalAmount,
+        subTotal: this.round2(subTotal),
+        taxTotal: this.round2(taxTotal),
+        taxCodeId: baseTaxCode.id ?? null,
         aiSummary,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
         notes,

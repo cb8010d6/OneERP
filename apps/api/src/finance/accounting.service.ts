@@ -82,6 +82,7 @@ export class AccountingService {
   async postInvoicePostedEntry(payload: {
     companyId: string;
     invoiceId: string;
+    taxCodeId?: string | null;
     taxRate?: number;
     operatorId?: string;
   }) {
@@ -89,6 +90,7 @@ export class AccountingService {
       where: { id: payload.invoiceId, companyId: payload.companyId },
       include: {
         order: { select: { orderNo: true, partnerId: true } },
+        taxCode: { include: { account: true } },
       },
     });
 
@@ -101,9 +103,43 @@ export class AccountingService {
       throw new BadRequestException('发票金额必须大于0');
     }
 
-    const taxRate = Math.max(0, Math.min(1, Number(payload.taxRate ?? 0.13)));
-    const revenue = this.round2(amount / (1 + taxRate));
-    const tax = this.round2(amount - revenue);
+    let revenue = this.round2(Number(invoice.subTotal ?? 0));
+    let tax = this.round2(Number(invoice.taxAmount ?? 0));
+
+    if (revenue <= 0 && tax <= 0) {
+      const fallbackRate = Math.max(
+        0,
+        Math.min(
+          1,
+          Number(payload.taxRate ?? invoice.taxCode?.rate ?? 0.13),
+        ),
+      );
+      revenue = this.round2(amount / (1 + fallbackRate));
+      tax = this.round2(amount - revenue);
+      this.logger.warn(
+        `发票未包含税额快照，使用兜底税率计算: invoice=${invoice.invoiceNo}`,
+      );
+    }
+
+    const resolvedTaxCode = invoice.taxCode
+      ? invoice.taxCode
+      : payload.taxCodeId
+        ? await this.prisma.taxCode.findFirst({
+            where: {
+              id: payload.taxCodeId,
+              companyId: payload.companyId,
+              active: true,
+            },
+            include: { account: true },
+          })
+        : null;
+
+    const taxAccount = resolvedTaxCode?.account;
+    if (!taxAccount) {
+      this.logger.warn(
+        `未配置税码会计科目，使用默认销项税科目: invoice=${invoice.invoiceNo}`,
+      );
+    }
 
     return this.createBalancedEntry({
       companyId: payload.companyId,
@@ -131,9 +167,9 @@ export class AccountingService {
           memo: `收入 ${invoice.invoiceNo}`,
         },
         {
-          accountCode: '222101',
-          accountName: '应交税费-销项税',
-          accountType: 'LIABILITY',
+          accountCode: taxAccount?.code ?? '222101',
+          accountName: taxAccount?.name ?? '应交税费-销项税',
+          accountType: taxAccount?.type ?? 'LIABILITY',
           credit: tax,
           memo: `销项税 ${invoice.invoiceNo}`,
         },

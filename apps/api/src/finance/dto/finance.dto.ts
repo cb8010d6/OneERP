@@ -19,6 +19,11 @@ export class CreateInvoiceDto {
   @Min(0)
   amount: number;
 
+  @ApiProperty({ description: '税码ID (建议填写，未填将使用默认税码)', required: false })
+  @IsOptional()
+  @IsString()
+  taxCodeId?: string;
+
   @ApiProperty({ description: '计划收款日期 (ISO string)' })
   @IsString()
   dueDate: string;
@@ -38,7 +43,15 @@ export class CreatePaymentDto {
 
 export class PostInvoiceDto {
   @ApiProperty({
-    description: '税率，默认0.13',
+    description: '税码ID (建议填写，未填将使用默认税码)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  taxCodeId?: string;
+
+  @ApiProperty({
+    description: '税率，默认0.13 (兼容旧调用)',
     required: false,
     example: 0.13,
   })

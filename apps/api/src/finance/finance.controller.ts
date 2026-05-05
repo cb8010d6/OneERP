@@ -73,6 +73,7 @@ export class FinanceController {
       companyId,
       invoiceId,
       user.id,
+      dto.taxCodeId,
       dto.taxRate,
     );
   }

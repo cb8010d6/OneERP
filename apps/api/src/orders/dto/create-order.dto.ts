@@ -25,6 +25,11 @@ export class OrderItemDto {
   @IsNumber()
   @Min(0)
   unitPrice: number;
+
+  @ApiPropertyOptional({ description: '税码ID (建议填写，未填将使用默认税码)' })
+  @IsOptional()
+  @IsString()
+  taxCodeId?: string;
 }
 
 export class CreateOrderDto {
@@ -38,6 +43,11 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items: OrderItemDto[];
+
+  @ApiPropertyOptional({ description: '订单税码ID (建议填写，未填将使用默认税码)' })
+  @IsOptional()
+  @IsString()
+  taxCodeId?: string;
 
   @ApiPropertyOptional({ description: '需求识别摘要' })
   @IsOptional()
