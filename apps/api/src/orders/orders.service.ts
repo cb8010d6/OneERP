@@ -157,6 +157,7 @@ export class OrdersService {
 
     await this.eventQueueService.publish({
       eventName: 'order.created',
+      idempotencyKey: `order_created:${created.id}`,
       companyId,
       payload: {
         orderId: created.id,

@@ -7,6 +7,7 @@ export class FinanceDlqService {
 
   async recordFailure(input: {
     eventName: string;
+    idempotencyKey?: string;
     payload: Record<string, unknown>;
     error: string;
     companyId?: string;
@@ -14,6 +15,7 @@ export class FinanceDlqService {
   }) {
     return this.eventQueueService.enqueue({
       eventName: input.eventName,
+      idempotencyKey: input.idempotencyKey,
       payload: {
         ...input.payload,
         _dlqError: input.error,

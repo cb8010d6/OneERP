@@ -236,6 +236,7 @@ export class FinanceService {
 
     this.eventEmitter.emit('finance.invoice.posted', {
       companyId,
+      idempotencyKey: `invoice_posted:${invoice.id}`,
       invoiceId: invoice.id,
       taxCodeId: invoice.taxCodeId ?? resolvedTaxCode.id ?? null,
       taxRate: taxRate ?? resolvedTaxCode.rate ?? 0.13,

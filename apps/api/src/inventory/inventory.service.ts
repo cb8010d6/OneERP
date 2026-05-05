@@ -248,6 +248,7 @@ export class InventoryService {
     if (transaction.type === 'OUTBOUND') {
       this.eventEmitter.emit('inventory.stock_depleted', {
         companyId,
+        idempotencyKey: `stock_depleted:${transaction.id}`,
         transactionId: transaction.id,
         referenceNo: transaction.referenceNo,
         materialId: transaction.materialId,

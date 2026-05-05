@@ -3,6 +3,7 @@ import { EventQueueService } from './event-queue.service';
 type MockPrisma = {
   eventDlq: {
     create: jest.Mock;
+    findFirst: jest.Mock;
     findUnique: jest.Mock;
     findMany: jest.Mock;
     updateMany: jest.Mock;
@@ -14,6 +15,7 @@ describe('EventQueueService', () => {
   const prisma: MockPrisma = {
     eventDlq: {
       create: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
       updateMany: jest.fn(),
@@ -124,5 +126,83 @@ describe('EventQueueService', () => {
     expect(updateCall.data.status).toBe('PENDING');
     expect(updateCall.data.error).toBe('boom');
     expect(updateCall.data.nextRetryAt).toBeInstanceOf(Date);
+  });
+
+  describe('idempotency key deduplication', () => {
+    it('enqueue returns null when a RESOLVED event with same idempotencyKey exists', async () => {
+      prisma.eventDlq.findFirst.mockResolvedValue({ id: 'existing-id' });
+
+      const result = await service.enqueue({
+        eventName: 'order.created',
+        idempotencyKey: 'order_created:abc-123',
+        payload: { orderId: 'abc-123' },
+      });
+
+      expect(result).toBeNull();
+      expect(prisma.eventDlq.create).not.toHaveBeenCalled();
+    });
+
+    it('enqueue creates event when no RESOLVED event with same idempotencyKey exists', async () => {
+      prisma.eventDlq.findFirst.mockResolvedValue(null);
+      prisma.eventDlq.create.mockResolvedValue({ id: 'new-id' });
+
+      const result = await service.enqueue({
+        eventName: 'order.created',
+        idempotencyKey: 'order_created:abc-123',
+        payload: { orderId: 'abc-123' },
+      });
+
+      expect(result).toEqual({ id: 'new-id' });
+      expect(prisma.eventDlq.create).toHaveBeenCalled();
+    });
+
+    it('enqueue skips idempotency check when no idempotencyKey provided', async () => {
+      prisma.eventDlq.create.mockResolvedValue({ id: 'new-id' });
+
+      const result = await service.enqueue({
+        eventName: 'order.created',
+        payload: { orderId: 'abc-123' },
+      });
+
+      expect(result).toEqual({ id: 'new-id' });
+      expect(prisma.eventDlq.findFirst).not.toHaveBeenCalled();
+      expect(prisma.eventDlq.create).toHaveBeenCalled();
+    });
+
+    it('publish returns null when idempotencyKey already resolved', async () => {
+      prisma.eventDlq.findFirst.mockResolvedValue({ id: 'existing-id' });
+
+      const result = await service.publish({
+        eventName: 'order.created',
+        idempotencyKey: 'order_created:abc-123',
+        payload: { orderId: 'abc-123' },
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it('processItem skips when duplicate RESOLVED event with same idempotencyKey exists', async () => {
+      prisma.eventDlq.findMany.mockResolvedValue([
+        {
+          id: 'e3',
+          eventName: 'order.created',
+          idempotencyKey: 'order_created:abc-123',
+          payload: { orderId: 'abc-123' },
+          error: '',
+          attempts: 0,
+          maxAttempts: 5,
+          status: 'PENDING',
+        },
+      ]);
+
+      prisma.eventDlq.findFirst.mockResolvedValue({ id: 'other-resolved-id' });
+      prisma.eventDlq.update.mockResolvedValue({});
+
+      const result = await service.retryPending(10);
+
+      expect(result.total).toBe(1);
+      expect(result.results[0]).toEqual({ id: 'e3', status: 'RESOLVED' });
+      expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
+    });
   });
 });

@@ -628,22 +628,24 @@ model JournalEntryLine {
 }
 
 model EventDlq {
-  id          String   @id @default(uuid())
-  eventName   String
-  payload     Json
-  error       String
-  attempts    Int      @default(1)
-  maxAttempts Int      @default(5)
-  nextRetryAt DateTime?
-  status      String   @default("PENDING")
-  companyId   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String   @id @default(uuid())
+  eventName      String
+  idempotencyKey String?
+  payload        Json
+  error          String
+  attempts       Int      @default(1)
+  maxAttempts    Int      @default(5)
+  nextRetryAt    DateTime?
+  status         String   @default("PENDING")
+  companyId      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   company Company? @relation(fields: [companyId], references: [id])
 
   @@index([status, nextRetryAt])
   @@index([eventName])
+  @@index([eventName, idempotencyKey])
 }
 
 model AuditLog {

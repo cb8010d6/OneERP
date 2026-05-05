@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 interface EnqueueEventInput {
   eventName: string;
+  idempotencyKey?: string;
   payload: Record<string, unknown>;
   companyId?: string;
   maxAttempts?: number;
@@ -31,10 +32,33 @@ export class EventQueueService {
     private readonly eventEmitter: EventEmitter2,
   ) {}
 
+  /**
+   * 入队事件。若提供了 idempotencyKey，则先检查是否已有同名 RESOLVED 事件，
+   * 若已存在则跳过入队并返回 null（幂等语义）。
+   */
   async enqueue(input: EnqueueEventInput) {
+    if (input.idempotencyKey) {
+      const existing = await this.prisma.eventDlq.findFirst({
+        where: {
+          eventName: input.eventName,
+          idempotencyKey: input.idempotencyKey,
+          status: 'RESOLVED',
+        },
+        select: { id: true },
+      });
+
+      if (existing) {
+        this.logger.debug(
+          `幂等去重: ${input.eventName} key=${input.idempotencyKey} 已处理 (id=${existing.id})`,
+        );
+        return null;
+      }
+    }
+
     return this.prisma.eventDlq.create({
       data: {
         eventName: input.eventName,
+        idempotencyKey: input.idempotencyKey ?? null,
         payload: input.payload as unknown as Prisma.InputJsonValue,
         error: '',
         companyId: input.companyId,
@@ -48,6 +72,9 @@ export class EventQueueService {
 
   async publish(input: EnqueueEventInput) {
     const queued = await this.enqueue(input);
+    if (!queued) {
+      return null; // 幂等：已被处理过
+    }
     await this.dispatchById(queued.id);
     return queued;
   }
@@ -91,6 +118,30 @@ export class EventQueueService {
     if (item.attempts >= item.maxAttempts) {
       await this.markFailed(item.id, item.error || '超过最大重试次数');
       return { id: item.id, status: 'FAILED', error: item.error };
+    }
+
+    // 幂等检查：重试时若已有同 key 的 RESOLVED 记录则跳过
+    if (item.idempotencyKey) {
+      const duplicate = await this.prisma.eventDlq.findFirst({
+        where: {
+          eventName: item.eventName,
+          idempotencyKey: item.idempotencyKey,
+          status: 'RESOLVED',
+          id: { not: item.id },
+        },
+        select: { id: true },
+      });
+
+      if (duplicate) {
+        this.logger.debug(
+          `重试幂等去重: ${item.eventName} key=${item.idempotencyKey} 已由 ${duplicate.id} 处理`,
+        );
+        await this.prisma.eventDlq.update({
+          where: { id: item.id },
+          data: { status: 'RESOLVED', error: '', nextRetryAt: null },
+        });
+        return { id: item.id, status: 'RESOLVED' };
+      }
     }
 
     const claimed = await this.prisma.eventDlq.updateMany({
