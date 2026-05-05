@@ -13,6 +13,7 @@ import { ProductionModule } from "./production/production.module";
 import { FinanceModule } from "./finance/finance.module";
 import { LoggerMiddleware } from "./core/middlewares/logger.middleware";
 import { DepartmentsModule } from "./departments/departments.module";
+import { PurchaseOrdersModule } from "./purchase-orders/purchase-orders.module";
 import { AppCacheModule } from "./core/cache/cache.module";
 import { CrudModule } from "./core/crud/crud.module";
 import { MetadataModule } from "./core/metadata/metadata.module";
@@ -44,6 +45,7 @@ import { TaxModule } from "./core/tax/tax.module";
     ProductionModule,
     FinanceModule,
     DepartmentsModule,
+    PurchaseOrdersModule,
   ],
   controllers: [AppController],
   providers: [AppService],

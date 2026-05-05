@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '@/lib/api';
+import Link from 'next/link';
 import {
   Package,
   Warehouse,
@@ -13,6 +14,7 @@ import {
   Search,
   CheckCircle2,
   Loader2,
+  Truck,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -55,7 +57,7 @@ function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
     if (!whMap.has(whKey)) {
       whMap.set(whKey, {
         warehouseId: row.warehouseId,
-        warehouseName: row.warehouseName ?? '(未分配仓库)',
+        warehouseName: row.warehouseName ?? '(未分配仓�?',
         locations: [],
         totalRows: 0,
         lowCount: 0,
@@ -195,7 +197,7 @@ export default function InventoryPage() {
       setScanning(true);
       try {
         await api.post('/inventory/scan', { materialSku: sku.trim(), quantity: 1 });
-        toast.success(`扫码出库成功：${sku.trim()}`);
+        toast.success(`扫码出库成功�?{sku.trim()}`);
         await fetchLedger();
       } catch (err: unknown) {
         const msg =
@@ -222,7 +224,7 @@ export default function InventoryPage() {
             实时库存台账
           </h1>
           <p className="mt-0.5 text-sm text-slate-500">
-            基于 Kysely 聚合查询，支持层级钻取与低库存预警。
+            基于 Kysely 聚合查询，支持层级钻取与低库存预警�?
           </p>
         </div>
 
@@ -261,7 +263,7 @@ export default function InventoryPage() {
         <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
             <Scan className="h-4 w-4" />
-            扫码枪出库模式 – 扫入物料条码后自动扣减 1 件库存
+            扫码枪出库模�?�?扫入物料条码后自动扣�?1 件库�?
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -315,7 +317,7 @@ export default function InventoryPage() {
             <AlertTriangle className="h-5 w-5" />
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-500">低库存预警</div>
+            <div className="text-xs font-medium text-slate-500">低库存预�?/div>
             <div className={`erp-stat-value text-xl font-bold ${totalLow > 0 ? 'text-amber-700' : 'text-green-700'}`}>
               {totalLow}
             </div>
@@ -330,7 +332,7 @@ export default function InventoryPage() {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="按物料名、SKU、库位搜索..."
+          placeholder="按物料名、SKU、库位搜�?.."
           className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-blue-100"
         />
       </div>
@@ -342,10 +344,10 @@ export default function InventoryPage() {
           style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}>
           <div className="pl-8">物料</div>
           <div>SKU</div>
-          <div className="text-right">净库存量</div>
-          <div className="text-right">最低库存</div>
-          <div className="text-right">批次数</div>
-          <div className="text-right">状态</div>
+          <div className="text-right">净库存�?/div>
+          <div className="text-right">最低库�?/div>
+          <div className="text-right">批次�?/div>
+          <div className="text-right">状�?/div>
         </div>
 
         {loading ? (
@@ -376,9 +378,9 @@ export default function InventoryPage() {
                   <Warehouse className="h-4 w-4 flex-shrink-0 text-slate-500" />
                   <span className="text-sm font-semibold text-slate-800">{wh.warehouseName}</span>
                   <span className="ml-1 text-xs text-slate-400">
-                    ({wh.totalRows} 条明细
+                    ({wh.totalRows} 条明�?
                     {wh.lowCount > 0 && (
-                      <span className="ml-1 text-amber-600">, {wh.lowCount} 低库存</span>
+                      <span className="ml-1 text-amber-600">, {wh.lowCount} 低库�?/span>
                     )})
                   </span>
                 </button>
@@ -402,9 +404,9 @@ export default function InventoryPage() {
                           <Package className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                           <span className="text-xs font-semibold text-slate-600">{loc.locationName}</span>
                           <span className="text-xs text-slate-400">
-                            ({loc.rows.length} 种物料
+                            ({loc.rows.length} 种物�?
                             {loc.lowCount > 0 && (
-                              <span className="ml-1 text-amber-600">, {loc.lowCount} 低库存</span>
+                              <span className="ml-1 text-amber-600">, {loc.lowCount} 低库�?/span>
                             )})
                           </span>
                         </button>
@@ -430,7 +432,7 @@ export default function InventoryPage() {
                               <div className="text-right text-slate-500">{row.batchCount}</div>
                               <div className="text-right">
                                 {row.isLow ? (
-                                  <span className="erp-badge erp-badge--pending">低库存</span>
+                                  <span className="erp-badge erp-badge--pending">低库�?/span>
                                 ) : (
                                   <span className="erp-badge erp-badge--success">正常</span>
                                 )}
@@ -447,7 +449,7 @@ export default function InventoryPage() {
       </div>
 
       <div className="text-right text-xs text-slate-400">
-        共 {filteredRows.length} 条库存明细 · 单击仓库/库位行展开/折叠
+        �?{filteredRows.length} 条库存明�?· 单击仓库/库位行展开/折叠
       </div>
     </div>
   );
