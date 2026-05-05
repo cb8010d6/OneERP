@@ -4,7 +4,8 @@
 为降低每个开发者的心智负担，所有质量验证必须在**根目录**实现统一入口（基于 npm workspaces 或 Turborepo）。在提交代码前，必须保证以下命令 100% 跑通：
 
 *   `npm run typecheck`: **最核心闸门**。执行全套 TypeScript 严格类型检查（前后端同步校验，不允许有任何 `any` 漏网之鱼）。
-*   `npm run lint`: 执行 ESLint 规则检查并尝试自动修复。
+*   `npm run lint`: 执行 ESLint 规则检查（不自动修复，CI 使用此命令）。
+*   `npm run lint:fix`: 执行 ESLint 规则检查并自动修复（仅限本地开发使用，CI 禁止）。
 *   `npm run format`: 统一代码风格（Prettier），消除因缩进/引号引起的无意义 Code Review。
 *   `npm run test`: 执行单元测试与核心业务链路流转的集成测试。
 *   `npm run build`: 生产环境跨端联合编译演练（Web + API + Desktop 联合测试）。
@@ -18,7 +19,7 @@
 *   `"strictNullChecks": true`：必须显式处理 `null` 和 `undefined`。
 
 ### 2. ESLint 强制约束 (`eslint.config.mjs`)
-*   **禁止出现**：`@typescript-eslint/no-explicit-any` (Warning 改 Error，除非使用 `eslint-disable` 且附带详细理由)。
+*   **禁止出现**：`@typescript-eslint/no-explicit-any` (当前为 `warn`，月底升为 `error`。过渡期内新代码禁止使用 `any`，除非 `eslint-disable` 附带详细理由)。
 *   **禁止滥用感叹号**：`@typescript-eslint/no-non-null-assertion` (容易引发线上白屏)。
 *   **未使用的变量/导入**：`no-unused-vars` / `unused-imports` (保存时必须自动清除)。
 *   **依赖边界限制**：前端组件中**严禁**直接导入服务端库（如 `fs`, `prisma`）；UI 组件库 (`apps/web/src/components/core`) 中严禁耦合具体的业务数据请求，必须依靠 Props 传递或标准 Store。

@@ -18,7 +18,7 @@ const eslintConfig = defineConfig([
   {
     files: ["**/*.{ts,tsx,js,jsx}"],
     rules: {
-      "@typescript-eslint/no-explicit-any": "off",
+      "@typescript-eslint/no-explicit-any": "warn",  // TODO: upgrade to 'error' at month-end
       "react-hooks/set-state-in-effect": "off",
     },
   },
