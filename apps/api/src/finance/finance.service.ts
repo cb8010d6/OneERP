@@ -210,7 +210,7 @@ export class FinanceService {
       updateData.taxAmount = taxAmount;
     }
     if (!invoice.taxCodeId && resolvedTaxCode.id) {
-      updateData.taxCodeId = resolvedTaxCode.id;
+      updateData.taxCode = { connect: { id: resolvedTaxCode.id } };
     }
 
     const updated = await this.prisma.invoice.update({

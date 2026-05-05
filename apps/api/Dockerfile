@@ -7,8 +7,8 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies for native modules (bcrypt)
-RUN apk add --no-cache python3 make g++
+# Install build dependencies for native modules (bcrypt) and OpenSSL for Prisma
+RUN apk add --no-cache python3 make g++ openssl
 
 # Copy API package files
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
@@ -34,8 +34,8 @@ FROM node:22-alpine AS production
 
 WORKDIR /app
 
-# Install runtime dependencies for native modules
-RUN apk add --no-cache tini
+# Install runtime dependencies for native modules and Prisma
+RUN apk add --no-cache tini openssl
 
 # Copy API package files
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
