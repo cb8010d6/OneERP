@@ -20,6 +20,7 @@
 | --- | --- |
 | [`plans/PROJECT_PLAN_AND_STATUS.md`](plans/PROJECT_PLAN_AND_STATUS.md) | 当前阶段状态与治理策略 |
 | [`plans/CORE_MODULES_DEV_PLAN.md`](plans/CORE_MODULES_DEV_PLAN.md) | 采购、财务、生产、权限、AI 工具开发计划 |
+| [`plans/ITERATION_PLAN_2026-05-07.md`](plans/ITERATION_PLAN_2026-05-07.md) | 2026-05-07 执行计划：登录、采购、设置、安全与测试 |
 | [`architecture/BACKLOG.md`](architecture/BACKLOG.md) | P1/P2 缺口与待办 |
 | [`analysis/MISSING_FEATURES_ANALYSIS.md`](analysis/MISSING_FEATURES_ANALYSIS.md) | 缺失功能分析 |
 

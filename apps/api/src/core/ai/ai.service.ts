@@ -292,6 +292,12 @@ export class AIService {
   }
 
   async chat2sql(input: string, companyId: string) {
+    if (process.env.ENABLE_UNSAFE_CHAT2SQL !== 'true') {
+      throw new BadRequestException(
+        'Chat2SQL 原始 SQL 执行默认关闭，请完成 SQL AST 白名单校验后再启用。',
+      );
+    }
+
     const schemaContext = this.buildReadSchemaContext();
     const sql = await this.llmAdapterService.resolveReadSql(
       input,

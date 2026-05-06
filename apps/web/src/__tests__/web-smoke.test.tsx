@@ -311,15 +311,15 @@ describe('Smoke · 登录页', () => {
 
   it('渲染标题和默认账号', () => {
     render(<LoginPage />);
-    expect(screen.getByText('智能制造 EIP 全局系统')).toBeInTheDocument();
-    const emailInput = screen.getByPlaceholderText('请输入账号') as HTMLInputElement;
+    expect(screen.getByText('登录 OneERP')).toBeInTheDocument();
+    const emailInput = screen.getByPlaceholderText('admin@erp.com') as HTMLInputElement;
     expect(emailInput.value).toBe('admin@erp.com');
   });
 
   it('登录成功调用 API → setAuth → 跳转', async () => {
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.click(screen.getByText('安全登入'));
+    await user.click(screen.getByText('进入工作台'));
     await waitFor(() => {
       expect(mockApiPost).toHaveBeenCalledWith('/auth/login', { email: 'admin@erp.com', password: 'admin' });
     });
@@ -335,7 +335,7 @@ describe('Smoke · 登录页', () => {
     mockApiPost.mockRejectedValueOnce({ response: { data: { message: '用户名或密码错误' } } });
     const user = userEvent.setup();
     render(<LoginPage />);
-    await user.click(screen.getByText('安全登入'));
+    await user.click(screen.getByText('进入工作台'));
     await waitFor(() => {
       expect(screen.getByText('用户名或密码错误')).toBeInTheDocument();
     });

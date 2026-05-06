@@ -85,7 +85,7 @@ const nextConfig: NextConfig = {
 
   /* ===== API 代理（rewrites） ===== */
   async rewrites() {
-    const apiBase = process.env.API_BASE_URL ?? "http://localhost:3001";
+    const apiBase = process.env.API_BASE_URL ?? "http://127.0.0.1:8000";
     return [
       {
         // 将 /api/proxy/* 请求代理到后端服务

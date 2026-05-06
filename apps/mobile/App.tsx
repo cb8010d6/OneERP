@@ -138,7 +138,7 @@ export default function App() {
               <TouchableOpacity onPress={() => setShowSettings(true)} style={{ position: 'absolute', right: 0, top: 0, padding: 10 }}>
                 <Settings size={24} color="#666" />
               </TouchableOpacity>
-              <Text style={styles.title}>EIP 扫码终端</Text>
+              <Text style={styles.title}>OneERP 扫码终端</Text>
               <Text style={styles.subtitle}>仓库作业专用移动设备</Text>
               
               <TextInput

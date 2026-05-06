@@ -4,9 +4,9 @@ import { ThemeProvider } from "../components/ThemeProvider";
 import { Toaster } from "react-hot-toast";
 
 export const metadata: Metadata = {
-  title: "Enterprise ERP - 智能制造管理系统",
+  title: "OneERP - Operations Platform",
   description:
-    "面向制造业的企业资源规划系统，支持多公司、多仓库、生产管理、财务管理",
+    "面向制造业的企业资源规划系统，支持多公司、多仓库、生产管理、库存管理和财务管理",
 };
 
 export default function RootLayout({

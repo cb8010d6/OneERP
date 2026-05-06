@@ -37,7 +37,6 @@ export default function DashboardClient() {
         ]);
         setStats(statsResponse.data);
 
-        // 兼容两种返回格式: 直接数组 或 分页对象 { data, total, ... }
         const ordersPayload = ordersResponse.data;
         const orders = Array.isArray(ordersPayload)
           ? ordersPayload
@@ -81,7 +80,7 @@ export default function DashboardClient() {
             <Activity className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-500">生产品产中</p>
+            <p className="text-sm font-medium text-gray-500">进行中订单</p>
             <p className="text-2xl font-bold text-gray-900">{stats.activeOrders}</p>
           </div>
         </div>
@@ -138,8 +137,8 @@ export default function DashboardClient() {
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <h3 className="text-lg font-bold text-gray-900 mb-4">系统公告</h3>
           <div className="prose text-gray-600 text-sm">
-             <p>欢迎使用现代企业EIP系统。您的账号已绑定多公司管理权限，请在左侧侧边栏切换需要管理的企业数据域。</p>
-             <p>系统已升级至最新版本，全面支持基于隔离数据沙箱的库存和订单流转。</p>
+             <p>欢迎使用 OneERP 业务工作台。当前账号已绑定多公司权限，可在左侧切换需要管理的企业数据域。</p>
+             <p>系统支持订单、库存、采购和财务的统一流转，关键操作会保留审计记录。</p>
           </div>
         </div>
       </div>
