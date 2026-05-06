@@ -162,6 +162,7 @@ flowchart LR
 - [docs/architecture/STANDARDS.md](./docs/architecture/STANDARDS.md)
 - [docs/architecture/DEVELOPMENT_WORKFLOW.md](./docs/architecture/DEVELOPMENT_WORKFLOW.md)
 - [docs/architecture/QUALITY_GATES.md](./docs/architecture/QUALITY_GATES.md)
+- [docs/runbooks/README.md](./docs/runbooks/README.md)
 - [docs/plans/PROJECT_PLAN_AND_STATUS.md](./docs/plans/PROJECT_PLAN_AND_STATUS.md)
 - [docs/plans/CORE_MODULES_DEV_PLAN.md](./docs/plans/CORE_MODULES_DEV_PLAN.md)
 - [docs/AI_INSTRUCTIONS.md](./docs/AI_INSTRUCTIONS.md)
