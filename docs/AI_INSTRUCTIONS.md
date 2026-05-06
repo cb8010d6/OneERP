@@ -74,6 +74,30 @@
 6. 多 agent 协作时必须声明文件所有权。不要让多个 agent 同时修改 `schema.prisma`、`app.module.ts`、`ui-schema.ts`、`core/**`、`package-lock.json`。
 7. **请在一次性改写或重构复杂的服务层逻辑时，充分重构和验证。**
 
+## 6. 双语 Review 输出规范
+
+AI agent 在输出代码审查、PR review、阶段交接 review 时，必须同时提供中文和英文两部分。两种语言内容应保持等价，优先列出问题、风险、建议和验证结果。
+
+固定格式：
+
+```md
+## Review / 代码审查
+
+### 中文
+- 问题：
+- 风险：
+- 建议：
+- 验证：
+
+### English
+- Findings:
+- Risks:
+- Suggestions:
+- Verification:
+```
+
+如果没有发现阻断问题，也必须用中英文明确说明，并补充仍然存在的测试缺口或残余风险。
+
 ### 5.1 Agent 任务卡片模板
 
 ```md
