@@ -24,6 +24,30 @@ const mockPrisma = {
   $executeRawUnsafe: jest.fn(),
 };
 
+type CreatedJournalLine = {
+  lineNo: number;
+  accountId: string;
+  partnerId?: string;
+  debit: number;
+  credit: number;
+  memo?: string;
+};
+
+type JournalEntryCreateCall = {
+  data: {
+    lines: {
+      create: CreatedJournalLine[];
+    };
+  };
+};
+
+function getLastCreatedJournalLines(): CreatedJournalLine[] {
+  const call = mockTx.journalEntry.create.mock.calls.at(-1)?.[0] as
+    | JournalEntryCreateCall
+    | undefined;
+  return call?.data.lines.create ?? [];
+}
+
 describe('AccountingService', () => {
   let service: AccountingService;
 
@@ -40,7 +64,14 @@ describe('AccountingService', () => {
       journal: { code: 'GEN' },
     });
     mockTx.account.upsert.mockResolvedValue({ id: 'acc1' });
-    service = new AccountingService(mockPrisma as any, mockTaxService as any);
+    service = new AccountingService(
+      mockPrisma as unknown as ConstructorParameters<
+        typeof AccountingService
+      >[0],
+      mockTaxService as unknown as ConstructorParameters<
+        typeof AccountingService
+      >[1],
+    );
   });
 
   it('should be defined', () => {
@@ -276,6 +307,19 @@ describe('AccountingService', () => {
         operatorId: 'u1',
       });
       expect(result).toBeDefined();
+      expect(mockTx.account.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { companyId_code: { companyId: 'c1', code: '1401' } },
+          create: expect.objectContaining({ name: 'Inventory/Raw Materials' }),
+        }),
+      );
+      expect(getLastCreatedJournalLines()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ debit: 1000, credit: 0 }),
+          expect.objectContaining({ debit: 130, credit: 0 }),
+          expect.objectContaining({ debit: 0, credit: 1130 }),
+        ]),
+      );
     });
 
     it('should support mixed inventory + expense accounts', async () => {
@@ -314,6 +358,20 @@ describe('AccountingService', () => {
         operatorId: 'u1',
       });
       expect(result).toBeDefined();
+      expect(mockTx.account.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { companyId_code: { companyId: 'c1', code: '6601' } },
+          create: expect.objectContaining({ name: 'Admin Expense' }),
+        }),
+      );
+      expect(getLastCreatedJournalLines()).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ debit: 1000, credit: 0 }),
+          expect.objectContaining({ debit: 1000, credit: 0 }),
+          expect.objectContaining({ debit: 260, credit: 0 }),
+          expect.objectContaining({ debit: 0, credit: 2260 }),
+        ]),
+      );
     });
 
     it('should fallback to invoice-level subTotal when lines empty', async () => {
