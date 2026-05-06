@@ -680,7 +680,11 @@ export class MetadataService {
               { value: 'SUBMITTED', label: '已提交', color: 'bg-amber-50' },
               { value: 'APPROVED', label: '已审批', color: 'bg-sky-50' },
               { value: 'CONFIRMED', label: '已确认', color: 'bg-indigo-50' },
-              { value: 'PARTIALLY_RECEIVED', label: '部分收货', color: 'bg-orange-50' },
+              {
+                value: 'PARTIALLY_RECEIVED',
+                label: '部分收货',
+                color: 'bg-orange-50',
+              },
               { value: 'RECEIVED', label: '已收货', color: 'bg-emerald-50' },
               { value: 'CLOSED', label: '已关闭', color: 'bg-gray-100' },
               { value: 'CANCELLED', label: '已取消', color: 'bg-rose-50' },
