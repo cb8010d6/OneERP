@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDownAZ, ArrowUpAZ, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useMemo, useState, useCallback } from 'react';
 import { DataGrid } from '../ui/data-grid/DataGrid';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -21,6 +21,8 @@ interface ListEngineProps {
   onRowClick?: (row: Record<string, unknown>) => void;
 }
 
+type ListRow = Record<string, unknown> & { id: string };
+
 export function ListEngine({
   schema,
   data,
@@ -28,17 +30,14 @@ export function ListEngine({
   page = 1,
   limit = 20,
   total,
-  loading,
   serverSearch,
   onSearchChange,
-  onSortChange,
   onPageChange,
-  onRowClick,
 }: ListEngineProps) {
   const columns = schema.views.list.columns;
   const [keyword, setKeyword] = useState('');
-  const [sortField, setSortField] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');    
+  const [sortField] = useState<string | null>(null);
+  const [sortDirection] = useState<'asc' | 'desc'>('asc');    
 
   const filteredRows = useMemo(() => {
     if (serverSearch || !keyword.trim()) return data;
@@ -78,14 +77,6 @@ export function ListEngine({
   const totalCount = total ?? viewRows.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / limit));
 
-  const toggleSort = (field: string) => {
-    const direction = sortField === field && sortDirection === 'asc' ? 'desc' : 
-'asc';
-    setSortField(field);
-    setSortDirection(direction);
-    onSortChange?.(field, direction);
-  };
-
   const renderCell = useCallback((row: Record<string, unknown>, column: string) => {
     const field = fieldMap?.[column];
     const rawValue = getNestedValue(row, column);
@@ -114,7 +105,7 @@ export function ListEngine({
     return String(rawValue ?? '');
   }, [fieldMap]);
 
-  const dataGridColumns = useMemo<ColumnDef<Record<string, unknown>, unknown>[]>(() => {
+  const dataGridColumns = useMemo<ColumnDef<ListRow, unknown>[]>(() => {
     return columns.map((column) => {
       const field = schema.fields.find((f) => f.name === column);
       return {
@@ -122,10 +113,10 @@ export function ListEngine({
         accessorKey: column,
         header: field?.label ?? column,
         cell: (info) => {
-          return renderCell(info.row.original as Record<string, unknown>, column);
+          return renderCell(info.row.original, column);
         },
       };
-    });
+    }) as ColumnDef<ListRow, unknown>[];
   }, [columns, renderCell, schema.fields]);
 
   return (
@@ -154,7 +145,7 @@ export function ListEngine({
       <div className="p-2 w-full">
         <DataGrid 
           columns={dataGridColumns} 
-          data={viewRows as any[]} 
+          data={viewRows as ListRow[]} 
           height={500} 
         />
       </div>

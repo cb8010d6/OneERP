@@ -7,6 +7,15 @@ import { Activity, Box, CreditCard, ShoppingBag, Sparkles, Truck } from 'lucide-
 import { Sheet } from '../../components/ui/Sheet';
 import { Chat2DashPanel } from '../../components/ai/Chat2DashPanel';
 
+interface RecentOrder {
+  id: string;
+  orderNo: string;
+  status: string;
+  partner?: {
+    name?: string;
+  } | null;
+}
+
 export default function DashboardClient() {
   const { currentCompanyId, token } = useAuthStore();
   const [chat2DashOpen, setChat2DashOpen] = useState(false);
@@ -17,7 +26,7 @@ export default function DashboardClient() {
     lowStockItems: 0
   });
 
-  const [recentOrders, setRecentOrders] = useState<any[]>([]);
+  const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([]);
 
   useEffect(() => {
     const fetchStats = async () => {

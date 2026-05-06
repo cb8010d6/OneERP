@@ -19,17 +19,26 @@ jest.mock('next/navigation', () => ({
 }));
 
 /* ---------- Mock API ---------- */
-const mockApiGet = jest.fn();
-const mockApiPost = jest.fn();
+type MockApiGet = (url: string) => Promise<{ data: unknown }>;
+type MockApiPost = (url: string, body?: unknown) => Promise<unknown>;
+
+const mockApiGet = jest.fn<ReturnType<MockApiGet>, Parameters<MockApiGet>>();
+const mockApiPost = jest.fn<ReturnType<MockApiPost>, Parameters<MockApiPost>>();
 jest.mock('../../../../lib/api', () => ({
   __esModule: true,
-  default: { get: (...a: any[]) => mockApiGet(...a), post: (...a: any[]) => mockApiPost(...a) },
+  default: {
+    get: (...args: Parameters<MockApiGet>) => mockApiGet(...args),
+    post: (...args: Parameters<MockApiPost>) => mockApiPost(...args),
+  },
 }));
 
 /* ---------- Mock authStore ---------- */
+type AuthState = { currentCompanyId: string };
+type AuthSelector = (state: AuthState) => unknown;
+
 jest.mock('../../../../store/authStore', () => ({
   useAuthStore: Object.assign(
-    (selector?: any) => {
+    (selector?: AuthSelector) => {
       const state = { currentCompanyId: 'c1' };
       return typeof selector === 'function' ? selector(state) : state;
     },
@@ -38,11 +47,15 @@ jest.mock('../../../../store/authStore', () => ({
 }));
 
 /* ---------- Mock toast ---------- */
-const mockToastError = jest.fn();
-const mockToastSuccess = jest.fn();
+type ToastFn = (message: string) => void;
+const mockToastError = jest.fn<ReturnType<ToastFn>, Parameters<ToastFn>>();
+const mockToastSuccess = jest.fn<ReturnType<ToastFn>, Parameters<ToastFn>>();
 jest.mock('react-hot-toast', () => ({
   __esModule: true,
-  default: { error: (...a: any[]) => mockToastError(...a), success: (...a: any[]) => mockToastSuccess(...a) },
+  default: {
+    error: (...args: Parameters<ToastFn>) => mockToastError(...args),
+    success: (...args: Parameters<ToastFn>) => mockToastSuccess(...args),
+  },
 }));
 
 /* ---------- 测试数据 ---------- */
