@@ -4,7 +4,7 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, PurchaseOrderStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import {
@@ -170,8 +170,9 @@ export class PurchaseOrdersService {
   ) {
     const { page = 1, limit = 20 } = pagination;
     const where: Prisma.PurchaseOrderWhereInput = { companyId };
-    if (status)
-      where.status = status as unknown as Prisma.EnumPurchaseOrderStatusFilter;
+    if (status && status in PurchaseOrderStatus) {
+      where.status = status as PurchaseOrderStatus;
+    }
     if (search) {
       where.OR = [
         { orderNo: { contains: search, mode: 'insensitive' } },

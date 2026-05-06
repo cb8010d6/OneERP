@@ -59,9 +59,9 @@ export class CreatePurchaseOrderDto {
 export class UpdatePurchaseOrderStatusDto {
   @ApiProperty({
     description: '新状态',
-    enum: ['CONFIRMED', 'CANCELLED'],
+    enum: ['APPROVED', 'CANCELLED'],
   })
-  @IsEnum(['CONFIRMED', 'CANCELLED'])
+  @IsEnum(['APPROVED', 'CANCELLED'])
   status!: string;
 }
 

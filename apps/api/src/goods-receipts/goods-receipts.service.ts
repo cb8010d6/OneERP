@@ -54,6 +54,35 @@ export class GoodsReceiptsService {
     });
   }
 
+  private receiptLineKey(line: {
+    materialId: string | null;
+    productId: string | null;
+  }) {
+    return `${line.materialId ?? ''}:${line.productId ?? ''}`;
+  }
+
+  private findUniqueOrderLineForReceiptLine(
+    receiptLine: { id?: string; materialId: string; productId: string },
+    orderLines: Array<{
+      id: string;
+      materialId: string | null;
+      productId: string | null;
+      receivedQuantity: number;
+    }>,
+  ) {
+    const matches = orderLines.filter(
+      (line) =>
+        line.materialId === receiptLine.materialId &&
+        line.productId === receiptLine.productId,
+    );
+    if (matches.length !== 1) {
+      throw new BadRequestException(
+        `收货单行 ${receiptLine.id ?? this.receiptLineKey(receiptLine)} 无法唯一匹配采购单行`,
+      );
+    }
+    return matches[0];
+  }
+
   // =======================================
   // 创建收货单
   // =======================================
@@ -75,10 +104,34 @@ export class GoodsReceiptsService {
     }
 
     const poLineMap = new Map(po.lines.map((l) => [l.id, l]));
+    const seenOrderLineIds = new Set<string>();
     for (const line of dto.lines) {
+      if (seenOrderLineIds.has(line.orderLineId)) {
+        throw new BadRequestException(`采购单行 ${line.orderLineId} 重复收货`);
+      }
+      seenOrderLineIds.add(line.orderLineId);
+
       const poLine = poLineMap.get(line.orderLineId);
       if (!poLine)
         throw new BadRequestException(`采购单行 ${line.orderLineId} 不存在`);
+      if (
+        poLine.materialId !== line.materialId ||
+        poLine.productId !== line.productId
+      ) {
+        throw new BadRequestException(
+          `收货单行与采购单行 ${line.orderLineId} 不匹配`,
+        );
+      }
+      const sameItemLineCount = po.lines.filter(
+        (candidate) =>
+          candidate.materialId === line.materialId &&
+          candidate.productId === line.productId,
+      ).length;
+      if (sameItemLineCount !== 1) {
+        throw new BadRequestException(
+          `采购单行 ${line.orderLineId} 的物料/产品组合不唯一，无法安全创建收货单`,
+        );
+      }
       const remaining = poLine.quantity - poLine.receivedQuantity;
       if (line.quantity > remaining) {
         throw new BadRequestException(
@@ -191,15 +244,14 @@ export class GoodsReceiptsService {
       // 更新采购单行已收货数量
       if (receipt.order) {
         for (const line of receipt.lines) {
-          const matchedPoLine = receipt.order.lines.find(
-            (l) => l.materialId === line.materialId,
+          const matchedPoLine = this.findUniqueOrderLineForReceiptLine(
+            line,
+            receipt.order.lines,
           );
-          if (matchedPoLine) {
-            await tx.purchaseOrderLine.update({
-              where: { id: matchedPoLine.id },
-              data: { receivedQuantity: { increment: line.quantity } },
-            });
-          }
+          await tx.purchaseOrderLine.update({
+            where: { id: matchedPoLine.id },
+            data: { receivedQuantity: { increment: line.quantity } },
+          });
         }
 
         const updatedPoLines = await tx.purchaseOrderLine.findMany({
@@ -261,7 +313,7 @@ export class GoodsReceiptsService {
   ) {
     const receipt = await this.prisma.goodsReceipt.findFirst({
       where: { id: receiptId, companyId },
-      include: { lines: true },
+      include: { lines: true, order: { include: { lines: true } } },
     });
 
     if (!receipt) throw new NotFoundException('收货单不存在或无权操作');
@@ -316,27 +368,23 @@ export class GoodsReceiptsService {
       }
 
       // 回退采购单行已收货数量
-      if (receipt.orderId) {
-        const poLines = await tx.purchaseOrderLine.findMany({
-          where: { orderId: receipt.orderId },
-        });
+      if (receipt.orderId && receipt.order) {
         for (const line of receipt.lines) {
-          const matchedPoLine = poLines.find(
-            (l) => l.materialId === line.materialId,
+          const matchedPoLine = this.findUniqueOrderLineForReceiptLine(
+            line,
+            receipt.order.lines,
           );
-          if (matchedPoLine) {
-            await tx.purchaseOrderLine.update({
-              where: { id: matchedPoLine.id },
-              data: {
-                receivedQuantity: {
-                  decrement: Math.min(
-                    line.quantity,
-                    matchedPoLine.receivedQuantity,
-                  ),
-                },
+          await tx.purchaseOrderLine.update({
+            where: { id: matchedPoLine.id },
+            data: {
+              receivedQuantity: {
+                decrement: Math.min(
+                  line.quantity,
+                  matchedPoLine.receivedQuantity,
+                ),
               },
-            });
-          }
+            },
+          });
         }
         const updatedPoLines = await tx.purchaseOrderLine.findMany({
           where: { orderId: receipt.orderId },

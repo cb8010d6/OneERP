@@ -56,7 +56,7 @@ export class PurchaseService {
         orderNo,
         partnerId: data.supplierId,
         companyId,
-        status: 'CONFIRMED',
+        status: PurchaseOrderStatus.APPROVED,
         totalAmount,
         notes: data.notes,
         expectedDate: data.expectedDate ? new Date(data.expectedDate) : null,
@@ -171,6 +171,13 @@ export class PurchaseService {
       throw new BadRequestException('已取消的采购单不能收货');
     if (order.status === 'RECEIVED')
       throw new BadRequestException('采购单已全部收货完成');
+    const receivableStatuses: PurchaseOrderStatus[] = [
+      PurchaseOrderStatus.APPROVED,
+      PurchaseOrderStatus.PARTIALLY_RECEIVED,
+    ];
+    if (!receivableStatuses.includes(order.status)) {
+      throw new BadRequestException('只有已审批或部分收货的采购单才能收货');
+    }
 
     // 2. 验证采购单明细存在
     const orderItem = order.lines.find((item) => item.id === data.itemId);
@@ -272,7 +279,12 @@ export class PurchaseService {
         materialId: material.id,
         order: {
           companyId,
-          status: { in: ['CONFIRMED', 'PARTIALLY_RECEIVED'] },
+          status: {
+            in: [
+              PurchaseOrderStatus.APPROVED,
+              PurchaseOrderStatus.PARTIALLY_RECEIVED,
+            ],
+          },
         },
       },
       include: { order: true },
@@ -304,7 +316,15 @@ export class PurchaseService {
    */
   async getPendingReceivableOrders(companyId: string) {
     const orders = await this.prisma.purchaseOrder.findMany({
-      where: { companyId, status: { in: ['CONFIRMED', 'PARTIALLY_RECEIVED'] } },
+      where: {
+        companyId,
+        status: {
+          in: [
+            PurchaseOrderStatus.APPROVED,
+            PurchaseOrderStatus.PARTIALLY_RECEIVED,
+          ],
+        },
+      },
       include: {
         partner: true,
         lines: { include: { material: true } },
