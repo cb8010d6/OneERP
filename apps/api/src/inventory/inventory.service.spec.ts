@@ -18,7 +18,7 @@ type MockPrisma = {
     findMany: jest.Mock;
     count: jest.Mock;
   };
-  stockMove: { update: jest.Mock };
+  stockMove: { update: jest.Mock; updateMany: jest.Mock };
   $transaction: jest.Mock;
 };
 
@@ -29,7 +29,7 @@ type MockTx = {
     upsert: jest.Mock;
   };
   inventoryTransaction: { create: jest.Mock };
-  stockMove: { update: jest.Mock };
+  stockMove: { update: jest.Mock; updateMany: jest.Mock };
   stockPicking: { update: jest.Mock };
   order: { update: jest.Mock };
 };
@@ -48,7 +48,7 @@ describe('InventoryService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
-    stockMove: { update: jest.fn() },
+    stockMove: { update: jest.fn(), updateMany: jest.fn() },
     $transaction: jest.fn(),
   };
 
@@ -59,7 +59,7 @@ describe('InventoryService', () => {
       upsert: jest.fn(),
     },
     inventoryTransaction: { create: jest.fn() },
-    stockMove: { update: jest.fn() },
+    stockMove: { update: jest.fn(), updateMany: jest.fn() },
     stockPicking: { update: jest.fn() },
     order: { update: jest.fn() },
   };
@@ -130,24 +130,56 @@ describe('InventoryService', () => {
   });
   describe('createSaleOrderPicking', () => {
     it('throws when order not found', async () => {
+      prisma.stockLocation.findFirst.mockResolvedValue({
+        id: 'loc-source',
+        name: 'L1',
+        warehouseId: 'w1',
+      });
       prisma.order.findFirst.mockResolvedValue(null);
       await expect(
-        service.createSaleOrderPicking('c1', 'o1', {}, 'u1'),
+        service.createSaleOrderPicking(
+          'c1',
+          'o1',
+          { sourceLocationId: 'loc-source' },
+          'u1',
+        ),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
 
     it('throws when order has no items', async () => {
+      prisma.stockLocation.findFirst.mockResolvedValue({
+        id: 'loc-source',
+        name: 'L1',
+        warehouseId: 'w1',
+      });
       prisma.order.findFirst.mockResolvedValue({
         id: 'o1',
         orderNo: 'ORD-001',
         items: [],
       });
       await expect(
-        service.createSaleOrderPicking('c1', 'o1', {}, 'u1'),
+        service.createSaleOrderPicking(
+          'c1',
+          'o1',
+          { sourceLocationId: 'loc-source' },
+          'u1',
+        ),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
+    it('requires a source location for sale order picking', async () => {
+      await expect(
+        service.createSaleOrderPicking('c1', 'o1', {}, 'u1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.order.findFirst).not.toHaveBeenCalled();
+    });
+
     it('returns existing picking when one already exists', async () => {
+      prisma.stockLocation.findFirst.mockResolvedValue({
+        id: 'loc-source',
+        name: 'L1',
+        warehouseId: 'w1',
+      });
       prisma.order.findFirst.mockResolvedValue({
         id: 'o1',
         orderNo: 'ORD-001',
@@ -158,13 +190,23 @@ describe('InventoryService', () => {
         pickingNo: 'PICK-001',
         status: 'DRAFT',
       });
-      const result = await service.createSaleOrderPicking('c1', 'o1', {}, 'u1');
+      const result = await service.createSaleOrderPicking(
+        'c1',
+        'o1',
+        { sourceLocationId: 'loc-source' },
+        'u1',
+      );
       expect(result.pickingId).toBe('pk1');
       expect(result.message).toContain('已存在');
       expect(prisma.stockPicking.create).not.toHaveBeenCalled();
     });
 
     it('creates picking with moves from order items', async () => {
+      prisma.stockLocation.findFirst.mockResolvedValue({
+        id: 'loc-source',
+        name: 'L1',
+        warehouseId: 'w1',
+      });
       prisma.order.findFirst.mockResolvedValue({
         id: 'o1',
         orderNo: 'ORD-001',
@@ -190,10 +232,27 @@ describe('InventoryService', () => {
           { id: 'mv2', lineNo: 2, materialId: 'm2', quantity: 2 },
         ],
       });
-      const result = await service.createSaleOrderPicking('c1', 'o1', {}, 'u1');
+      const result = await service.createSaleOrderPicking(
+        'c1',
+        'o1',
+        { sourceLocationId: 'loc-source' },
+        'u1',
+      );
       expect(result.pickingId).toBe('pk1');
       expect(result.status).toBe('DRAFT');
       expect(result.moveCount).toBe(2);
+      expect(prisma.stockPicking.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            sourceLocationId: 'loc-source',
+            moves: expect.objectContaining({
+              create: expect.arrayContaining([
+                expect.objectContaining({ sourceLocationId: 'loc-source' }),
+              ]),
+            }),
+          }),
+        }),
+      );
     });
   });
 
@@ -228,6 +287,130 @@ describe('InventoryService', () => {
       await expect(
         service.confirmStockPicking('c1', 'pk1', {}, 'u1'),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('throws before posting when an executable outbound line has no source location', async () => {
+      prisma.stockPicking.findFirst.mockResolvedValue({
+        id: 'pk1',
+        pickingNo: 'PICK-001',
+        status: 'DRAFT',
+        moves: [
+          {
+            id: 'mv1',
+            lineNo: 1,
+            materialId: 'm1',
+            quantity: 2,
+            status: 'DRAFT',
+            sourceLocationId: null,
+            destLocationId: null,
+            batchNo: null,
+          },
+        ],
+      });
+      await expect(
+        service.confirmStockPicking('c1', 'pk1', {}, 'u1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('posts stock once for executable lines and links transactions to moves', async () => {
+      prisma.stockPicking.findFirst.mockResolvedValue({
+        id: 'pk1',
+        pickingNo: 'PICK-001',
+        status: 'DRAFT',
+        referenceType: 'SALE_ORDER',
+        referenceId: 'o1',
+        moves: [
+          {
+            id: 'mv1',
+            lineNo: 1,
+            materialId: 'm1',
+            quantity: 2,
+            status: 'DRAFT',
+            sourceLocationId: 'loc-source',
+            destLocationId: null,
+            batchNo: 'B1',
+          },
+        ],
+      });
+      tx.stockMove.updateMany.mockResolvedValue({ count: 1 });
+      tx.stockQuant.updateMany.mockResolvedValue({ count: 1 });
+      tx.inventoryTransaction.create.mockResolvedValue({
+        id: 'tx1',
+        type: 'OUTBOUND',
+        materialId: 'm1',
+        quantity: 2,
+        referenceNo: 'PICKING-PICK-001',
+      });
+
+      const result = await service.confirmStockPicking('c1', 'pk1', {}, 'u1');
+
+      expect(result.status).toBe('DONE');
+      expect(result.confirmedLines).toHaveLength(1);
+      expect(tx.stockMove.updateMany).toHaveBeenCalledWith({
+        where: { id: 'mv1', status: { in: ['DRAFT', 'CONFIRMED'] } },
+        data: { status: 'CONFIRMED' },
+      });
+      expect(tx.inventoryTransaction.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            stockMoveId: 'mv1',
+            sourceLocationId: 'loc-source',
+            type: 'OUTBOUND',
+          }),
+        }),
+      );
+      expect(tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'o1' },
+        data: { status: 'SHIPPED' },
+      });
+    });
+
+    it('skips line posting when another confirm already claimed the move', async () => {
+      prisma.stockPicking.findFirst.mockResolvedValue({
+        id: 'pk1',
+        pickingNo: 'PICK-001',
+        status: 'DRAFT',
+        moves: [
+          {
+            id: 'mv1',
+            lineNo: 1,
+            materialId: 'm1',
+            quantity: 2,
+            status: 'DRAFT',
+            sourceLocationId: 'loc-source',
+            destLocationId: null,
+            batchNo: 'B1',
+          },
+        ],
+      });
+      tx.stockMove.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await service.confirmStockPicking('c1', 'pk1', {}, 'u1');
+
+      expect(result.confirmedLines).toHaveLength(0);
+      expect(result.skippedLines).toHaveLength(1);
+      expect(tx.inventoryTransaction.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getPickings', () => {
+    it('filters list by normalized status', async () => {
+      prisma.stockPicking.findMany.mockResolvedValue([]);
+      prisma.stockPicking.count.mockResolvedValue(0);
+      await service.getPickings('c1', { page: 1, limit: 10 }, 'done');
+      expect(prisma.stockPicking.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { companyId: 'c1', status: 'DONE' },
+        }),
+      );
+    });
+
+    it('rejects unsupported list status values', async () => {
+      await expect(
+        service.getPickings('c1', { page: 1, limit: 10 }, 'bad'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.stockPicking.findMany).not.toHaveBeenCalled();
     });
   });
 });
