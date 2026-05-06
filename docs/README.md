@@ -29,6 +29,7 @@
 | --- | --- |
 | [`architecture/DOMAIN_FLOW.md`](architecture/DOMAIN_FLOW.md) | 业务流与跨模块事件 |
 | [`architecture/MIGRATION_POLICY.md`](architecture/MIGRATION_POLICY.md) | 数据库迁移策略 |
+| [`runbooks/README.md`](runbooks/README.md) | 模块 runbook 与多 agent 任务卡片模板 |
 | [`deployment.md`](deployment.md) | 部署说明 |
 
 ## 已归档文档
