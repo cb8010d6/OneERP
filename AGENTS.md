@@ -66,6 +66,30 @@ npm run validate
 
 If `npm run validate` fails, fix the first real failure before making more changes.
 
+## Review Output
+
+When an AI agent writes a code review, PR summary, or handoff review, it must include both Chinese and English sections. Keep the content equivalent, concise, and actionable.
+
+Required format:
+
+```md
+## Review / 代码审查
+
+### 中文
+- 问题：
+- 风险：
+- 建议：
+- 验证：
+
+### English
+- Findings:
+- Risks:
+- Suggestions:
+- Verification:
+```
+
+If there are no findings, state that clearly in both languages and still mention remaining test gaps or residual risk.
+
 ## Task Card Template
 
 ```md
