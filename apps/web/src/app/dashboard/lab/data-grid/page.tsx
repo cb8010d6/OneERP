@@ -16,14 +16,14 @@ type DemoRow = {
 
 const columnHelper = createColumnHelper<DemoRow>();
 
-const columns: ColumnDef<DemoRow, any>[] = [
+const columns = [
   columnHelper.accessor('orderNo', { header: '订单号', size: 160 }),
   columnHelper.accessor('customer', { header: '客户', size: 180 }),
   columnHelper.accessor('sku', { header: 'SKU', size: 180 }),
   columnHelper.accessor('qty', { header: '数量', size: 100 }),
   columnHelper.accessor('unitPrice', { header: '单价', size: 120 }),
   columnHelper.accessor('status', { header: '状态', size: 130 }),
-];
+] as unknown as ColumnDef<DemoRow, unknown>[];
 
 function makeRows(count: number): DemoRow[] {
   const statuses = ['DRAFT', 'PENDING', 'IN_PRODUCTION', 'SHIPPED'];

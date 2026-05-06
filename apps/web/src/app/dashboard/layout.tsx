@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Building2, Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table, ClipboardList } from 'lucide-react';
+import { Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table, ClipboardList } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
@@ -16,7 +16,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { user, token, companies, currentCompanyId, setCurrentCompany, logout } = useAuthStore();
   const { openTab, activateTab, closeTab, activePath } = useWorkspaceTabsStore();
 
-  const navItems = [
+  const navItems = useMemo(() => [
     { icon: LayoutDashboard, label: '概览', href: '/dashboard' },
     { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales' },
     { icon: ClipboardList, label: '采购订单', href: '/dashboard/dynamic/purchaseOrder' },
@@ -25,7 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { icon: Users, label: '客户管理', href: '/dashboard/customers' },
     { icon: Settings, label: '系统设置', href: '/dashboard/settings' },
     { icon: Table, label: '网格实验', href: '/dashboard/lab/data-grid' },
-  ];
+  ], []);
 
   useEffect(() => {
     setMounted(true);
@@ -45,7 +45,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       path: pathname,
       label: item?.label || pathname.split('/').slice(-1)[0] || '工作区',
     });
-  }, [pathname]);
+  }, [navItems, openTab, pathname]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

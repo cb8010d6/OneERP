@@ -147,7 +147,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     };
 
     void fetchTimeline();
-  }, [mode, modelName, selected?.id]);
+  }, [isFormOpen, mode, modelName, selected?.id]);
 
   const submitComment = async () => {
     const selectedId = selected?.id;
@@ -169,7 +169,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     }
   };
 
-  const saveForm = async () => {
+  const saveForm = useCallback(async () => {
     if (!schema || !selected || saving) {
       return;
     }
@@ -191,7 +191,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     } finally {
       setSaving(false);
     }
-  };
+  }, [loadList, modelName, saving, schema, selected]);
 
   useEffect(() => {
     const onShortcutSave = () => {
@@ -204,7 +204,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     return () => {
       window.removeEventListener('erp:shortcut-save', onShortcutSave as EventListener);
     };
-  }, [mode, selected, schema]);
+  }, [isFormOpen, saveForm]);
 
   if (error) {
     return (

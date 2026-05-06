@@ -12,7 +12,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 interface DataGridProps<TData extends { id: string }> {
-  columns: ColumnDef<TData, any>[];
+  columns: ColumnDef<TData, unknown>[];
   data: TData[];
   onCellUpdate?: (rowId: string, columnId: string, value: string) => void;
   enableRowSelection?: boolean;
@@ -33,6 +33,8 @@ export function DataGrid<TData extends { id: string }>({
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
   const [editingValue, setEditingValue] = useState('');
 
+  // TanStack Table intentionally returns non-memoizable functions from this hook.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,
@@ -161,7 +163,7 @@ export function DataGrid<TData extends { id: string }>({
                   {row.getVisibleCells().map((cell) => {
                     const isEditing =
                       editingCell?.rowId === row.original.id && editingCell?.columnId === cell.column.id;
-                    const options = (cell.column.columnDef as any).meta?.options as
+                    const options = (cell.column.columnDef as { meta?: { options?: Array<{ label: string; value: string }> } }).meta?.options as
                       | Array<{ label: string; value: string }>
                       | undefined;
                     return (
