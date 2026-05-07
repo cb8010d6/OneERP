@@ -208,16 +208,37 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
 
   if (error) {
     return (
-      <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-        {error}
+      <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-rose-800">加载失败</p>
+            <p className="mt-1 text-sm text-rose-600">{error}</p>
+            <p className="mt-2 text-xs text-rose-500">
+              模型: {modelName} · 请检查网络连接或联系管理员
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              void loadSchema();
+            }}
+            className="shrink-0 rounded-md bg-rose-100 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-200"
+          >
+            重试
+          </button>
+        </div>
       </div>
     );
   }
 
   if (!schema) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
-        元数据加载中...
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-6">
+        <div className="flex items-center gap-3">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+          <span className="text-sm text-gray-500">加载元数据中...</span>
+        </div>
       </div>
     );
   }
