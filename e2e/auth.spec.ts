@@ -56,7 +56,7 @@ test.describe('认证流程: 注册 / 登录 / 选择公司', () => {
     expect(res.status()).toBe(401);
   });
 
-  test('1.5 注册失败: 重复邮箱返回 401', async ({ request }) => {
+  test('1.5 注册失败: 重复邮箱返回 409', async ({ request }) => {
     const res = await request.post('/auth/register', {
       data: {
         email: 'admin@erp.com',
@@ -64,10 +64,55 @@ test.describe('认证流程: 注册 / 登录 / 选择公司', () => {
         name: '重复用户',
       },
     });
-    expect(res.status()).toBe(401);
+    expect(res.status()).toBe(409);
   });
 
-  test('1.6 无 Token 访问受保护资源 → 401', async ({ request }) => {
+  test('1.6 登录返回 refreshToken 和 accessToken', async ({ request }) => {
+    auth = await loginUser(request, 'admin@erp.com', 'admin');
+    expect(auth.accessToken).toBeTruthy();
+    // 登录现在也返回 refreshToken
+    expect(auth.refreshToken).toBeTruthy();
+    expect(auth.accessTokenExpiresIn).toBe(900);
+  });
+
+  test('1.7 refresh 端点使用 refreshToken 换取新 token', async ({ request }) => {
+    const loginRes = await request.post('/auth/login', {
+      data: { email: 'admin@erp.com', password: 'admin' },
+    });
+    const loginBody = await loginRes.json();
+    const refreshToken = loginBody.refreshToken;
+    expect(refreshToken).toBeTruthy();
+
+    const refreshRes = await request.post('/auth/refresh', {
+      data: { refreshToken },
+    });
+    expect(refreshRes.ok()).toBeTruthy();
+    const refreshBody = await refreshRes.json();
+    expect(refreshBody.accessToken).toBeTruthy();
+    expect(refreshBody.refreshToken).toBeTruthy();
+    expect(refreshBody.refreshToken).not.toBe(refreshToken); // rotation
+  });
+
+  test('1.8 旧 refreshToken 被轮换后不能再使用', async ({ request }) => {
+    const loginRes = await request.post('/auth/login', {
+      data: { email: 'admin@erp.com', password: 'admin' },
+    });
+    const loginBody = await loginRes.json();
+    const oldRefreshToken = loginBody.refreshToken;
+
+    // 第一次 refresh 成功
+    await request.post('/auth/refresh', {
+      data: { refreshToken: oldRefreshToken },
+    });
+
+    // 第二次用旧 token 应失败（reuse detection）
+    const reuseRes = await request.post('/auth/refresh', {
+      data: { refreshToken: oldRefreshToken },
+    });
+    expect(reuseRes.status()).toBe(401);
+  });
+
+  test('1.9 无 Token 访问受保护资源 → 401', async ({ request }) => {
     const res = await request.get('/orders');
     expect([401, 403]).toContain(res.status());
   });
