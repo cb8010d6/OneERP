@@ -38,10 +38,14 @@ export class PurchaseOrdersService {
     const lines = await this.prisma.purchaseOrderLine.findMany({
       where: { orderId },
     });
-    const subTotal = this.round2(lines.reduce((s, l) => s + l.subTotal, 0));
-    const taxTotal = this.round2(lines.reduce((s, l) => s + l.taxAmount, 0));
+    const subTotal = this.round2(
+      lines.reduce((s, l) => s + Number(l.subTotal), 0),
+    );
+    const taxTotal = this.round2(
+      lines.reduce((s, l) => s + Number(l.taxAmount), 0),
+    );
     const totalAmount = this.round2(
-      lines.reduce((s, l) => s + l.totalAmount, 0),
+      lines.reduce((s, l) => s + Number(l.totalAmount), 0),
     );
     return this.prisma.purchaseOrder.update({
       where: { id: orderId },
