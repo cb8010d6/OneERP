@@ -3,7 +3,6 @@ import {
   loginUser,
   authHeaders,
   createResource,
-  postPurchaseInbound,
   listResources,
   uniquePartnerCode,
   uniqueSku,
@@ -11,16 +10,28 @@ import {
   type CrudRecord,
 } from './helpers';
 
-test.describe('采购入库完整链路', () => {
+test.describe('采购订单到应付账款完整链路', () => {
   let auth: AuthResult;
   let headers: Record<string, string>;
   let materialId: string;
-  let locationId: string;
-  const purchaseNo = `PO-E2E-${Date.now()}`;
+  let partnerId: string;
+  let purchaseOrderId: string;
+  let purchaseOrderNo: string;
 
   test.beforeAll(async ({ request }) => {
     auth = await loginUser(request, 'admin@erp.com', 'admin');
     headers = authHeaders(auth);
+
+    // 创建测试供应商
+    const code = uniquePartnerCode();
+    const partner: CrudRecord = await createResource(request, 'Partner', {
+      code,
+      name: `E2E供应商-${code}`,
+      type: 'SUPPLIER',
+      contact: 'E2E测试',
+      phone: '13800000000',
+    }, headers);
+    partnerId = partner.id;
 
     // 创建测试物料
     const sku = uniqueSku('MAT-PO');
@@ -32,90 +43,91 @@ test.describe('采购入库完整链路', () => {
       unitPrice: 10,
     }, headers);
     materialId = mat.id;
-
-    // 获取仓库和库位
-    const warehousesRes = await request.get('/inventory/warehouses', {
-      headers,
-    });
-    const warehouses = await warehousesRes.json();
-    expect(warehouses.length).toBeGreaterThanOrEqual(1);
-
-    const locationsRes = await request.get('/inventory/locations', {
-      headers,
-    });
-    const locations = await locationsRes.json();
-    expect(locations.length).toBeGreaterThanOrEqual(1);
-    locationId = locations[0].id;
   });
 
-  test('3.1 采购入库过账: POST /inventory/posting/purchase/inbound', async ({
-    request,
-  }) => {
-    const result = await postPurchaseInbound(request, headers, {
-      purchaseNo,
-      materialId,
-      quantity: 500,
-      destLocationId: locationId,
-      batchNo: 'BATCH-E2E-001',
-    });
-
-    expect(result).toBeTruthy();
-    // 返回创建的库存事务记录
-    expect(result.materialId ?? result.type).toBeTruthy();
-  });
-
-  test('3.2 入库后查询库存台账: 物料数量应 >= 500', async ({ request }) => {
-    const ledgerRes = await request.get('/inventory/realtime-ledger', {
-      headers,
-    });
-    expect(ledgerRes.ok()).toBeTruthy();
-    const ledger = await ledgerRes.json();
-
-    // 查找我们刚入库的物料
-    const entry = ledger.find(
-      (row: { materialId: string }) => row.materialId === materialId,
-    );
-    expect(entry).toBeTruthy();
-    expect(Number(entry.netQty)).toBeGreaterThanOrEqual(500);
-  });
-
-  test('3.3 查询出入库流水: 应包含本次采购入库记录', async ({
-    request,
-  }) => {
-    const txRes = await request.get('/inventory/transactions', { headers });
-    expect(txRes.ok()).toBeTruthy();
-    const txns = await txRes.json();
-
-    const inbound = txns.find(
-      (tx: { materialId: string; type: string }) =>
-        tx.materialId === materialId && tx.type === 'INBOUND',
-    );
-    expect(inbound).toBeTruthy();
-    expect(Number(inbound.quantity)).toBe(500);
-  });
-
-  test('3.4 采购入库冲销: POST /inventory/posting/purchase/:purchaseNo/reverse', async ({
-    request,
-  }) => {
-    const res = await request.post(
-      `/inventory/posting/purchase/${purchaseNo}/reverse`,
-      {
-        data: { note: 'E2E测试冲销' },
-        headers,
+  test('4.1 创建采购订单: POST /purchase-orders', async ({ request }) => {
+    const res = await request.post('/purchase-orders', {
+      data: {
+        partnerId,
+        expectedDate: new Date(Date.now() + 7 * 86400000).toISOString(),
+        notes: 'E2E 自动测试采购单',
+        lines: [
+          {
+            materialId,
+            quantity: 100,
+            unitPrice: 25.5,
+            taxRate: 0.13,
+          },
+        ],
       },
+      headers,
+    });
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.orderNo).toBeTruthy();
+    expect(body.status).toBe('DRAFT');
+    expect(body.lines.length).toBe(1);
+    purchaseOrderId = body.id;
+    purchaseOrderNo = body.orderNo;
+  });
+
+  test('4.2 查询采购订单列表: GET /purchase-orders', async ({ request }) => {
+    const res = await request.get('/purchase-orders', { headers });
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.data.length).toBeGreaterThanOrEqual(1);
+    const found = body.data.find(
+      (po: { id: string }) => po.id === purchaseOrderId,
+    );
+    expect(found).toBeTruthy();
+  });
+
+  test('4.3 查询采购订单详情: GET /purchase-orders/:id', async ({
+    request,
+  }) => {
+    const res = await request.get(`/purchase-orders/${purchaseOrderId}`, {
+      headers,
+    });
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.orderNo).toBe(purchaseOrderNo);
+    expect(body.partnerId).toBe(partnerId);
+    expect(body.lines.length).toBe(1);
+    expect(Number(body.lines[0].unitPrice)).toBeCloseTo(25.5, 1);
+  });
+
+  test('4.4 采购订单通过通用 CRUD 查询: GET /v1/resource/purchaseOrder', async ({
+    request,
+  }) => {
+    const list = await listResources(request, 'purchaseOrder', headers);
+    expect(list.data.length).toBeGreaterThanOrEqual(1);
+    const found = list.data.find(
+      (po: { id: string }) => po.id === purchaseOrderId,
+    );
+    expect(found).toBeTruthy();
+  });
+
+  test('4.5 提交采购订单: PATCH /purchase-orders/:id/submit', async ({
+    request,
+  }) => {
+    const res = await request.patch(
+      `/purchase-orders/${purchaseOrderId}/submit`,
+      { headers },
     );
     expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.status).toBe('SUBMITTED');
+  });
 
-    // 冲销后库存应减少
-    const ledgerRes = await request.get('/inventory/realtime-ledger', {
-      headers,
-    });
-    const ledger = await ledgerRes.json();
-    const entry = ledger.find(
-      (row: { materialId: string }) => row.materialId === materialId,
+  test('4.6 确认采购订单: PATCH /purchase-orders/:id/confirm', async ({
+    request,
+  }) => {
+    const res = await request.patch(
+      `/purchase-orders/${purchaseOrderId}/confirm`,
+      { headers },
     );
-    if (entry) {
-      expect(Number(entry.netQty)).toBeLessThan(500);
-    }
+    expect(res.ok()).toBeTruthy();
+    const body = await res.json();
+    expect(body.status).toBe('APPROVED');
   });
 });
