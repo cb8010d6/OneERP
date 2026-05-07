@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  /* ===== Turbopack 根目录（消除多 lockfile root 推断警告） ===== */
+  turbopack: {
+    root: "..",
+  },
   /* ===== 生产构建配置 ===== */
   // 独立输出模式，适合 Docker / Serverless 部署
   output: "standalone",
