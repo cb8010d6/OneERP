@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table, ClipboardList } from 'lucide-react';
+import { Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table, ClipboardList, Factory, Receipt, ListOrdered } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
@@ -19,8 +19,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navItems = useMemo(() => [
     { icon: LayoutDashboard, label: '概览', href: '/dashboard' },
     { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales' },
+    { icon: ListOrdered, label: '订单管理', href: '/dashboard/orders' },
     { icon: ClipboardList, label: '采购订单', href: '/dashboard/dynamic/purchaseOrder' },
     { icon: Package, label: '生产与库存', href: '/dashboard/inventory' },
+    { icon: Factory, label: '生产管理', href: '/dashboard/production' },
+    { icon: Receipt, label: '财务管理', href: '/dashboard/finance' },
     { icon: FileText, label: '图纸文档', href: '/dashboard/files' },
     { icon: Users, label: '客户管理', href: '/dashboard/customers' },
     { icon: Settings, label: '系统设置', href: '/dashboard/settings' },
