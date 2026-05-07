@@ -124,7 +124,7 @@ describe('DynamicView', () => {
   it('加载中显示 skeleton', () => {
     mockFetchSchema.mockReturnValue(new Promise(() => {}));
     render(<DynamicView modelName="Product" />);
-    expect(screen.getByText('元数据加载中...')).toBeInTheDocument();
+    expect(screen.getByText('加载元数据中...')).toBeInTheDocument();
   });
 
   it('schema 加载成功后显示标题', async () => {
