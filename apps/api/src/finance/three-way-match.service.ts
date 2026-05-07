@@ -154,20 +154,20 @@ export class ThreeWayMatchService {
       if (poLines?.length) {
         for (const pl of poLines) {
           poQty += pl.quantity;
-          poPrice = pl.unitPrice;
-          poSub += pl.subTotal;
-          poTax += pl.taxAmount;
-          poTotal += pl.totalAmount;
+          poPrice = Number(pl.unitPrice);
+          poSub += Number(pl.subTotal);
+          poTax += Number(pl.taxAmount);
+          poTotal += Number(pl.totalAmount);
         }
       }
       const grQty = grQtyByMat.get(matId) ?? 0;
       const qtyDiff = bl.quantity - poQty;
-      const amtDiff = this.round2(bl.lineTotal - poTotal);
-      const txDiff = this.round2(bl.taxAmount - poTax);
+      const amtDiff = this.round2(Number(bl.lineTotal) - poTotal);
+      const txDiff = this.round2(Number(bl.taxAmount) - poTax);
       totalPoAmount += poTotal;
       totalGrQty += grQty;
-      totalBillAmount += bl.lineTotal;
-      totalBillTax += bl.taxAmount;
+      totalBillAmount += Number(bl.lineTotal);
+      totalBillTax += Number(bl.taxAmount);
       const reasons: string[] = [];
       if (grQty > poQty + toleranceAbs)
         reasons.push(`GR收货数量(${grQty})超过PO采购数量(${poQty})`);
@@ -179,7 +179,7 @@ export class ThreeWayMatchService {
         Math.abs(amtDiff / poTotal) > toleranceRate
       )
         reasons.push(
-          `开票金额(${bl.lineTotal})与PO金额(${poTotal})差异超限: ${this.round2(Math.abs(amtDiff / poTotal) * 100)}%`,
+          `开票金额(${String(bl.lineTotal)})与PO金额(${poTotal})差异超限: ${this.round2(Math.abs(amtDiff / poTotal) * 100)}%`,
         );
       if (
         poTax > 0 &&
@@ -187,7 +187,7 @@ export class ThreeWayMatchService {
         Math.abs(txDiff / poTax) > toleranceRate
       )
         reasons.push(
-          `开票税额(${bl.taxAmount})与PO税额(${poTax})差异超限: ${this.round2(Math.abs(txDiff / poTax) * 100)}%`,
+          `开票税额(${String(bl.taxAmount)})与PO税额(${poTax})差异超限: ${this.round2(Math.abs(txDiff / poTax) * 100)}%`,
         );
       lineDetails.push({
         materialId: matId,
@@ -199,10 +199,10 @@ export class ThreeWayMatchService {
         poTotalAmount: this.round2(poTotal),
         grQuantity: grQty,
         billQuantity: bl.quantity,
-        billUnitPrice: bl.unitPrice,
-        billSubTotal: this.round2(bl.subTotal),
-        billTaxAmount: this.round2(bl.taxAmount),
-        billTotalAmount: this.round2(bl.lineTotal),
+        billUnitPrice: Number(bl.unitPrice),
+        billSubTotal: this.round2(Number(bl.subTotal)),
+        billTaxAmount: this.round2(Number(bl.taxAmount)),
+        billTotalAmount: this.round2(Number(bl.lineTotal)),
         quantityDiff: this.round2(qtyDiff),
         amountDiff: this.round2(amtDiff),
         taxDiff: this.round2(txDiff),
@@ -213,15 +213,19 @@ export class ThreeWayMatchService {
     for (const [matId, pls] of poLinesByMat) {
       if (invoice.lines.some((l) => l.materialId === matId)) continue;
       const pQty = pls.reduce((s, l) => s + l.quantity, 0);
-      const pAmt = pls.reduce((s, l) => s + l.totalAmount, 0);
+      const pAmt = pls.reduce((s, l) => s + Number(l.totalAmount), 0);
       if (pQty > 0 && pAmt > 0) {
         lineDetails.push({
           materialId: matId,
           materialName: pls[0]?.material?.name,
           poQuantity: pQty,
-          poUnitPrice: pls[0]?.unitPrice ?? 0,
-          poSubTotal: this.round2(pls.reduce((s, l) => s + l.subTotal, 0)),
-          poTaxAmount: this.round2(pls.reduce((s, l) => s + l.taxAmount, 0)),
+          poUnitPrice: Number(pls[0]?.unitPrice ?? 0),
+          poSubTotal: this.round2(
+            pls.reduce((s, l) => s + Number(l.subTotal), 0),
+          ),
+          poTaxAmount: this.round2(
+            pls.reduce((s, l) => s + Number(l.taxAmount), 0),
+          ),
           poTotalAmount: this.round2(pAmt),
           grQuantity: grQtyByMat.get(matId) ?? 0,
           billQuantity: 0,
@@ -231,7 +235,9 @@ export class ThreeWayMatchService {
           billTotalAmount: 0,
           quantityDiff: this.round2(-pQty),
           amountDiff: this.round2(-pAmt),
-          taxDiff: this.round2(-pls.reduce((s, l) => s + l.taxAmount, 0)),
+          taxDiff: this.round2(
+            -pls.reduce((s, l) => s + Number(l.taxAmount), 0),
+          ),
           matched: false,
           reasons: [`PO行项(物料${matId})在发票中缺失`],
         });

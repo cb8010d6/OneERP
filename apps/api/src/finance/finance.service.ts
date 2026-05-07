@@ -119,10 +119,10 @@ export class FinanceService {
       });
 
       const totalPaid =
-        inv.payments.reduce((sum, p) => sum + p.amount, 0) + dto.amount;
+        inv.payments.reduce((sum, p) => sum + Number(p.amount), 0) + dto.amount;
 
       let newStatus = inv.status;
-      if (totalPaid >= inv.amount) newStatus = 'PAID';
+      if (totalPaid >= Number(inv.amount)) newStatus = 'PAID';
       else if (totalPaid > 0) newStatus = 'PARTIAL';
 
       await tx.invoice.update({

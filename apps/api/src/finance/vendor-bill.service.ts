@@ -326,11 +326,11 @@ export class VendorBillService {
       });
       const totalPaid =
         invoice.payments.reduce(
-          (sum, paymentItem) => sum + paymentItem.amount,
+          (sum, paymentItem) => sum + Number(paymentItem.amount),
           0,
         ) + dto.amount;
       let newStatus = invoice.status;
-      if (totalPaid >= invoice.amount) newStatus = 'PAID';
+      if (totalPaid >= Number(invoice.amount)) newStatus = 'PAID';
       else if (totalPaid > 0) newStatus = 'PARTIAL';
       await tx.purchaseInvoice.update({
         where: { id: invoiceId },

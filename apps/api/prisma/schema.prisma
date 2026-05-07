@@ -220,9 +220,9 @@ model Order {
   salesId      String // 挂单销售员
   companyId    String
   status       String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
-  totalAmount  Float     @default(0)
-  subTotal     Float     @default(0)
-  taxTotal     Float     @default(0)
+  totalAmount  Decimal   @default(0) @db.Decimal(19, 4)
+  subTotal     Decimal   @default(0) @db.Decimal(19, 4)
+  taxTotal     Decimal   @default(0) @db.Decimal(19, 4)
   taxCodeId    String?
   aiSummary    Json? // 存放 AI 抓取的客户需�?JSON 结构
   customAttributes Json?
@@ -246,10 +246,10 @@ model OrderItem {
   orderId    String
   productId  String // 关联的产�?模型名称
   quantity   Int
-  unitPrice  Float
-  totalPrice Float
-  subTotal   Float   @default(0)
-  taxAmount  Float   @default(0)
+  unitPrice  Decimal  @db.Decimal(19, 4)
+  totalPrice Decimal  @db.Decimal(19, 4)
+  subTotal   Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount  Decimal  @default(0) @db.Decimal(19, 4)
   taxRate    Float   @default(0)
   taxCodeId  String?
   customAttributes Json?
@@ -570,12 +570,12 @@ model Invoice {
   id         String    @id @default(uuid())
   invoiceNo  String    @unique
   orderId    String
-  amount     Float
-  subTotal   Float    @default(0)
-  taxAmount  Float    @default(0)
+  amount     Decimal  @db.Decimal(19, 4)
+  subTotal   Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount  Decimal  @default(0) @db.Decimal(19, 4)
   taxCodeId  String?
-  taxRate          Float    @default(0)
-  taxNature        TaxNature @default(OUTPUT)
+  taxRate    Decimal  @default(0) @db.Decimal(6, 4)
+  taxNature  TaxNature @default(OUTPUT)
   status     String // "UNPAID", "PARTIAL", "PAID"
   postingStatus EntryPostingStatus @default(DRAFT)
   companyId  String
@@ -590,7 +590,7 @@ model Invoice {
 model Payment {
   id          String   @id @default(uuid())
   invoiceId   String
-  amount      Float
+  amount      Decimal  @db.Decimal(19, 4)
   paymentDate DateTime @default(now())
   method      String // "BANK_TRANSFER", "CASH", "WECHAT", "ALIPAY"
 
@@ -602,10 +602,10 @@ model PurchaseInvoice {
   invoiceNo       String    @unique
   partnerId       String
   receiptId       String?          // 关联入库�?
-  amount          Float
-  subTotal        Float    @default(0)
-  taxAmount       Float    @default(0)
-  taxRate         Float    @default(0)
+  amount          Decimal  @db.Decimal(19, 4)
+  subTotal        Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount       Decimal  @default(0) @db.Decimal(19, 4)
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
   taxCodeId       String?
   taxNature       TaxNature @default(INPUT)
   status          String // "DRAFT", "UNPAID", "PARTIAL", "PAID"
@@ -633,11 +633,11 @@ model PurchaseInvoiceLine {
   invoiceId       String
   materialId      String
   quantity        Float
-  unitPrice       Float
-  lineTotal       Float   @default(0)
-  subTotal        Float   @default(0)
-  taxAmount       Float   @default(0)
-  taxRate         Float   @default(0)
+  unitPrice       Decimal  @db.Decimal(19, 4)
+  lineTotal       Decimal  @default(0) @db.Decimal(19, 4)
+  subTotal        Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount       Decimal  @default(0) @db.Decimal(19, 4)
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
   taxCodeId       String?
   accountId       String?
   description     String?
@@ -653,7 +653,7 @@ model PurchaseInvoiceLine {
 model VendorBillPayment {
   id              String   @id @default(uuid())
   invoiceId       String
-  amount          Float
+  amount          Decimal  @db.Decimal(19, 4)
   paymentDate     DateTime @default(now())
   method          String // "BANK_TRANSFER", "CASH", "CHECK"
   notes           String?
@@ -732,8 +732,8 @@ model JournalEntryLine {
   lineNo         Int
   accountId      String
   partnerId      String?
-  debit          Float    @default(0)
-  credit         Float    @default(0)
+  debit          Decimal  @default(0) @db.Decimal(19, 4)
+  credit         Decimal  @default(0) @db.Decimal(19, 4)
   memo           String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -827,9 +827,9 @@ model PurchaseOrder {
   orderDate    DateTime           @default(now())
   expectedDate DateTime?
   notes        String?
-  subTotal     Float              @default(0)
-  taxTotal     Float              @default(0)
-  totalAmount  Float              @default(0)
+  subTotal     Decimal            @default(0) @db.Decimal(19, 4)
+  taxTotal     Decimal            @default(0) @db.Decimal(19, 4)
+  totalAmount  Decimal            @default(0) @db.Decimal(19, 4)
   companyId    String
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
@@ -852,11 +852,11 @@ model PurchaseOrderLine {
   description     String?
   quantity        Float
   receivedQuantity Float  @default(0)
-  unitPrice       Float
-  taxRate         Float   @default(0)
-  taxAmount       Float   @default(0)
-  subTotal        Float   @default(0)
-  totalAmount     Float   @default(0)
+  unitPrice       Decimal  @db.Decimal(19, 4)
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
+  taxAmount       Decimal  @default(0) @db.Decimal(19, 4)
+  subTotal        Decimal  @default(0) @db.Decimal(19, 4)
+  totalAmount     Decimal  @default(0) @db.Decimal(19, 4)
   companyId       String
   uom             String  @default("pcs")
 

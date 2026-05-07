@@ -294,7 +294,10 @@ export class AccountingService {
 
     // ---- Build debit lines by line-level account (inventory / expense) ----
     const debitLines = this.buildPurchaseDebitLines(
-      invoice.lines,
+      invoice.lines.map((l) => ({
+        ...l,
+        subTotal: Number(l.subTotal),
+      })),
       invoice.invoiceNo,
       invoice.partnerId,
       subTotal,
