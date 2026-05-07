@@ -99,11 +99,26 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  companies  UserCompanyRole[]
-  orders     Order[]           @relation("UserOrders")
-  FileRecord FileRecord[]
-  WorkReport WorkReport[]
-  auditLogs  AuditLog[]
+  companies     UserCompanyRole[]
+  orders        Order[]           @relation("UserOrders")
+  FileRecord    FileRecord[]
+  WorkReport    WorkReport[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
 }
 
 model Role {
