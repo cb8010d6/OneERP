@@ -53,7 +53,6 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
     // 我们通过检查 interceptor 处理后的 config.url 来验证
 
     // 使用 api 拦截器验证: 先注册一个 adapter 捕获 config
-    const axios = require('axios');
     const api = require('../api').default;
 
     // 添加一个 mock adapter 来捕获最终的请求配置
@@ -71,7 +70,6 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
   });
 
   it('合法分页参数不被修改', () => {
-    const axios = require('axios');
     const api = require('../api').default;
 
     let capturedConfig: any = null;
