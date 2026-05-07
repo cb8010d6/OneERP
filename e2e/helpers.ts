@@ -4,6 +4,8 @@ import type { APIRequestContext } from '@playwright/test';
 
 export interface AuthResult {
   accessToken: string;
+  refreshToken: string;
+  accessTokenExpiresIn: number;
   user: { id: string; email: string; name: string };
   companies: Array<{ id: string; name: string; role: string }>;
 }
