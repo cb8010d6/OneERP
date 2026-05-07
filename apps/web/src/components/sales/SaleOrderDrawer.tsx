@@ -221,6 +221,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, orderId]);
 
   const handleCellUpdate = (rowId: string, columnId: string, value: string) => {
