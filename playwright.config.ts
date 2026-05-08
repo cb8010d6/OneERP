@@ -31,6 +31,9 @@ export default defineConfig({
     {
       name: 'e2e-api',
       testMatch: /.*\.spec\.ts$/,
+      use: {
+        channel: 'msedge',
+      },
     },
   ],
 });

@@ -379,4 +379,50 @@ export class PurchaseOrdersService {
 
     return { id: orderId, deleted: true };
   }
+
+  // =======================================
+  // 取消采购单 (DRAFT/SUBMITTED/APPROVED → CANCELLED)
+  // 已收货的采购单不允许直接取消
+  // =======================================
+  async cancel(orderId: string, companyId: string, userId: string, reason?: string) {
+    const po = await this.prisma.purchaseOrder.findFirst({
+      where: { id: orderId, companyId },
+      include: { lines: true, receipts: { where: { status: 'CONFIRMED' } } },
+    });
+    if (!po) throw new NotFoundException('采购单不存在或无权操作');
+
+    const cancellableStatuses: string[] = ['DRAFT', 'SUBMITTED', 'APPROVED'];
+    if (!cancellableStatuses.includes(po.status)) {
+      throw new BadRequestException(
+        `当前状态(${po.status})不允许取消，仅 DRAFT/SUBMITTED/APPROVED 状态可取消`,
+      );
+    }
+
+    if (po.receipts.length > 0) {
+      throw new BadRequestException(
+        '该采购单已有已确认的收货单，不允许直接取消。请先冲销相关收货单。',
+      );
+    }
+
+    const updated = await this.prisma.purchaseOrder.update({
+      where: { id: orderId },
+      data: { status: 'CANCELLED' },
+      include: { lines: true, partner: true },
+    });
+
+    await this.auditLog(
+      userId,
+      'CANCEL_PURCHASE_ORDER',
+      orderId,
+      {
+        orderNo: po.orderNo,
+        previousStatus: po.status,
+        reason: reason ?? null,
+      },
+      companyId,
+    );
+
+    this.logger.log(`采购单 ${po.orderNo} 已取消 (原状态: ${po.status})`);
+    return updated;
+  }
 }

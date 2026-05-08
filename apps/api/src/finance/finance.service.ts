@@ -240,4 +240,42 @@ export class FinanceService {
 
     return updated;
   }
+
+  async getJournalEntries(
+    companyId: string,
+    pagination: PaginationDto,
+    status?: string,
+  ) {
+    const { page = 1, limit = 20 } = pagination;
+    const where: { companyId: string; postingStatus?: EntryPostingStatus } = {
+      companyId,
+    };
+    if (
+      status &&
+      Object.values(EntryPostingStatus).includes(
+        status as EntryPostingStatus,
+      )
+    ) {
+      where.postingStatus = status as EntryPostingStatus;
+    }
+
+    const [data, total] = await Promise.all([
+      this.prisma.journalEntry.findMany({
+        where,
+        include: {
+          journal: { select: { id: true, code: true, name: true, type: true } },
+          lines: {
+            include: { account: true, partner: { select: { id: true, name: true } } },
+            orderBy: { lineNo: 'asc' },
+          },
+        },
+        orderBy: { date: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.journalEntry.count({ where }),
+    ]);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
 }

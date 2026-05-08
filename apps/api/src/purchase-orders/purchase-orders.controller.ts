@@ -111,4 +111,17 @@ export class PurchaseOrdersController {
   ) {
     return this.poService.delete(id, companyId, user.id);
   }
+
+  @Post(':id/cancel')
+  @ApiOperation({
+    summary: '取消采购单 (DRAFT/SUBMITTED/APPROVED → CANCELLED)',
+  })
+  async cancel(
+    @Param('id') id: string,
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Body() body?: { reason?: string },
+  ) {
+    return this.poService.cancel(id, companyId, user.id, body?.reason);
+  }
 }

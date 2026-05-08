@@ -191,7 +191,7 @@ export class TaxService {
       id: string;
       code: string;
       name: string;
-      rate: number;
+      rate: number | { toNumber(): number };
       isTaxInclusive: boolean;
       taxNature: TaxNature;
       outputAccountId: string | null;

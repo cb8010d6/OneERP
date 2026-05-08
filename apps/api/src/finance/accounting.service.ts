@@ -1,4 +1,4 @@
-﻿import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
   EntryPostingStatus,
   JournalType,
@@ -589,5 +589,245 @@ export class AccountingService {
       String(now.getDate()).padStart(2, '0');
     const suffix = String(now.getTime()).slice(-6);
     return 'JE-' + datePart + '-' + suffix;
+  }
+
+  // ─── 凭证冲销 ──────────────────────────────────────
+
+  /**
+   * 冲销已过账凭证 —— 生成反向借贷分录，原凭证标记为 REVERSED。
+   * 禁止删除历史凭证，确保完整审计轨迹。
+   * 幂等：如果原凭证已被冲销，直接返回已有冲销凭证。
+   */
+  async reverseJournalEntry(
+    companyId: string,
+    entryId: string,
+    operatorId: string,
+    reason?: string,
+  ) {
+    const original = await this.prisma.journalEntry.findFirst({
+      where: { id: entryId, companyId },
+      include: {
+        lines: { include: { account: true }, orderBy: { lineNo: 'asc' } },
+        journal: true,
+      },
+    });
+
+    if (!original) {
+      throw new BadRequestException('凭证不存在');
+    }
+
+    if (original.postingStatus === EntryPostingStatus.REVERSED) {
+      // 幂等: 查找已存在的冲销凭证
+      const existingReversal = await this.prisma.journalEntry.findFirst({
+        where: { companyId, reversedEntryId: original.id },
+        include: { lines: { include: { account: true } } },
+      });
+      return {
+        original: { id: original.id, entryNo: original.entryNo },
+        reversal: existingReversal,
+        message: '凭证已冲销，返回已有冲销凭证',
+      };
+    }
+
+    if (original.postingStatus !== EntryPostingStatus.POSTED) {
+      throw new BadRequestException(
+        '只有已过账状态的凭证才能冲销，当前状态: ' + original.postingStatus,
+      );
+    }
+
+    if (original.lines.length === 0) {
+      throw new BadRequestException('凭证无分录，无法冲销');
+    }
+
+    // 生成反向分录：借方 ↔ 贷方
+    const reversalDescription =
+      `冲销凭证 ${original.entryNo}` +
+      (reason ? ` (原因: ${reason})` : '');
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        'journal-entry-' + companyId,
+      );
+
+      // 1. 标记原凭证为 REVERSED
+      await tx.journalEntry.update({
+        where: { id: original.id },
+        data: { postingStatus: EntryPostingStatus.REVERSED },
+      });
+
+      // 2. 生成冲销凭证
+      const reversalEntry = await tx.journalEntry.create({
+        data: {
+          entryNo: this.generateEntryNo(),
+          date: new Date(),
+          ref: original.ref ? `REV-${original.ref}` : `REV-${original.entryNo}`,
+          description: reversalDescription,
+          journalId: original.journalId,
+          companyId,
+          createdBy: operatorId,
+          postingStatus: EntryPostingStatus.POSTED,
+          reversedEntryId: original.id,
+          postedAt: new Date(),
+          lines: {
+            create: original.lines.map((line, index) => ({
+              lineNo: index + 1,
+              accountId: line.accountId,
+              partnerId: line.partnerId,
+              debit: line.credit, // 借贷互换
+              credit: line.debit, // 借贷互换
+              memo: `冲销: ${line.memo ?? ''}`,
+            })),
+          },
+        },
+        include: {
+          lines: { include: { account: true }, orderBy: { lineNo: 'asc' } },
+          journal: true,
+        },
+      });
+
+      // 3. 审计日志
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          action: 'REVERSE_JOURNAL_ENTRY',
+          entity: 'JournalEntry',
+          entityId: original.id,
+          details: {
+            originalEntryNo: original.entryNo,
+            reversalEntryNo: reversalEntry.entryNo,
+            reason: reason ?? null,
+            totalDebit: this.taxService.round2(
+              original.lines.reduce((s, l) => s + Number(l.debit), 0),
+            ),
+            totalCredit: this.taxService.round2(
+              original.lines.reduce((s, l) => s + Number(l.credit), 0),
+            ),
+          },
+          companyId,
+        },
+      });
+
+      return {
+        original: {
+          id: original.id,
+          entryNo: original.entryNo,
+          postingStatus: EntryPostingStatus.REVERSED,
+        },
+        reversal: reversalEntry,
+        message: '凭证冲销成功',
+      };
+    });
+  }
+
+  // ─── 试算平衡表 ─────────────────────────────────────
+
+  /**
+   * 试算平衡表 —— 按期间、科目、公司聚合所有已过账凭证的借贷合计。
+   * 只统计 POSTED 状态的凭证。
+   */
+  async getTrialBalance(
+    companyId: string,
+    startDate?: Date,
+    endDate?: Date,
+    accountType?: string,
+  ) {
+    const dateFilter: { gte?: Date; lte?: Date } = {};
+    if (startDate) dateFilter.gte = startDate;
+    if (endDate) dateFilter.lte = endDate;
+
+    const where: {
+      journalEntry: {
+        companyId: string;
+        postingStatus: typeof EntryPostingStatus.POSTED;
+        date?: { gte?: Date; lte?: Date };
+      };
+      account?: { type: string };
+    } = {
+      journalEntry: {
+        companyId,
+        postingStatus: EntryPostingStatus.POSTED,
+      },
+    };
+
+    if (startDate || endDate) {
+      where.journalEntry.date = dateFilter;
+    }
+    if (accountType) {
+      where.account = { type: accountType };
+    }
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where,
+      include: {
+        account: { select: { id: true, code: true, name: true, type: true } },
+      },
+    });
+
+    // 按科目聚合
+    const accountMap = new Map<
+      string,
+      {
+        accountId: string;
+        accountCode: string;
+        accountName: string;
+        accountType: string;
+        totalDebit: number;
+        totalCredit: number;
+      }
+    >();
+
+    for (const line of lines) {
+      const key = line.accountId;
+      const existing = accountMap.get(key);
+      if (existing) {
+        existing.totalDebit = this.taxService.round2(
+          existing.totalDebit + Number(line.debit),
+        );
+        existing.totalCredit = this.taxService.round2(
+          existing.totalCredit + Number(line.credit),
+        );
+      } else {
+        accountMap.set(key, {
+          accountId: line.account.id,
+          accountCode: line.account.code,
+          accountName: line.account.name,
+          accountType: line.account.type,
+          totalDebit: this.taxService.round2(Number(line.debit)),
+          totalCredit: this.taxService.round2(Number(line.credit)),
+        });
+      }
+    }
+
+    const rows = Array.from(accountMap.values())
+      .map((row) => ({
+        ...row,
+        balance: this.taxService.round2(row.totalDebit - row.totalCredit),
+      }))
+      .sort((a, b) => a.accountCode.localeCompare(b.accountCode));
+
+    const grandTotalDebit = this.taxService.round2(
+      rows.reduce((s, r) => s + r.totalDebit, 0),
+    );
+    const grandTotalCredit = this.taxService.round2(
+      rows.reduce((s, r) => s + r.totalCredit, 0),
+    );
+
+    return {
+      companyId,
+      period: {
+        startDate: startDate?.toISOString() ?? null,
+        endDate: endDate?.toISOString() ?? null,
+      },
+      rows,
+      summary: {
+        totalDebit: grandTotalDebit,
+        totalCredit: grandTotalCredit,
+        difference: this.taxService.round2(grandTotalDebit - grandTotalCredit),
+        isBalanced: grandTotalDebit === grandTotalCredit,
+        accountCount: rows.length,
+      },
+      generatedAt: new Date(),
+    };
   }
 }

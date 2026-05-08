@@ -81,6 +81,7 @@ enum JournalType {
 enum EntryPostingStatus {
   DRAFT
   POSTED
+  REVERSED
   CANCELLED
 }
 
@@ -182,7 +183,7 @@ model TaxCode {
   id             String   @id @default(uuid())
   code           String
   name           String
-  rate           Float    @default(0)
+  rate           Decimal  @default(0) @db.Decimal(6, 4)
   isTaxInclusive Boolean  @default(true)
   isDefault      Boolean  @default(false)
   active         Boolean  @default(true)
@@ -705,18 +706,19 @@ model Journal {
 }
 
 model JournalEntry {
-  id            String             @id @default(uuid())
-  entryNo       String
-  date          DateTime
-  ref           String?
-  description   String?
-  journalId     String
-  companyId     String
-  postingStatus EntryPostingStatus @default(DRAFT)
-  createdBy     String?
-  postedAt      DateTime?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id              String             @id @default(uuid())
+  entryNo         String
+  date            DateTime
+  ref             String?
+  description     String?
+  journalId       String
+  companyId       String
+  postingStatus   EntryPostingStatus @default(DRAFT)
+  reversedEntryId String?            // 冲销凭证指向原凭证 ID
+  createdBy       String?
+  postedAt        DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   journal Journal            @relation(fields: [journalId], references: [id])
   company Company            @relation(fields: [companyId], references: [id])
@@ -724,6 +726,7 @@ model JournalEntry {
 
   @@unique([companyId, entryNo])
   @@index([companyId, journalId, date])
+  @@index([reversedEntryId])
 }
 
 model JournalEntryLine {

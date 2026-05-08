@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { FinanceDlqService } from './finance-dlq.service';
+import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
 
@@ -13,11 +14,17 @@ describe('FinanceController', () => {
     getInvoices: jest.fn(),
     recordPayment: jest.fn(),
     postInvoice: jest.fn(),
+    getJournalEntries: jest.fn(),
   };
 
   const mockFinanceDlqService = {
     list: jest.fn(),
     retryPending: jest.fn(),
+  };
+
+  const mockAccountingService = {
+    reverseJournalEntry: jest.fn(),
+    getTrialBalance: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -26,6 +33,7 @@ describe('FinanceController', () => {
       providers: [
         { provide: FinanceService, useValue: mockFinanceService },
         { provide: FinanceDlqService, useValue: mockFinanceDlqService },
+        { provide: AccountingService, useValue: mockAccountingService },
       ],
     })
       .overrideGuard(JwtAuthGuard)
@@ -127,6 +135,59 @@ describe('FinanceController', () => {
 
       expect(result).toEqual(expected);
       expect(mockFinanceDlqService.retryPending).toHaveBeenCalledWith(10);
+    });
+  });
+
+  describe('reverseJournalEntry', () => {
+    it('should reverse a journal entry', async () => {
+      const expected = { original: { id: 'je1' }, reversal: { id: 'je2' } };
+      mockAccountingService.reverseJournalEntry.mockResolvedValue(expected);
+
+      const result = await controller.reverseJournalEntry(
+        'c1',
+        { id: 'u1', email: 'test@example.com' },
+        'je1',
+        { reason: '录入错误' },
+      );
+
+      expect(result).toEqual(expected);
+      expect(mockAccountingService.reverseJournalEntry).toHaveBeenCalledWith(
+        'c1',
+        'je1',
+        'u1',
+        '录入错误',
+      );
+    });
+  });
+
+  describe('getTrialBalance', () => {
+    it('should return trial balance', async () => {
+      const expected = { rows: [], summary: { isBalanced: true } };
+      mockAccountingService.getTrialBalance.mockResolvedValue(expected);
+
+      const result = await controller.getTrialBalance('c1');
+
+      expect(result).toEqual(expected);
+      expect(mockAccountingService.getTrialBalance).toHaveBeenCalledWith(
+        'c1',
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+  });
+
+  describe('getJournalEntries', () => {
+    it('should return journal entries', async () => {
+      const expected = { data: [], total: 0 };
+      mockFinanceService.getJournalEntries.mockResolvedValue(expected);
+
+      const result = await controller.getJournalEntries(
+        'c1',
+        { page: 1, limit: 20 },
+      );
+
+      expect(result).toEqual(expected);
     });
   });
 });
