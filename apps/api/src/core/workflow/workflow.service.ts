@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 
 interface WorkflowTargetConfig {
   delegate: string;
@@ -100,7 +101,7 @@ interface WorkflowTransitionTransaction {
         action: string;
         entity: string;
         entityId: string;
-        details: Record<string, unknown>;
+        details: Prisma.InputJsonValue;
         companyId: string;
       };
     }): Promise<unknown>;
@@ -224,10 +225,11 @@ export class WorkflowService {
       whereCondition[target.companyField] = companyId;
     }
 
-    // @ts-expect-error TODO(strict): Prisma $transaction overload inference issue
     const { updatedRecord, matchedTransition }: WorkflowTransitionTxResult =
-      // @ts-expect-error TODO(strict): Prisma transaction client typing needs full Prisma.TransactionClient
-      await this.prisma.$transaction(async (tx: WorkflowTransitionTransaction): Promise<WorkflowTransitionTxResult> => {
+      await this.prisma.$transaction(
+        async (
+          tx: WorkflowTransitionTransaction,
+        ): Promise<WorkflowTransitionTxResult> => {
           const txDelegate = tx[target.delegate as WorkflowDelegateName];
 
           if (!txDelegate) {
@@ -282,7 +284,7 @@ export class WorkflowService {
                 to: matched.toState.value,
                 note,
                 data: extraData ?? {},
-              },
+              } as unknown as Prisma.InputJsonValue,
               companyId: companyId || 'system',
             },
           });

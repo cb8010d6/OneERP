@@ -22,7 +22,7 @@ const localStorageMock = (() => {
   };
 })();
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
-Object.defineProperty(global, 'window', { value: { location: { href: '' }, addEventListener: jest.fn(), removeEventListener: jest.fn() }, writable: true });
+
 
 /* ---------- Mock API functions ---------- */
 const mockFetchSchema = jest.fn();

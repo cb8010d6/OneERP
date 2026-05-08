@@ -11,9 +11,9 @@
 
 // zustand 需要通过 create 创建 store，mock localStorage
 const localStorageMock = (() => {
-  let store: Record<string, string> = {};
+  let store: Record<string, string | null> = {};
   return {
-    getItem: jest.fn((key: string) => store[key] ?? null),
+    getItem: jest.fn((key: string): string | null => store[key] ?? null),
     setItem: jest.fn((key: string, value: string) => { store[key] = value; }),
     removeItem: jest.fn((key: string) => { delete store[key]; }),
     clear: jest.fn(() => { store = {}; }),
@@ -24,11 +24,7 @@ const localStorageMock = (() => {
 
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
 
-// Mock window to simulate browser environment for getInitialAuthState
-Object.defineProperty(global, 'window', {
-  value: { location: { href: '' } },
-  writable: true,
-});
+// JSDOM provides window natively.
 
 describe('authStore', () => {
   // We need to require the module fresh each time to reset zustand state
@@ -40,7 +36,7 @@ describe('authStore', () => {
     jest.clearAllMocks();
 
     // 必须在每次重置模块后重新 require，因为 zustand create 在模块加载时执行
-    const mod = require('../store/authStore');
+    const mod = require('../authStore');
     useAuthStore = mod.useAuthStore;
   });
 
@@ -122,17 +118,14 @@ describe('authStore', () => {
       const expiredToken = `${header}.${payload}.fake-signature`;
 
       // 模拟 localStorage 中有过期 token
-      localStorageMock.getItem.mockImplementation((key: string) => {
-        if (key === 'token') return expiredToken;
-        if (key === 'user') return JSON.stringify({ id: 'u1', username: 'alice', role: 'admin' });
-        if (key === 'companies') return JSON.stringify([{ id: 'c1', name: 'Corp A', role: 'owner' }]);
-        if (key === 'currentCompanyId') return 'c1';
-        return null;
-      });
+      localStorageMock.setItem('token', expiredToken);
+      localStorageMock.setItem('user', JSON.stringify({ id: 'u1', username: 'alice', role: 'admin' }));
+      localStorageMock.setItem('companies', JSON.stringify([{ id: 'c1', name: 'Corp A', role: 'owner' }]));
+      localStorageMock.setItem('currentCompanyId', 'c1');
 
       // 重新加载模块来触发 getInitialAuthState
       jest.resetModules();
-      const mod = require('../store/authStore');
+      const mod = require('../authStore');
       const freshStore = mod.useAuthStore;
 
       // 过期 token 应该被清除

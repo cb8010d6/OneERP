@@ -17,7 +17,7 @@ const mockSetState = jest.fn();
 const mockLogout = jest.fn();
 const mockSetCurrentCompany = jest.fn();
 
-jest.mock('../store/authStore', () => ({
+jest.mock('../../store/authStore', () => ({
   useAuthStore: {
     getState: mockGetState,
     setState: mockSetState,
@@ -54,7 +54,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
 
     // 使用 api 拦截器验证: 先注册一个 adapter 捕获 config
     const axios = require('axios');
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     // 添加一个 mock adapter 来捕获最终的请求配置
     let capturedConfig: any = null;
@@ -72,7 +72,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
 
   it('合法分页参数不被修改', () => {
     const axios = require('axios');
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
@@ -87,7 +87,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
   });
 
   it('请求拦截器注入 Authorization header', () => {
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
@@ -101,7 +101,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
   });
 
   it('请求拦截器注入 x-company-id header', () => {
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
@@ -115,7 +115,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
   });
 
   it('auth 请求不注入 x-company-id', () => {
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
@@ -138,7 +138,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
       logout: mockLogout,
     });
 
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     return api.get('/v1/resource/test').catch((err: any) => {
       expect(err.message).toContain('缺少有效登录态');
@@ -147,7 +147,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
   });
 
   it('401 响应触发 logout', () => {
-    const api = require('../lib/api').default;
+    const api = require('../api').default;
 
     api.defaults.adapter = () =>
       Promise.reject({
