@@ -1,0 +1,6 @@
+feat(web): implement RBAC context and conditional UI rendering
+
+- Added `PermissionsContext` and `usePermissions` hook
+- Updated `AuthStore` to store user role permissions correctly
+- Integrated `hasAnyPermission` check with `DynamicView` action buttons
+- Only users with appropriate permissions (e.g., `purchase:cancel`) will see action buttons

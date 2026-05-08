@@ -118,7 +118,7 @@ jobs:
   deploy:
     needs: [build-api, build-web]
     # 仅 main 分支 push 或手动触发时执行部署
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && (needs.build-api.result == 'success' || needs.build-web.result == 'success') }}
     runs-on: ubuntu-latest
 
     environment:
