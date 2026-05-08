@@ -22,7 +22,7 @@ const localStorageMock = (() => {
   };
 })();
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
-Object.defineProperty(global, 'window', { value: { location: { href: '' }, addEventListener: jest.fn(), removeEventListener: jest.fn() }, writable: true });
+// jsdom already provides window — no need to redefine it
 
 /* ---------- Mock API functions ---------- */
 const mockFetchSchema = jest.fn();
@@ -40,6 +40,7 @@ jest.mock('@/lib/dynamic-resource', () => ({
 }));
 
 jest.mock('@/lib/api', () => ({
+  __esModule: true,
   default: { get: (...a: any[]) => mockApiGet(...a), post: (...a: any[]) => mockApiPost(...a) },
 }));
 
@@ -123,7 +124,7 @@ describe('DynamicView', () => {
   it('加载中显示 skeleton', () => {
     mockFetchSchema.mockReturnValue(new Promise(() => {}));
     render(<DynamicView modelName="Product" />);
-    expect(screen.getByText('元数据加载中...')).toBeInTheDocument();
+    expect(screen.getByText('加载元数据中...')).toBeInTheDocument();
   });
 
   it('schema 加载成功后显示标题', async () => {

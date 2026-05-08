@@ -73,6 +73,15 @@ export class OrdersController {
     return this.ordersService.getOrderById(orderId, companyId);
   }
 
+  @Get(':id/stock-transactions')
+  @ApiOperation({ summary: '获取订单关联的库存过账与发货记录' })
+  async getOrderStockTransactions(
+    @Param('id') orderId: string,
+    @CurrentCompany() companyId: string,
+  ) {
+    return this.ordersService.getOrderStockTransactions(orderId, companyId);
+  }
+
   @Get(':id/timeline')
   @ApiOperation({ summary: '获取订单时间线（审计与流转记录）' })
   async getOrderTimeline(

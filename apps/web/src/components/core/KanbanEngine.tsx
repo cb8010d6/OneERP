@@ -48,11 +48,10 @@ export function KanbanEngine({
       ? kanban.columns
       : buildColumnsFromData(data, kanban.statusField);
   }, [kanban, data]);
-  const transitionForms = kanban?.transitionForms ?? {};
-
   const activeFields = useMemo(() => {
     if (!kanban) return [];
     if (!pendingTransition) return [];
+    const transitionForms = kanban.transitionForms ?? {};
     const configured = transitionForms[pendingTransition.toStatus] ?? [];
     if (configured.length) return configured;
     if (pendingTransition.toStatus === 'SHIPPED') {
@@ -63,7 +62,7 @@ export function KanbanEngine({
       ];
     }
     return [];
-  }, [kanban, pendingTransition, transitionForms]);
+  }, [kanban, pendingTransition]);
 
   const handleDragEnd = (result: DropResult) => {
     const { source, destination, draggableId } = result;
@@ -230,9 +229,9 @@ export function KanbanEngine({
                     setPendingTransition(null);
                     setTransitionData({});
                     onTransitionSuccess?.();
-                  } catch (error: any) {
+                  } catch (error: unknown) {
                     onRollbackTransition?.(optimisticId, optimisticFrom);
-                    toast.error(error?.response?.data?.message || '流转失败');
+                    toast.error(getErrorMessage(error) || '流转失败');
                   } finally {
                     setSubmitting(false);
                   }
@@ -275,4 +274,23 @@ function toDisplayText(value: unknown) {
     return String(value);
   }
   return '';
+}
+
+function getErrorMessage(error: unknown) {
+  if (!error || typeof error !== 'object') {
+    return '';
+  }
+
+  const response = (error as { response?: unknown }).response;
+  if (!response || typeof response !== 'object') {
+    return '';
+  }
+
+  const data = (response as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') {
+    return '';
+  }
+
+  const message = (data as { message?: unknown }).message;
+  return typeof message === 'string' ? message : '';
 }

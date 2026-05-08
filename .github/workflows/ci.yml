@@ -82,9 +82,8 @@ jobs:
         run: npm ci
         working-directory: apps/web
 
-      - name: Run Prisma migrations
-        run: npx prisma migrate deploy --schema=./prisma/schema.prisma
-        working-directory: apps/api
+      - name: Validate Prisma schema
+        run: npm --prefix apps/api run prisma:validate
 
       # Policy: ``npm run validate`` runs format -> lint -> typecheck -> test -> build.
       # The lint step must NOT use --fix in CI; developers use ``npm run lint:fix`` locally.

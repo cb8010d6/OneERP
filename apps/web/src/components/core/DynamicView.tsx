@@ -10,6 +10,7 @@ import { ListEngine } from './ListEngine';
 import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
+import { usePermissions } from '@/lib/permissions-context';
 
 type ViewMode = 'list' | 'kanban';
 
@@ -37,6 +38,8 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const [commentInput, setCommentInput] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const { hasAnyPermission } = usePermissions();
 
   const initialFormValue = useMemo(() => {
     if (!schema) return {};
@@ -147,7 +150,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     };
 
     void fetchTimeline();
-  }, [mode, modelName, selected?.id]);
+  }, [isFormOpen, mode, modelName, selected?.id]);
 
   const submitComment = async () => {
     const selectedId = selected?.id;
@@ -169,7 +172,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     }
   };
 
-  const saveForm = async () => {
+  const saveForm = useCallback(async () => {
     if (!schema || !selected || saving) {
       return;
     }
@@ -191,7 +194,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     } finally {
       setSaving(false);
     }
-  };
+  }, [loadList, modelName, saving, schema, selected]);
 
   useEffect(() => {
     const onShortcutSave = () => {
@@ -204,20 +207,99 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     return () => {
       window.removeEventListener('erp:shortcut-save', onShortcutSave as EventListener);
     };
-  }, [mode, selected, schema]);
+  }, [isFormOpen, saveForm]);
+
+  const executeAction = async (action: NonNullable<UiSchema['actions']>[number]) => {
+    const recordId = selected?.id;
+    if (!recordId) return;
+
+    if (action.prompt) {
+      const result = window.prompt(action.prompt);
+      if (result === null) return;
+      // We could send the prompt result in the body if needed, e.g. { reason: result }
+      // For now, let's keep it simple or implement specific logic if required.
+    } else {
+      if (!window.confirm(`确定要执行 [${action.label}] 操作吗？`)) {
+        return;
+      }
+    }
+
+    setActionLoading(action.name);
+    try {
+      const url = action.endpoint.replace(':id', String(recordId));
+      const method = (action.method || 'POST').toLowerCase() as 'post' | 'put' | 'delete';
+      await api[method](url);
+      
+      // Refresh the form data and list
+      if (typeof recordId === 'string') {
+        const response = await api.get(`/v1/resource/${modelName}/${recordId}`);
+        setSelected(response.data as Record<string, unknown>);
+      }
+      await loadList();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '操作失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const evaluateActionVisibility = (action: NonNullable<UiSchema['actions']>[number]) => {
+    if (!selected || !selected.id) return false; // Only show actions on existing records
+
+    if (action.requiresPermission && action.requiresPermission.length > 0) {
+      if (!hasAnyPermission(action.requiresPermission)) {
+        return false;
+      }
+    }
+
+    if (!action.visibility) return true;
+    
+    if (action.visibility.startsWith('eval:')) {
+      const expression = action.visibility.replace('eval:', '').trim();
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func, @typescript-eslint/no-unsafe-argument
+        const func = new Function('doc', `return ${expression}`) as (doc: Record<string, unknown>) => unknown;
+        return Boolean(func(selected));
+      } catch (e) {
+        return false;
+      }
+    }
+    return true;
+  };
 
   if (error) {
     return (
-      <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-        {error}
+      <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1">
+            <p className="text-sm font-medium text-rose-800">加载失败</p>
+            <p className="mt-1 text-sm text-rose-600">{error}</p>
+            <p className="mt-2 text-xs text-rose-500">
+              模型: {modelName} · 请检查网络连接或联系管理员
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              void loadSchema();
+            }}
+            className="shrink-0 rounded-md bg-rose-100 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-200"
+          >
+            重试
+          </button>
+        </div>
       </div>
     );
   }
 
   if (!schema) {
     return (
-      <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
-        元数据加载中...
+      <div className="rounded-xl border border-gray-200 bg-white px-4 py-6">
+        <div className="flex items-center gap-3">
+          <div className="h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+          <span className="text-sm text-gray-500">加载元数据中...</span>
+        </div>
       </div>
     );
   }
@@ -320,11 +402,29 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-10">
           <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-7">
-            <div className="mb-3 flex justify-end">
+            <div className="mb-3 flex justify-end gap-2">
+              {schema.actions?.filter(evaluateActionVisibility).map((action) => (
+                <button
+                  key={action.name}
+                  type="button"
+                  onClick={() => void executeAction(action)}
+                  disabled={Boolean(actionLoading) || saving}
+                  className={`rounded-md px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    action.style === 'danger'
+                      ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
+                      : action.style === 'primary'
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {actionLoading === action.name ? '执行中...' : action.label}
+                </button>
+              ))}
+              <div className="w-px bg-gray-200 mx-1" /> {/* Divider between custom actions and save */}
               <button
                 type="button"
                 onClick={() => void saveForm()}
-                disabled={saving}
+                disabled={saving || Boolean(actionLoading)}
                 className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? '保存中...' : '保存 (Ctrl+Enter)'}

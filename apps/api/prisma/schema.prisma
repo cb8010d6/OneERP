@@ -22,7 +22,7 @@ model Company {
   taxId       String? // 税号
   address     String? // 公司地址
   phone       String? // 联系电话
-  legalPerson String? // 法定代表人
+  legalPerson String? // 法定代表�?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -44,7 +44,11 @@ model Company {
   journals    Journal[]
   journalEntries JournalEntry[]
   eventDlqRecords EventDlq[]
-  taxCodes    TaxCode[]
+  taxCodes         TaxCode[]
+  purchaseInvoices PurchaseInvoice[]
+  purchaseOrders PurchaseOrder[]
+  goodsReceipts  GoodsReceipt[]
+  stockPickings  StockPicking[]
 }
 
 enum PartnerType {
@@ -77,7 +81,14 @@ enum JournalType {
 enum EntryPostingStatus {
   DRAFT
   POSTED
+  REVERSED
   CANCELLED
+}
+
+
+enum TaxNature {
+  OUTPUT // 销项税
+  INPUT  // 进项�?
 }
 
 model User {
@@ -89,16 +100,31 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  companies  UserCompanyRole[]
-  orders     Order[]           @relation("UserOrders")
-  FileRecord FileRecord[]
-  WorkReport WorkReport[]
-  auditLogs  AuditLog[]
+  companies     UserCompanyRole[]
+  orders        Order[]           @relation("UserOrders")
+  FileRecord    FileRecord[]
+  WorkReport    WorkReport[]
+  auditLogs     AuditLog[]
+  refreshTokens RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
 }
 
 model Role {
   id          String   @id @default(uuid())
-  name        String // "ADMIN", "SALES", "MANAGER" 等
+  name        String // "ADMIN", "SALES", "MANAGER" �?
   permissions String[] // JSON or Array 存放详细权限点，例如 ["order:read", "order:write"]
 
   users UserCompanyRole[]
@@ -145,6 +171,9 @@ model Partner {
   company Company @relation(fields: [companyId], references: [id])
   orders  Order[]
   journalEntryLines JournalEntryLine[]
+  purchaseInvoices PurchaseInvoice[]
+  purchaseOrders PurchaseOrder[]
+  goodsReceipts    GoodsReceipt[]
 
   @@unique([companyId, code])
   @@index([companyId, type])
@@ -154,20 +183,27 @@ model TaxCode {
   id             String   @id @default(uuid())
   code           String
   name           String
-  rate           Float    @default(0)
+  rate           Decimal  @default(0) @db.Decimal(6, 4)
   isTaxInclusive Boolean  @default(true)
   isDefault      Boolean  @default(false)
   active         Boolean  @default(true)
+  taxNature        TaxNature @default(OUTPUT)
   accountId      String?
+  outputAccountId  String?
+  inputAccountId   String?
   companyId      String
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   company   Company  @relation(fields: [companyId], references: [id])
-  account   Account? @relation(fields: [accountId], references: [id])
+  account         Account? @relation(fields: [accountId], references: [id])
+  outputAccount   Account? @relation("OutputTaxAccount", fields: [outputAccountId], references: [id])
+  inputAccount    Account? @relation("InputTaxAccount", fields: [inputAccountId], references: [id])
   orders    Order[]
   orderItems OrderItem[]
   invoices  Invoice[]
+  purchaseInvoices PurchaseInvoice[]
+  purchaseInvoiceLines PurchaseInvoiceLine[]
 
   @@unique([companyId, code])
   @@index([companyId, active])
@@ -185,11 +221,11 @@ model Order {
   salesId      String // 挂单销售员
   companyId    String
   status       String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
-  totalAmount  Float     @default(0)
-  subTotal     Float     @default(0)
-  taxTotal     Float     @default(0)
+  totalAmount  Decimal   @default(0) @db.Decimal(19, 4)
+  subTotal     Decimal   @default(0) @db.Decimal(19, 4)
+  taxTotal     Decimal   @default(0) @db.Decimal(19, 4)
   taxCodeId    String?
-  aiSummary    Json? // 存放 AI 抓取的客户需求 JSON 结构
+  aiSummary    Json? // 存放 AI 抓取的客户需�?JSON 结构
   customAttributes Json?
   expectedDate DateTime? // 预计交付日期
   notes        String? // 备注
@@ -209,12 +245,12 @@ model Order {
 model OrderItem {
   id         String @id @default(uuid())
   orderId    String
-  productId  String // 关联的产品/模型名称
+  productId  String // 关联的产�?模型名称
   quantity   Int
-  unitPrice  Float
-  totalPrice Float
-  subTotal   Float   @default(0)
-  taxAmount  Float   @default(0)
+  unitPrice  Decimal  @db.Decimal(19, 4)
+  totalPrice Decimal  @db.Decimal(19, 4)
+  subTotal   Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount  Decimal  @default(0) @db.Decimal(19, 4)
   taxRate    Float   @default(0)
   taxCodeId  String?
   customAttributes Json?
@@ -224,12 +260,12 @@ model OrderItem {
 }
 
 // ==========================================
-// 智能仓储与物料管理
+// 智能仓储与物料管�?
 // ==========================================
 
 model Warehouse {
   id        String @id @default(uuid())
-  name      String // "原料库", "成品库", "零件半成品库"
+  name      String // "原料�?, "成品�?, "零件半成品库"
   type      String // "MATERIAL", "FINISHED", "PART"
   companyId String
 
@@ -245,7 +281,7 @@ model StockLocation {
   isActive    Boolean  @default(true)
   companyId   String
   warehouseId String?
-  parentId    String?  // 自引用父库位，支持 华南仓/货架区/A01层 层次结构
+  parentId    String?  // 自引用父库位，支�?华南�?货架�?A01�?层次结构
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -256,6 +292,11 @@ model StockLocation {
   quants               StockQuant[]
   outgoingTransactions InventoryTransaction[] @relation("StockMoveSourceLocation")
   incomingTransactions InventoryTransaction[] @relation("StockMoveDestinationLocation")
+  goodsReceiptLines    GoodsReceiptLine[]
+  sourcePickings       StockPicking[] @relation("PickingSourceLocation")
+  destPickings         StockPicking[] @relation("PickingDestLocation")
+  sourceMoves          StockMove[]    @relation("PickingSourceLocation")
+  destMoves            StockMove[]    @relation("PickingDestLocation")
 
   @@unique([companyId, code])
   @@index([companyId, warehouseId])
@@ -278,6 +319,10 @@ model Material {
   inventoryTransactions InventoryTransaction[]
   products              Product[]
   bomLines              BomLine[]
+  purchaseOrderLines    PurchaseOrderLine[]
+  purchaseInvoiceLines PurchaseInvoiceLine[]
+  goodsReceiptLines    GoodsReceiptLine[]
+  stockMoves           StockMove[]
 }
 
 model ProductCategory {
@@ -317,6 +362,9 @@ model Product {
   category ProductCategory? @relation(fields: [categoryId], references: [id])
   material Material?        @relation(fields: [materialId], references: [id])
   boms     Bom[]
+  purchaseOrderLines PurchaseOrderLine[]
+  goodsReceiptLines  GoodsReceiptLine[]
+  stockMoves         StockMove[]
 
   @@unique([companyId, sku])
   @@index([companyId, categoryId])
@@ -421,13 +469,15 @@ model InventoryTransaction {
   batchNo           String?
   operatorId        String
   companyId         String
-  referenceNo       String? // 关联单号（订单号/采购号等）
+  referenceNo       String? // 关联单号（订单号/采购号等�?
   note              String?
+  stockMoveId       String?
   createdAt         DateTime @default(now())
 
-  material        Material       @relation(fields: [materialId], references: [id])
-  sourceLocation  StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
-  destLocation    StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
+  material       Material       @relation(fields: [materialId], references: [id])
+  sourceLocation StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
+  stockMove      StockMove?     @relation(fields: [stockMoveId], references: [id], onDelete: SetNull)
+  destLocation   StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
 
   @@index([companyId, materialId])
   @@index([sourceLocationId])
@@ -521,10 +571,12 @@ model Invoice {
   id         String    @id @default(uuid())
   invoiceNo  String    @unique
   orderId    String
-  amount     Float
-  subTotal   Float    @default(0)
-  taxAmount  Float    @default(0)
+  amount     Decimal  @db.Decimal(19, 4)
+  subTotal   Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount  Decimal  @default(0) @db.Decimal(19, 4)
   taxCodeId  String?
+  taxRate    Decimal  @default(0) @db.Decimal(6, 4)
+  taxNature  TaxNature @default(OUTPUT)
   status     String // "UNPAID", "PARTIAL", "PAID"
   postingStatus EntryPostingStatus @default(DRAFT)
   companyId  String
@@ -539,11 +591,77 @@ model Invoice {
 model Payment {
   id          String   @id @default(uuid())
   invoiceId   String
-  amount      Float
+  amount      Decimal  @db.Decimal(19, 4)
   paymentDate DateTime @default(now())
   method      String // "BANK_TRANSFER", "CASH", "WECHAT", "ALIPAY"
 
   invoice Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+model PurchaseInvoice {
+  id              String    @id @default(uuid())
+  invoiceNo       String    @unique
+  partnerId       String
+  receiptId       String?          // 关联入库�?
+  amount          Decimal  @db.Decimal(19, 4)
+  subTotal        Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount       Decimal  @default(0) @db.Decimal(19, 4)
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
+  taxCodeId       String?
+  taxNature       TaxNature @default(INPUT)
+  status          String // "DRAFT", "UNPAID", "PARTIAL", "PAID"
+  matchStatus  ThreeWayMatchStatus @default(NOT_APPLICABLE)
+  postingStatus   EntryPostingStatus @default(DRAFT)
+  companyId       String
+  dueDate         DateTime?
+  issuedDate      DateTime  @default(now())
+  notes           String?
+
+  partner    Partner          @relation(fields: [partnerId], references: [id])
+  company    Company          @relation(fields: [companyId], references: [id])
+  taxCode    TaxCode?         @relation(fields: [taxCodeId], references: [id])
+  receipt    GoodsReceipt?    @relation(fields: [receiptId], references: [id])
+  lines      PurchaseInvoiceLine[]
+  payments   VendorBillPayment[]
+
+  @@index([companyId, status])
+  @@index([partnerId])
+  @@index([receiptId])
+}
+
+model PurchaseInvoiceLine {
+  id              String  @id @default(uuid())
+  invoiceId       String
+  materialId      String
+  quantity        Float
+  unitPrice       Decimal  @db.Decimal(19, 4)
+  lineTotal       Decimal  @default(0) @db.Decimal(19, 4)
+  subTotal        Decimal  @default(0) @db.Decimal(19, 4)
+  taxAmount       Decimal  @default(0) @db.Decimal(19, 4)
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
+  taxCodeId       String?
+  accountId       String?
+  description     String?
+
+  invoice  PurchaseInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  material Material        @relation(fields: [materialId], references: [id])
+  taxCode  TaxCode?        @relation(fields: [taxCodeId], references: [id])
+  account  Account?        @relation(fields: [accountId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model VendorBillPayment {
+  id              String   @id @default(uuid())
+  invoiceId       String
+  amount          Decimal  @db.Decimal(19, 4)
+  paymentDate     DateTime @default(now())
+  method          String // "BANK_TRANSFER", "CASH", "CHECK"
+  notes           String?
+
+  invoice PurchaseInvoice @relation(fields: [invoiceId], references: [id])
+
+  @@index([invoiceId])
 }
 
 model Account {
@@ -561,7 +679,10 @@ model Account {
   children Account[] @relation("AccountTree")
   company  Company   @relation(fields: [companyId], references: [id])
   lines    JournalEntryLine[]
-  taxCodes TaxCode[]
+  purchaseInvoiceLines PurchaseInvoiceLine[]
+  taxCodes         TaxCode[]
+  outputTaxCodes   TaxCode[] @relation("OutputTaxAccount")
+  inputTaxCodes    TaxCode[] @relation("InputTaxAccount")
 
   @@unique([companyId, code])
   @@index([companyId, parentId])
@@ -585,18 +706,19 @@ model Journal {
 }
 
 model JournalEntry {
-  id            String             @id @default(uuid())
-  entryNo       String
-  date          DateTime
-  ref           String?
-  description   String?
-  journalId     String
-  companyId     String
-  postingStatus EntryPostingStatus @default(DRAFT)
-  createdBy     String?
-  postedAt      DateTime?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id              String             @id @default(uuid())
+  entryNo         String
+  date            DateTime
+  ref             String?
+  description     String?
+  journalId       String
+  companyId       String
+  postingStatus   EntryPostingStatus @default(DRAFT)
+  reversedEntryId String?            // 冲销凭证指向原凭证 ID
+  createdBy       String?
+  postedAt        DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   journal Journal            @relation(fields: [journalId], references: [id])
   company Company            @relation(fields: [companyId], references: [id])
@@ -604,6 +726,7 @@ model JournalEntry {
 
   @@unique([companyId, entryNo])
   @@index([companyId, journalId, date])
+  @@index([reversedEntryId])
 }
 
 model JournalEntryLine {
@@ -612,8 +735,8 @@ model JournalEntryLine {
   lineNo         Int
   accountId      String
   partnerId      String?
-  debit          Float    @default(0)
-  credit         Float    @default(0)
+  debit          Decimal  @default(0) @db.Decimal(19, 4)
+  credit         Decimal  @default(0) @db.Decimal(19, 4)
   memo           String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -646,6 +769,196 @@ model EventDlq {
   @@index([status, nextRetryAt])
   @@index([eventName])
   @@index([eventName, idempotencyKey])
+}
+
+
+// ==========================================
+// 采购与入库模�?
+// ==========================================
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  CONFIRMED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CLOSED
+  CANCELLED
+}
+
+enum GoodsReceiptStatus {
+  DRAFT
+  CONFIRMED
+  CLOSED
+  CANCELLED
+}
+
+enum PickingType {
+  INBOUND
+  OUTBOUND
+  INTERNAL_TRANSFER
+}
+
+enum PickingStatus {
+  DRAFT
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+enum MoveStatus {
+  DRAFT
+  CONFIRMED
+  DONE
+  CANCELLED
+}
+
+enum ThreeWayMatchStatus {
+  MATCHED
+  MISMATCH
+  PENDING_REVIEW
+  NOT_APPLICABLE
+}
+
+
+model PurchaseOrder {
+  id           String             @id @default(uuid())
+  orderNo      String             @unique
+  partnerId    String
+  status       PurchaseOrderStatus @default(DRAFT)
+  orderDate    DateTime           @default(now())
+  expectedDate DateTime?
+  notes        String?
+  subTotal     Decimal            @default(0) @db.Decimal(19, 4)
+  taxTotal     Decimal            @default(0) @db.Decimal(19, 4)
+  totalAmount  Decimal            @default(0) @db.Decimal(19, 4)
+  companyId    String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  company  Company            @relation(fields: [companyId], references: [id])
+  partner  Partner            @relation(fields: [partnerId], references: [id])
+  lines    PurchaseOrderLine[]
+  receipts GoodsReceipt[]
+
+  @@index([companyId, status])
+  @@index([partnerId])
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid())
+  orderId         String
+  lineNo          Int     @default(1)
+  productId       String?
+  materialId      String?
+  description     String?
+  quantity        Float
+  receivedQuantity Float  @default(0)
+  unitPrice       Decimal  @db.Decimal(19, 4)
+  taxRate         Decimal  @default(0) @db.Decimal(6, 4)
+  taxAmount       Decimal  @default(0) @db.Decimal(19, 4)
+  subTotal        Decimal  @default(0) @db.Decimal(19, 4)
+  totalAmount     Decimal  @default(0) @db.Decimal(19, 4)
+  companyId       String
+  uom             String  @default("pcs")
+
+  order    PurchaseOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product  Product?      @relation(fields: [productId], references: [id])
+  material Material?     @relation(fields: [materialId], references: [id])
+
+  @@index([orderId])
+}
+
+model GoodsReceipt {
+  id           String             @id @default(uuid())
+  receiptNo    String             @unique
+  orderId      String?
+  partnerId    String
+  status       GoodsReceiptStatus @default(DRAFT)
+  receiptDate  DateTime           @default(now())
+  notes        String?
+  companyId    String
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  company  Company           @relation(fields: [companyId], references: [id])
+  partner  Partner           @relation(fields: [partnerId], references: [id])
+  order    PurchaseOrder?    @relation(fields: [orderId], references: [id])
+  lines    GoodsReceiptLine[]
+  invoices PurchaseInvoice[]
+
+  @@index([companyId, status])
+  @@index([partnerId])
+}
+
+model GoodsReceiptLine {
+  id          String  @id @default(uuid())
+  receiptId   String
+  productId   String
+  materialId  String
+  locationId  String
+  quantity    Float
+  batchNo     String?
+
+  receipt  GoodsReceipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+  material Material      @relation(fields: [materialId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+
+  @@index([receiptId])
+}
+
+model StockPicking {
+  id             String      @id @default(uuid())
+  pickingNo      String      @unique
+  type           PickingType
+  status         PickingStatus @default(DRAFT)
+  scheduledDate  DateTime?
+  completedDate  DateTime?
+  sourceLocationId String?
+  destLocationId   String?
+  referenceType    String?
+  referenceId      String?
+  notes          String?
+  companyId      String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  company        Company        @relation(fields: [companyId], references: [id])
+  sourceLocation StockLocation? @relation("PickingSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation   StockLocation? @relation("PickingDestLocation", fields: [destLocationId], references: [id])
+  moves          StockMove[]
+
+  @@index([companyId, status])
+  @@index([companyId, referenceType, referenceId])
+}
+
+model StockMove {
+  id             String      @id @default(uuid())
+  pickingId      String
+  lineNo         Int         @default(1)
+  productId      String?
+  materialId     String
+  quantity       Float
+  quantityDone   Float       @default(0)
+  sourceLocationId String?
+  destLocationId   String?
+  status         MoveStatus  @default(DRAFT)
+  batchNo        String?
+  companyId      String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  picking        StockPicking  @relation(fields: [pickingId], references: [id], onDelete: Cascade)
+  product        Product?      @relation(fields: [productId], references: [id])
+  material       Material      @relation(fields: [materialId], references: [id])
+  sourceLocation StockLocation? @relation("PickingSourceLocation", fields: [sourceLocationId], references: [id])
+  destLocation   StockLocation? @relation("PickingDestLocation", fields: [destLocationId], references: [id])
+  inventoryTransactions InventoryTransaction[]
+
+  @@index([pickingId])
+  @@index([companyId, materialId])
 }
 
 model AuditLog {

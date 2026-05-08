@@ -5,7 +5,8 @@ export type UiFieldType =
   | 'date'
   | 'select'
   | 'text'
-  | 'reference';
+  | 'reference'
+  | 'subtable';
 
 export interface UiFieldOption {
   label: string;
@@ -19,6 +20,12 @@ export interface UiFieldReference {
   relationField?: string;
 }
 
+export interface UiSubtableConfig {
+  fields: UiFieldSchema[];
+  minRows?: number;
+  maxRows?: number;
+}
+
 export interface UiFieldSchema {
   name: string;
   label: string;
@@ -27,6 +34,7 @@ export interface UiFieldSchema {
   custom?: boolean;
   options?: UiFieldOption[];
   reference?: UiFieldReference;
+  subtable?: UiSubtableConfig;
 }
 
 export interface UiFormSection {
@@ -56,6 +64,18 @@ export interface UiKanbanView {
   columns: UiKanbanColumn[];
 }
 
+export interface UiAction {
+  name: string;
+  label: string;
+  icon?: string;
+  style?: 'primary' | 'danger' | 'default';
+  endpoint: string;
+  method?: 'POST' | 'PUT' | 'DELETE';
+  visibility?: string;
+  requiresPermission?: string[];
+  prompt?: string;
+}
+
 export interface UiSchema {
   model: string;
   label: string;
@@ -67,4 +87,5 @@ export interface UiSchema {
     list: UiListView;
     kanban?: UiKanbanView;
   };
+  actions?: UiAction[];
 }

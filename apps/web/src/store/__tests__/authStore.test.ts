@@ -13,7 +13,7 @@
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
   return {
-    getItem: jest.fn((key: string) => store[key] ?? null),
+    getItem: jest.fn<string | null, [string]>((key: string) => store[key] ?? null),
     setItem: jest.fn((key: string, value: string) => { store[key] = value; }),
     removeItem: jest.fn((key: string) => { delete store[key]; }),
     clear: jest.fn(() => { store = {}; }),
@@ -24,11 +24,7 @@ const localStorageMock = (() => {
 
 Object.defineProperty(global, 'localStorage', { value: localStorageMock });
 
-// Mock window to simulate browser environment for getInitialAuthState
-Object.defineProperty(global, 'window', {
-  value: { location: { href: '' } },
-  writable: true,
-});
+// jsdom already provides window — no need to redefine it
 
 describe('authStore', () => {
   // We need to require the module fresh each time to reset zustand state
@@ -40,7 +36,7 @@ describe('authStore', () => {
     jest.clearAllMocks();
 
     // 必须在每次重置模块后重新 require，因为 zustand create 在模块加载时执行
-    const mod = require('../store/authStore');
+    const mod = require('../authStore');
     useAuthStore = mod.useAuthStore;
   });
 
@@ -132,7 +128,7 @@ describe('authStore', () => {
 
       // 重新加载模块来触发 getInitialAuthState
       jest.resetModules();
-      const mod = require('../store/authStore');
+      const mod = require('../authStore');
       const freshStore = mod.useAuthStore;
 
       // 过期 token 应该被清除

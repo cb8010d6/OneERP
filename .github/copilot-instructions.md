@@ -16,9 +16,13 @@
 
 ## 必读文档
 
+- `AGENTS.md`
+- `docs/README.md`
+- `docs/architecture/ARCHITECTURE.md`
+- `docs/architecture/DEVELOPMENT_WORKFLOW.md`
 - `docs/architecture/STANDARDS.md`
+- `docs/architecture/QUALITY_GATES.md`
 - `docs/plans/PROJECT_PLAN_AND_STATUS.md`
-- `docs/plans/EXECUTION_PLAN.md`
 - `docs/plans/CORE_MODULES_DEV_PLAN.md`
 
 ## 后端开发规则
@@ -54,18 +58,19 @@
 
 ## 提交前检查
 
-在仓库根目录执行:
+在仓库根目录优先执行:
 
 ```bash
-npm run lint
-npm run test
+npm run validate
 ```
 
-如果某个子应用未配置测试，至少确保可构建:
+定位问题时可拆分执行:
 
 ```bash
-cd apps/api && npm run build
-cd ../web && npm run build
+npm run typecheck
+npm run lint
+npm run test
+npm run build
 ```
 
 ## PR 要求

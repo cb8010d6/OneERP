@@ -1,4 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
+import { TaxNature } from '@prisma/client';
 import { FinanceService } from './finance.service';
 
 type MockPrisma = {
@@ -13,12 +14,20 @@ type MockPrisma = {
   };
   payment: { create: jest.Mock };
   auditLog: { create: jest.Mock };
+  account: { findFirst: jest.Mock };
   $transaction: jest.Mock;
 };
 
 type MockTx = {
   payment: { create: jest.Mock };
   invoice: { update: jest.Mock };
+};
+
+const mockTaxService = {
+  round2: jest.fn((v: number) => Math.round((v + Number.EPSILON) * 100) / 100),
+  resolveTaxCode: jest.fn(),
+  calcTaxFromTotal: jest.fn(),
+  getTaxAccountId: jest.fn(),
 };
 
 describe('FinanceService', () => {
@@ -34,6 +43,7 @@ describe('FinanceService', () => {
     },
     payment: { create: jest.fn() },
     auditLog: { create: jest.fn() },
+    account: { findFirst: jest.fn() },
     $transaction: jest.fn(),
   };
 
@@ -56,6 +66,9 @@ describe('FinanceService', () => {
       eventEmitter as unknown as ConstructorParameters<
         typeof FinanceService
       >[1],
+      mockTaxService as unknown as ConstructorParameters<
+        typeof FinanceService
+      >[2],
     );
   });
 
@@ -65,7 +78,30 @@ describe('FinanceService', () => {
 
   describe('createInvoice', () => {
     it('should create an invoice when order exists', async () => {
-      prisma.order.findFirst.mockResolvedValue({ id: 'o1', companyId: 'c1' });
+      prisma.order.findFirst.mockResolvedValue({
+        id: 'o1',
+        companyId: 'c1',
+        taxCodeId: null,
+      });
+      mockTaxService.resolveTaxCode.mockResolvedValue({
+        id: 'tc1',
+        code: 'VAT_13',
+        name: '增值税13%',
+        rate: 0.13,
+        isTaxInclusive: true,
+        taxNature: TaxNature.OUTPUT,
+        outputAccountId: null,
+        inputAccountId: null,
+        accountId: null,
+        isFallback: false,
+      });
+      mockTaxService.calcTaxFromTotal.mockReturnValue({
+        subTotal: 884.96,
+        taxAmount: 115.04,
+        total: 1000,
+        taxRate: 0.13,
+        taxNature: TaxNature.OUTPUT,
+      });
       prisma.invoice.create.mockResolvedValue({
         id: 'inv1',
         invoiceNo: 'INV-123',
@@ -78,11 +114,7 @@ describe('FinanceService', () => {
 
       const result = await service.createInvoice(
         'c1',
-        {
-          orderId: 'o1',
-          amount: 1000,
-          dueDate: '2025-12-31',
-        },
+        { orderId: 'o1', amount: 1000, dueDate: '2025-12-31' },
         'u1',
       );
 
@@ -175,16 +207,19 @@ describe('FinanceService', () => {
   });
 
   describe('postInvoice', () => {
-    it('should post an invoice and emit event', async () => {
+    it('should post an invoice using snapshot and emit event', async () => {
       prisma.invoice.findFirst.mockResolvedValue({
         id: 'inv1',
         invoiceNo: 'INV-123',
         postingStatus: 'DRAFT',
         amount: 1000,
-        subTotal: 0,
-        taxAmount: 0,
-        taxCodeId: null,
+        subTotal: 884.96,
+        taxAmount: 115.04,
+        taxRate: 0.13,
+        taxNature: TaxNature.OUTPUT,
+        taxCodeId: 'tc1',
         order: { taxCodeId: null },
+        taxCode: null,
       });
       prisma.invoice.update.mockResolvedValue({
         id: 'inv1',
@@ -192,8 +227,19 @@ describe('FinanceService', () => {
         postingStatus: 'POSTED',
       });
       prisma.auditLog.create.mockResolvedValue({});
+      mockTaxService.resolveTaxCode.mockResolvedValue({
+        id: 'tc1',
+        code: 'VAT_13',
+        rate: 0.13,
+        taxNature: TaxNature.OUTPUT,
+        outputAccountId: null,
+        inputAccountId: null,
+        accountId: null,
+        isFallback: false,
+      });
+      mockTaxService.getTaxAccountId.mockReturnValue(null);
 
-      const result = await service.postInvoice('c1', 'inv1', 'u1', undefined, 0.13);
+      const result = await service.postInvoice('c1', 'inv1', 'u1');
 
       expect(result.postingStatus).toBe('POSTED');
       expect(prisma.invoice.update).toHaveBeenCalledWith({
@@ -205,8 +251,7 @@ describe('FinanceService', () => {
         expect.objectContaining({
           companyId: 'c1',
           invoiceId: 'inv1',
-          taxCodeId: null,
-          taxRate: 0.13,
+          taxCodeId: 'tc1',
         }),
       );
     });

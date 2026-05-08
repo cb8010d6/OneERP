@@ -4,6 +4,7 @@ import { CrudService } from '../crud/crud.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { LlmAdapterService } from './llm-adapter.service';
+import { SafeChat2SqlService } from './safe-chat2sql.service';
 
 export interface AIToolSchema {
   name: string;
@@ -39,6 +40,7 @@ export class AIService {
     private readonly metadataService: MetadataService,
     private readonly workflowService: WorkflowService,
     private readonly llmAdapterService: LlmAdapterService,
+    private readonly safeChat2SqlService: SafeChat2SqlService,
   ) {}
 
   private toSafeText(value: unknown): string {
@@ -292,29 +294,8 @@ export class AIService {
   }
 
   async chat2sql(input: string, companyId: string) {
-    const schemaContext = this.buildReadSchemaContext();
-    const sql = await this.llmAdapterService.resolveReadSql(
-      input,
-      schemaContext,
-    );
-
-    if (!sql) {
-      throw new BadRequestException('未生成可执行查询，请重试更具体的问题');
-    }
-
-    const checkedSql = this.validateReadOnlySql(sql);
-    const rows: Array<Record<string, unknown>> =
-      await this.prisma.$queryRawUnsafe(checkedSql, companyId);
-
-    const chartSuggestion = this.suggestChart(rows);
-    return {
-      type: 'table',
-      title: 'Chat2SQL 查询结果',
-      sql: checkedSql,
-      rows,
-      chartSuggestion,
-      rowCount: rows.length,
-    };
+    // 安全实现：使用 Prisma ORM 结构化查询，不使用 $queryRawUnsafe
+    return this.safeChat2SqlService.execute(input, companyId);
   }
 
   async parseDocumentDraft(

@@ -101,20 +101,21 @@ async function bootstrap() {
 
   // 配置 Swagger
   const config = new DocumentBuilder()
-    .setTitle('EIP API')
-    .setDescription('ERP/EIP 后端接口文档')
+    .setTitle('OneERP API')
+    .setDescription('OneERP 后端接口文档')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
+  const port = Number(process.env.PORT ?? 8000);
+
   // 监听 0.0.0.0 使暴露在内网网段
-  // 确保端口为 8000 避免和其他默认应用冲突
-  await app.listen(process.env.PORT ?? 8000, '0.0.0.0');
+  await app.listen(port, '0.0.0.0');
   console.log(
-    `EIP 核心服务已运行，内网任意设备均可通过 http://[主机局域网IP]:8000/api 访问 API`,
+    `OneERP API 已运行，内网任意设备均可通过 http://[主机局域网IP]:${port}/api 访问 API`,
   );
-  console.log(`Swagger 接口文档地址: http://localhost:8000/api/docs`);
+  console.log(`Swagger 接口文档地址: http://localhost:${port}/api/docs`);
 }
 void bootstrap();

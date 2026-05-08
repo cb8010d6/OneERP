@@ -2,14 +2,16 @@ import { create } from 'zustand';
 
 export interface User {
   id: string;
-  username: string;
-  role: string;
+  email?: string;
+  name?: string;
+  username?: string;
+  role?: string;
 }
 
 export interface Company {
   id: string;
   name: string;
-  role: string;
+  role: string | { name: string; permissions: string[] };
 }
 
 interface AuthState {
@@ -49,7 +51,7 @@ function isJwtTokenLikelyValid(token: string | null): boolean {
     const padded = payloadBase64.padEnd(Math.ceil(payloadBase64.length / 4) * 4, '=');
     const decoded = JSON.parse(atob(padded)) as { exp?: number };
 
-    if (!decoded.exp) {
+    if (decoded.exp == null) {
       return true;
     }
 

@@ -1,10 +1,38 @@
 # 企业级 ERP 核心业务模块开发计划 (前后端分离协作版)
 
 > **文档说明**
-> 本规划针对「销售管理 (Sales)」与「库存管理 (Inventory)」两大核心模块，进行了详细的接口、结构和组件级设计。
+> 本规划面向 OneERP 后续业务模块建设。销售、库存已有较多基础，下一阶段重点是采购、财务、生产、权限和可靠性闭环。
 > **分工模式**：
 > 🤖 **前端设计与实现**：由 AI 助理全面负责。接管高网格密度交互、Drawer抽屉式表单、行内编辑及状态缓存。
 > 👨‍💻 **后端架构与接口**：由 Node 后端工程师负责。处理 Prisma 领域模型更新、Kysely 报表聚合、业务状态机流转及并发控制。
+
+---
+
+## 0. 开发总策略
+
+### 0.1 主线策略
+
+- `main`：生产发布分支，只接收从 `develop` 发起的 PR。
+- `develop`：集成分支，所有功能先合入这里并跑完整 CI。
+- `agent/<scope>/<task>`：单任务分支，禁止一个 agent 分支同时改多个业务域。
+
+### 0.2 模块交付顺序
+
+| 阶段 | 模块 | 目标 | 验收方式 |
+| --- | --- | --- | --- |
+| P0-A | 采购全链路 | 采购订单、收货、三方匹配、应付草稿 | API 单测 + purchase E2E |
+| P0-B | 财务可靠性 | 凭证冲销、反审核、试算平衡、DLQ 定时重试 | Accounting 单测 + finance E2E |
+| P1-A | 生产联动 | 工单完成事件、成品入库、订单状态联动 | Production 单测 + 事件测试 |
+| P1-B | RBAC 权限 | PermissionGuard、菜单/按钮权限 | Auth/API 单测 + Web smoke |
+| P1-C | 库存单据 | StockPicking/StockMove、批次、预留库存 | Inventory 集成测试 |
+| P2 | 可观测性与部署 | 健康检查、日志、备份、部署回滚 | CI + 手动部署演练 |
+
+### 0.3 Agent 拆工原则
+
+- DB Agent 先完成 schema/migration，API Agent 再接 service/controller，Web Agent 最后接页面。
+- 同一时间只有一个 agent 修改 `schema.prisma`。
+- 核心引擎 `core/crud`、`core/workflow`、`components/core` 仅在明确需要升级引擎时修改。
+- 每个模块必须补“业务规则测试”，不只补页面。
 
 ---
 
@@ -106,11 +134,154 @@
 
 ## 🚀 交付落地流 (Action Items for User)
 
-这份规划已经保存在 `docs/plans/CORE_MODULES_DEV_PLAN.md` 供查阅。
-你可以将上述要求截取给后端开发工程师。
+这份规划保存在 `docs/plans/CORE_MODULES_DEV_PLAN.md`。后续 agent 必须按“DB → API → Web → Test → Docs”的顺序拆卡执行，不建议直接视觉先行大规模写 Mock 页面。
 
-**对于接下来我的工作：**
-我不用等他把 Prisma 和 NestJS 的代码跑通。**你现在就可以让我开始**！
-我们只需要约定先做 **【销售模块表单设计】** 还是 **【库存台账分析组件】**。我会自己在 `apps/web/` 下建立对应的 React 文件，使用 Mock 数据跑起包含酷炫交互、`TanStack Table` 行内编辑以及多 Tab Drawer 的界面！
+---
 
-一旦界面搭建完备，后端写好接口后，直接替换网络调用的胶水层，即刻就能上线。
+## 阶段三：采购全链路 (Purchase)
+
+### 1. 业务目标
+
+实现“供应商 → 采购订单 → 审批 → 收货 → 三方匹配 → 应付账款”的闭环。
+
+### 2. 后端任务
+
+- [x] 基础 `purchase-orders` 目录已存在。
+- [x] `goods-receipts` 模块已开始建设。
+- [ ] 梳理 `PurchaseOrder` / `PurchaseOrderLine` / `GoodsReceipt` / `GoodsReceiptLine` 与当前 Prisma schema 是否一致。
+- [ ] 补齐采购状态机：`DRAFT -> SUBMITTED -> APPROVED -> PARTIALLY_RECEIVED -> RECEIVED -> CLOSED / CANCELLED`。
+- [ ] 收货时必须写库存流水，不允许直接改库存数量。
+- [ ] 三方匹配必须校验采购单、收货单、供应商账单的数量、单价、税码和币种。
+- [ ] 生成应付草稿时必须进入财务模块，不允许采购模块直接写会计余额。
+
+### 3. 前端任务
+
+- [ ] 采购订单列表：状态筛选、供应商筛选、预计到货日期筛选。
+- [ ] 采购订单抽屉：主信息、明细行、收货记录、应付记录、审计时间线。
+- [ ] 收货页面：支持按采购单收货、部分收货、超收拦截。
+- [ ] 三方匹配页面：展示差异原因和处理动作。
+
+### 4. 验收
+
+- [ ] `npm --prefix apps/api run test -- purchase`
+- [ ] `npm --prefix apps/api run test -- goods-receipts`
+- [ ] `npx playwright test e2e/purchase-flow.spec.ts`
+- [ ] 根目录 `npm run validate`
+
+---
+
+## 阶段四：财务可靠性 (Finance)
+
+### 1. 业务目标
+
+将当前自动记账能力提升到可审计、可冲销、可追踪的财务底座。
+
+### 2. 后端任务
+
+- [ ] `JournalEntry` 增加或确认状态流：`DRAFT -> POSTED -> REVERSED / CANCELLED`。
+- [ ] 新增凭证冲销 API，生成反向借贷分录，不删除历史凭证。
+- [ ] 新增试算平衡表 API，按期间、科目、公司聚合。
+- [ ] `FinanceDlqService.retryPending()` 接入定时任务。
+- [ ] 明确税码、科目、供应商账单、发票之间的过账规则。
+- [ ] 所有金额字段使用 Decimal 语义，避免 Float 误差扩散。
+
+### 3. 前端任务
+
+- [ ] 财务凭证列表与详情。
+- [ ] 凭证冲销确认弹窗。
+- [ ] 试算平衡表。
+- [ ] 财务 DLQ 重试面板。
+
+### 4. 验收
+
+- [ ] `npm --prefix apps/api run test -- finance`
+- [ ] `npm --prefix apps/api run test -- accounting`
+- [ ] `npx playwright test e2e/finance.spec.ts`
+
+---
+
+## 阶段五：生产联动 (Production)
+
+### 1. 业务目标
+
+实现“销售订单 → 生产工单 → 报工 → 成品入库 → 订单推进”的闭环。
+
+### 2. 后端任务
+
+- [ ] 工单报工达到计划数量时发射 `production.work_order.completed`。
+- [ ] 监听生产完成事件，生成成品入库事件或库存移动。
+- [ ] 订单监听生产完成后推进状态。
+- [ ] 对工单超报、重复报工、取消报工做幂等校验。
+
+### 3. 前端任务
+
+- [ ] 生产工单看板。
+- [ ] 报工抽屉。
+- [ ] 工单时间线。
+- [ ] 成品入库状态展示。
+
+### 4. 验收
+
+- [ ] `npm --prefix apps/api run test -- production`
+- [ ] 事件队列幂等测试
+- [ ] 生产 E2E 补充或扩展
+
+---
+
+## 阶段六：权限、安全与多租户硬化
+
+### 1. 业务目标
+
+让系统从“能跑”进入“可多人使用、可隔离、可审计”的状态。
+
+### 2. 后端任务
+
+- [ ] 实现 `PermissionsGuard`。
+- [ ] 新增 `@RequirePermissions()` 装饰器。
+- [ ] API 按模块声明权限点，例如 `purchase:read`、`purchase:write`、`finance:post`。
+- [ ] 审查所有查询是否注入 `companyId`。
+- [ ] 规划 PostgreSQL RLS，不急于一次性落地。
+
+### 3. 前端任务
+
+- [ ] 菜单按权限展示。
+- [ ] 按钮按权限禁用或隐藏。
+- [ ] 无权限页面和 API 403 处理。
+
+### 4. 验收
+
+- [ ] Auth/RBAC 单元测试。
+- [ ] 租户隔离 E2E。
+- [ ] 权限 UI smoke test。
+
+---
+
+## 阶段七：AI Agent 工具与知识库
+
+### 1. 业务目标
+
+让 OneERP 内置 AI 和开发 agent 都能先查工具/文档，再推理，降低 token 成本。
+
+### 2. 系统内 AI Tools
+
+- [x] `create_resource`
+- [x] `transition_workflow`
+- [x] `chat2dash_query`
+- [x] `chat2sql_read`
+- [x] `parse_document_draft`
+- [ ] `read_module_guide`
+- [ ] `explain_error`
+- [ ] `draft_workflow_action`
+- [ ] `validate_business_rule`
+
+### 3. 开发 Agent Skill
+
+- [ ] 把 `docs/architecture/DEVELOPMENT_WORKFLOW.md` 做成通用 agent 常驻规则。
+- [ ] 为采购、库存、财务、生产分别建立任务模板。
+- [ ] 建立 CI 失败排查模板：依赖、Prisma、类型、Lint、测试、Docker 六类。
+
+### 4. 验收
+
+- [ ] 新 agent 能在 10 分钟内根据文档定位任务边界。
+- [ ] 每个任务卡片不需要粘贴全仓库上下文。
+- [ ] PR 描述能自动包含验证命令和影响范围。

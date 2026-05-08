@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Building2, Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table } from 'lucide-react';
+import { Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table, ClipboardList, Factory, Receipt, ListOrdered } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
 import { useWorkspaceTabsStore } from '../../store/workspaceTabsStore';
+import { PermissionsProvider } from '../../lib/permissions-context';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -16,15 +17,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { user, token, companies, currentCompanyId, setCurrentCompany, logout } = useAuthStore();
   const { openTab, activateTab, closeTab, activePath } = useWorkspaceTabsStore();
 
-  const navItems = [
+  const navItems = useMemo(() => [
     { icon: LayoutDashboard, label: '概览', href: '/dashboard' },
     { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales' },
+    { icon: ListOrdered, label: '订单管理', href: '/dashboard/orders' },
+    { icon: ClipboardList, label: '采购订单', href: '/dashboard/dynamic/purchaseOrder' },
+    { icon: Package, label: '采购收货', href: '/dashboard/dynamic/goodsReceipt' },
+    { icon: Receipt, label: '采购发票', href: '/dashboard/dynamic/purchaseInvoice' },
     { icon: Package, label: '生产与库存', href: '/dashboard/inventory' },
+    { icon: Factory, label: '生产管理', href: '/dashboard/production' },
+    { icon: Receipt, label: '财务管理', href: '/dashboard/finance' },
+    { icon: FileText, label: '试算平衡表', href: '/dashboard/finance/trial-balance' },
     { icon: FileText, label: '图纸文档', href: '/dashboard/files' },
     { icon: Users, label: '客户管理', href: '/dashboard/customers' },
     { icon: Settings, label: '系统设置', href: '/dashboard/settings' },
     { icon: Table, label: '网格实验', href: '/dashboard/lab/data-grid' },
-  ];
+  ], []);
 
   useEffect(() => {
     setMounted(true);
@@ -44,7 +52,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       path: pathname,
       label: item?.label || pathname.split('/').slice(-1)[0] || '工作区',
     });
-  }, [pathname]);
+  }, [navItems, openTab, pathname]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -100,11 +108,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!token || !user || !currentCompanyId) return null;
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
+    <PermissionsProvider>
+      <div className="flex h-screen bg-gray-50">
+        {/* Sidebar */}
+        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="h-16 flex items-center justify-center border-b border-gray-200">
-          <h1 className="text-xl font-bold text-blue-600">Enterprise ERP</h1>
+          <h1 className="text-xl font-bold text-blue-600">OneERP</h1>
         </div>
 
         {/* Company Switcher */}
@@ -148,8 +157,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {user?.username?.charAt(0)?.toUpperCase()}
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-900">{user?.username || 'User'}</p>
-                <p className="text-xs text-gray-500">{user?.role || 'Role'}</p>
+                <p className="text-sm font-medium text-gray-900">{user?.username || user?.name || 'User'}</p>
+                <p className="text-xs text-gray-500">
+                  {companies.find(c => c.id === currentCompanyId)?.role 
+                    ? typeof companies.find(c => c.id === currentCompanyId)!.role === 'object' 
+                      ? (companies.find(c => c.id === currentCompanyId)!.role as {name: string}).name 
+                      : companies.find(c => c.id === currentCompanyId)!.role as string
+                    : user?.role || 'Role'}
+                </p>
               </div>
             </div>
             <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100">
@@ -216,5 +231,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </main>
     </div>
+    </PermissionsProvider>
   );
 }

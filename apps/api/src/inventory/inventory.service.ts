@@ -5,11 +5,13 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { Prisma } from '@prisma/client';
+import { MoveStatus, PickingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import {
+  ConfirmPickingDto,
+  CreatePickingDto,
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
   ReversePurchaseInboundDto,
@@ -343,111 +345,37 @@ export class InventoryService {
     };
   }
 
+  /**
+   * 销售订单发货（便捷方法）：创建拣货单 + 确认，一步完成。
+   * 内部委托给 createSaleOrderPicking + confirmStockPicking，保持幂等。
+   */
   async postSaleOrderShipment(
     companyId: string,
     orderId: string,
     payload: SaleOrderShipmentDto,
     operatorId?: string,
   ) {
-    const order = await this.prisma.order.findFirst({
-      where: { id: orderId, companyId },
-      include: { items: true },
-    });
+    const pickingResult = await this.createSaleOrderPicking(
+      companyId,
+      orderId,
+      { sourceLocationId: payload.sourceLocationId },
+      operatorId,
+    );
 
-    if (!order) {
-      throw new NotFoundException('销售订单不存在或无权限访问');
-    }
-
-    if (!order.items.length) {
-      throw new BadRequestException('销售订单无明细，无法自动过账');
-    }
-
-    const materialQuantityMap = new Map<string, number>();
-
-    for (const item of order.items) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: item.productId, companyId },
-        select: { id: true, materialId: true, name: true },
-      });
-
-      if (!product) {
-        throw new BadRequestException(`订单项产品不存在：${item.productId}`);
-      }
-
-      if (!product.materialId) {
-        throw new BadRequestException(
-          `产品 ${product.name} 未绑定主物料，无法自动过账`,
-        );
-      }
-
-      const current = materialQuantityMap.get(product.materialId) ?? 0;
-      materialQuantityMap.set(product.materialId, current + item.quantity);
-    }
-
-    const referenceNo = `SALE-SHIP-${order.orderNo}`;
-    const existedMoves = await this.prisma.inventoryTransaction.count({
-      where: { companyId, referenceNo },
-    });
-
-    if (existedMoves > 0) {
-      return {
-        orderId: order.id,
-        orderNo: order.orderNo,
-        postedLines: [],
-        message: '销售订单已完成过账，已跳过重复处理',
-      };
-    }
-
-    const moveNote = payload.note ?? `销售订单自动出库：${order.orderNo}`;
-    const results = await this.prisma.$transaction(async (tx) => {
-      const postedLines: Array<{
-        materialId: string;
-        quantity: number;
-        transactionId: string;
-      }> = [];
-
-      for (const [materialId, quantity] of materialQuantityMap.entries()) {
-        const transaction = await this.executeStockMove(tx, {
-          companyId,
-          sourceLocationId: payload.sourceLocationId,
-          materialId,
-          quantity,
-          batchNo: payload.batchNo,
-          referenceNo,
-          note: moveNote,
-          operatorId: operatorId || 'SYSTEM',
-        });
-
-        postedLines.push({
-          materialId,
-          quantity,
-          transactionId: transaction.id,
-        });
-      }
-
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: 'SHIPPED' },
-      });
-
-      return postedLines;
-    });
-
-    for (const line of results) {
-      this.eventEmitter.emit('inventory.stock_depleted', {
-        companyId,
-        referenceNo,
-        materialId: line.materialId,
-        quantity: line.quantity,
-        operatorId: operatorId || 'SYSTEM',
-      });
-    }
+    const confirmResult = await this.confirmStockPicking(
+      companyId,
+      pickingResult.pickingId,
+      { note: payload.note ?? `销售订单自动出库：${orderId}` },
+      operatorId,
+    );
 
     return {
-      orderId: order.id,
-      orderNo: order.orderNo,
-      postedLines: results,
-      message: '销售订单自动过账完成，订单状态已更新为 SHIPPED',
+      orderId,
+      pickingId: pickingResult.pickingId,
+      pickingNo: pickingResult.pickingNo,
+      status: confirmResult.status,
+      confirmedLines: confirmResult.confirmedLines ?? [],
+      message: confirmResult.message,
     };
   }
 
@@ -495,6 +423,313 @@ export class InventoryService {
       transactionId: transaction.id,
       message: '采购单自动入库过账完成',
     };
+  }
+
+  // =============================================================
+  // Stock Picking: 销售发货改造
+  // =============================================================
+
+  async createSaleOrderPicking(
+    companyId: string,
+    orderId: string,
+    payload: CreatePickingDto,
+    _operatorId?: string,
+  ) {
+    void _operatorId;
+    const sourceLocation = await this.resolveLocationOwnership(
+      companyId,
+      payload.sourceLocationId,
+      '来源库位',
+    );
+    const destLocation = await this.resolveLocationOwnership(
+      companyId,
+      payload.destLocationId,
+      '目标库位',
+    );
+
+    if (!sourceLocation?.id) {
+      throw new BadRequestException('销售出库拣货单必须指定来源库位');
+    }
+
+    if (destLocation?.id && sourceLocation.id === destLocation.id) {
+      throw new BadRequestException('来源库位和目标库位不能相同');
+    }
+
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      include: { items: true },
+    });
+
+    if (!order) throw new NotFoundException('销售订单不存在或无权限访问');
+    if (!order.items.length)
+      throw new BadRequestException('销售订单无明细，无法创建拣货单');
+
+    const existingPicking = await this.prisma.stockPicking.findFirst({
+      where: {
+        companyId,
+        referenceType: 'SALE_ORDER',
+        referenceId: orderId,
+        status: { notIn: [PickingStatus.CANCELLED] },
+      },
+    });
+
+    if (existingPicking) {
+      return {
+        pickingId: existingPicking.id,
+        pickingNo: existingPicking.pickingNo,
+        status: existingPicking.status,
+        message: '该订单已存在拣货单，已返回',
+      };
+    }
+
+    const materialQuantityMap = new Map<string, number>();
+    for (const item of order.items) {
+      const product = await this.prisma.product.findFirst({
+        where: { id: item.productId, companyId },
+        select: { id: true, materialId: true, name: true },
+      });
+      if (!product)
+        throw new BadRequestException(`订单项产品不存在：${item.productId}`);
+      if (!product.materialId)
+        throw new BadRequestException(
+          `产品 ${product.name} 未绑定主物料，无法创建拣货单`,
+        );
+      const current = materialQuantityMap.get(product.materialId) ?? 0;
+      materialQuantityMap.set(product.materialId, current + item.quantity);
+    }
+
+    const now = new Date();
+    const pickingNo = `PICK-${now.getFullYear()}${String(
+      now.getMonth() + 1,
+    ).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const picking = await this.prisma.stockPicking.create({
+      data: {
+        pickingNo,
+        type: 'OUTBOUND',
+        referenceType: 'SALE_ORDER',
+        referenceId: orderId,
+        scheduledDate: payload.scheduledDate
+          ? new Date(payload.scheduledDate)
+          : null,
+        sourceLocationId: sourceLocation.id,
+        destLocationId: destLocation?.id ?? null,
+        status: PickingStatus.DRAFT,
+        companyId,
+        moves: {
+          create: Array.from(materialQuantityMap.entries()).map(
+            ([materialId, quantity], index) => ({
+              lineNo: index + 1,
+              materialId,
+              sourceLocationId: sourceLocation.id,
+              destLocationId: destLocation?.id ?? null,
+              quantity,
+              status: MoveStatus.DRAFT,
+              companyId,
+            }),
+          ),
+        },
+      },
+      include: { moves: true },
+    });
+
+    return {
+      pickingId: picking.id,
+      pickingNo: picking.pickingNo,
+      status: picking.status,
+      moveCount: picking.moves.length,
+      message: '拣货单已创建，状态为 DRAFT',
+    };
+  }
+  async confirmStockPicking(
+    companyId: string,
+    pickingId: string,
+    payload: ConfirmPickingDto,
+    operatorId?: string,
+  ) {
+    const picking = await this.prisma.stockPicking.findFirst({
+      where: { id: pickingId, companyId },
+      include: { moves: { orderBy: { lineNo: 'asc' } } },
+    });
+
+    if (!picking) throw new NotFoundException('拣货单不存在或无权限访问');
+
+    if (picking.status === PickingStatus.DONE) {
+      return {
+        pickingId: picking.id,
+        pickingNo: picking.pickingNo,
+        status: picking.status,
+        message: '拣货单已确认完成，跳过重复处理',
+      };
+    }
+
+    if (picking.status === PickingStatus.CANCELLED)
+      throw new BadRequestException('拣货单已取消，无法确认');
+    if (!picking.moves.length)
+      throw new BadRequestException('拣货单无明细行，无法确认');
+
+    for (const move of picking.moves) {
+      if (
+        move.status !== MoveStatus.CANCELLED &&
+        move.status !== MoveStatus.DONE &&
+        !move.sourceLocationId
+      ) {
+        throw new BadRequestException(
+          `拣货单行 ${move.lineNo} 缺少来源库位，无法确认出库`,
+        );
+      }
+      if (
+        move.sourceLocationId &&
+        move.destLocationId &&
+        move.sourceLocationId === move.destLocationId
+      ) {
+        throw new BadRequestException(
+          `拣货单行 ${move.lineNo} 来源库位和目标库位不能相同`,
+        );
+      }
+    }
+
+    const referenceNo = `PICKING-${picking.pickingNo}`;
+    const note = payload.note ?? `拣货单确认出库：${picking.pickingNo}`;
+    const confirmedLines: Array<{
+      moveId: string;
+      materialId: string;
+      quantity: number;
+      transactionId: string;
+    }> = [];
+    const skippedLines: Array<{
+      moveId: string;
+      materialId: string;
+      message: string;
+    }> = [];
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const move of picking.moves) {
+        if (move.status === MoveStatus.DONE) {
+          skippedLines.push({
+            moveId: move.id,
+            materialId: move.materialId,
+            message: '该行已执行过，跳过',
+          });
+          continue;
+        }
+        if (move.status === MoveStatus.CANCELLED) {
+          skippedLines.push({
+            moveId: move.id,
+            materialId: move.materialId,
+            message: '该行已取消，跳过',
+          });
+          continue;
+        }
+
+        const claimed = await tx.stockMove.updateMany({
+          where: {
+            id: move.id,
+            status: { in: [MoveStatus.DRAFT, MoveStatus.CONFIRMED] },
+          },
+          data: { status: MoveStatus.CONFIRMED },
+        });
+
+        if (claimed.count === 0) {
+          skippedLines.push({
+            moveId: move.id,
+            materialId: move.materialId,
+            message: '该行已被其他确认流程处理，跳过',
+          });
+          continue;
+        }
+
+        const lineNote = `${note} (行${move.lineNo})`;
+        const transaction = await this.executeStockMove(tx, {
+          companyId,
+          materialId: move.materialId,
+          quantity: move.quantity,
+          sourceLocationId: move.sourceLocationId ?? undefined,
+          destLocationId: move.destLocationId ?? undefined,
+          batchNo: move.batchNo ?? undefined,
+          referenceNo,
+          note: lineNote,
+          operatorId: operatorId || 'SYSTEM',
+          stockMoveId: move.id,
+        });
+
+        await tx.stockMove.update({
+          where: { id: move.id },
+          data: { status: MoveStatus.DONE, quantityDone: move.quantity },
+        });
+
+        confirmedLines.push({
+          moveId: move.id,
+          materialId: move.materialId,
+          quantity: move.quantity,
+          transactionId: transaction.id,
+        });
+      }
+
+      await tx.stockPicking.update({
+        where: { id: picking.id },
+        data: { status: PickingStatus.DONE, completedDate: new Date() },
+      });
+
+      if (picking.referenceType === 'SALE_ORDER' && picking.referenceId) {
+        await tx.order.update({
+          where: { id: picking.referenceId },
+          data: { status: 'SHIPPED' },
+        });
+      }
+    });
+
+    for (const line of confirmedLines) {
+      this.eventEmitter.emit('inventory.stock_depleted', {
+        companyId,
+        referenceNo,
+        materialId: line.materialId,
+        quantity: line.quantity,
+        operatorId: operatorId || 'SYSTEM',
+      });
+    }
+
+    return {
+      pickingId: picking.id,
+      pickingNo: picking.pickingNo,
+      status: PickingStatus.DONE,
+      confirmedLines,
+      skippedLines,
+      message: `拣货单已确认完成，${confirmedLines.length} 行已执行`,
+    };
+  }
+
+  async getPickings(
+    companyId: string,
+    pagination: PaginationDto,
+    status?: string,
+  ) {
+    const { page = 1, limit = 20 } = pagination;
+    const where: Prisma.StockPickingWhereInput = { companyId };
+    const pickingStatus = this.parsePickingStatus(status);
+    if (pickingStatus) where.status = pickingStatus;
+
+    const [data, total] = await Promise.all([
+      this.prisma.stockPicking.findMany({
+        where,
+        include: { moves: true },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.stockPicking.count({ where }),
+    ]);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getPickingById(pickingId: string, companyId: string) {
+    const picking = await this.prisma.stockPicking.findFirst({
+      where: { id: pickingId, companyId },
+      include: { moves: { include: { material: true } } },
+    });
+
+    if (!picking) throw new NotFoundException('拣货单不存在或无权限访问');
+    return picking;
   }
 
   async reverseSaleOrderShipment(
@@ -709,6 +944,21 @@ export class InventoryService {
     return `BATCH${Date.now()}`;
   }
 
+  private parsePickingStatus(status?: string): PickingStatus | undefined {
+    if (!status) return undefined;
+
+    const normalized = status.trim().toUpperCase();
+    const validStatus = Object.values(PickingStatus).find(
+      (value) => value === normalized,
+    );
+
+    if (!validStatus) {
+      throw new BadRequestException(`不支持的拣货单状态：${status}`);
+    }
+
+    return validStatus;
+  }
+
   private async executeStockMove(
     tx: Prisma.TransactionClient,
     input: {
@@ -721,6 +971,7 @@ export class InventoryService {
       operatorId: string;
       referenceNo?: string;
       note?: string;
+      stockMoveId?: string;
     },
   ): Promise<InventoryTransactionRecord> {
     let finalBatchNo = input.batchNo;
@@ -779,6 +1030,7 @@ export class InventoryService {
         companyId: input.companyId,
         referenceNo: input.referenceNo,
         note: input.note,
+        stockMoveId: input.stockMoveId,
       },
     });
   }

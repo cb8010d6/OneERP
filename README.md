@@ -131,11 +131,11 @@ flowchart LR
 - AI Command Bar：自然语言触发业务动作（支持 dry-run 草稿确认）
 - Chat2Dash：自然语言转图表洞察
 - Chat2SQL：自然语言转查询语句（只读场景）
-- OCR Draft（规划中）：附件识别并生成草稿单据
+- Document Draft：附件文件名解析生成发票草稿（LLM 降级为规则兜底）
 
 ## Roadmap
 
-- [ ] P0: 税务引擎（税码、税率、含税/未税）
+- [x] P0: 税务引擎（税码、税率、含税/未税）—— `TaxCode` 模型 + `finance.service.resolveTaxCode()` 已落地
 - [ ] P0: 采购全链路（询价、采购单、收货、应付）
 - [ ] P1: 库存单据头（Stock Picking/Wave）
 - [ ] P1: 多币种与汇率重估
@@ -146,19 +146,24 @@ flowchart LR
 
 欢迎贡献代码、文档和测试：
 
-1. Fork 本仓库
-2. 新建分支（`agent/backend/*`、`agent/frontend/*`、`agent/db/*`）
-3. 提交遵循 Conventional Commits
-4. 提交 PR 并通过 CI
+1. 从 `develop` 新建任务分支（例如 `agent/api/purchase-order`、`agent/web/finance-page`、`agent/db/rbac-models`）
+2. 单个 PR 只处理一个业务边界，避免多个 agent 同时修改 `schema.prisma`、`app.module.ts`、`ui-schema.ts`、`core/**` 或 lockfile
+3. 提交前在根目录运行 `npm run validate`
+4. 提交遵循 Conventional Commits
+5. 功能 PR 合入 `develop`，稳定后由 `develop` 发版 PR 合入 `main`
 
 详细规范见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ## 文档入口
 
+- [docs/architecture/ARCHITECTURE.md](./docs/architecture/ARCHITECTURE.md)
+- [docs/README.md](./docs/README.md)
+- [AGENTS.md](./AGENTS.md)
 - [docs/architecture/STANDARDS.md](./docs/architecture/STANDARDS.md)
+- [docs/architecture/DEVELOPMENT_WORKFLOW.md](./docs/architecture/DEVELOPMENT_WORKFLOW.md)
+- [docs/architecture/QUALITY_GATES.md](./docs/architecture/QUALITY_GATES.md)
+- [docs/runbooks/README.md](./docs/runbooks/README.md)
 - [docs/plans/PROJECT_PLAN_AND_STATUS.md](./docs/plans/PROJECT_PLAN_AND_STATUS.md)
-- [docs/plans/PROJECT_PLAN.md](./docs/plans/PROJECT_PLAN.md)
-- [docs/plans/EXECUTION_PLAN.md](./docs/plans/EXECUTION_PLAN.md)
 - [docs/plans/CORE_MODULES_DEV_PLAN.md](./docs/plans/CORE_MODULES_DEV_PLAN.md)
 - [docs/AI_INSTRUCTIONS.md](./docs/AI_INSTRUCTIONS.md)
 

@@ -11,6 +11,8 @@
     "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint",
     "test": "npm --prefix apps/api run test -- --passWithNoTests && npm --prefix apps/web run test",
     "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "test:e2e": "npx playwright test",
+    "test:e2e:ui": "npx playwright test --ui",
     "validate": "npm --prefix apps/api run prisma:validate && npm --prefix apps/api run prisma:generate && npm run typecheck && npm run lint && npm run test && npm run build"
   },
   "dependencies": {
@@ -21,6 +23,7 @@
     "@commitlint/cli": "^19.8.1",
     "@commitlint/config-conventional": "^19.8.1",
     "fs-extra": "^11.3.4",
+    "@playwright/test": "^1.52.0",
     "husky": "^9.1.7"
   }
 }

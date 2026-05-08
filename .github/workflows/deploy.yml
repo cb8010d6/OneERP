@@ -15,6 +15,11 @@ on:
         required: false
         default: "true"
         type: boolean
+      image_tag:
+        description: "镜像标签 (留空=latest, 填 commit SHA=回滚到指定版本)"
+        required: false
+        default: ""
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -23,6 +28,8 @@ env:
 jobs:
   # ---- Build & Push API Docker Image ----
   build-api:
+    # 手动触发且未勾选 deploy_api 时跳过
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_api }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -65,6 +72,8 @@ jobs:
 
   # ---- Build & Push Web Docker Image ----
   build-web:
+    # 手动触发且未勾选 deploy_web 时跳过
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_web }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -105,11 +114,12 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---- Deploy to Server (placeholder — customize for your infra) ----
+  # ---- Deploy to Production Server ----
   deploy:
     needs: [build-api, build-web]
+    # 仅 main 分支 push 或手动触发时执行部署
+    if: ${{ always() && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && !failure() && !cancelled() && (needs.build-api.result == 'success' || needs.build-web.result == 'success') }}
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
 
     environment:
       name: production
@@ -126,36 +136,48 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---- Option A: Deploy via SSH (uncomment and configure) ----
-      # - name: Deploy to server via SSH
-      #   uses: appleboy/ssh-action@v1
-      #   with:
-      #     host: ${{ secrets.DEPLOY_HOST }}
-      #     username: ${{ secrets.DEPLOY_USER }}
-      #     key: ${{ secrets.DEPLOY_SSH_KEY }}
-      #     script: |
-      #       cd /opt/oneerp
-      #       docker compose pull
-      #       docker compose up -d --remove-orphans
-      #       docker image prune -f
-
-      # ---- Option B: Deploy via Docker Compose on self-hosted runner ----
-      # - name: Deploy with Docker Compose
-      #   run: |
-      #     docker compose -f docker-compose.prod.yml pull
-      #     docker compose -f docker-compose.prod.yml up -d --remove-orphans
-      #     docker image prune -f
-
-      - name: Deployment placeholder
+      - name: Determine image tag
+        id: tag
         run: |
-          echo "::notice::Deploy step is configured as a placeholder."
-          echo "To enable automatic deployment, uncomment one of the options above."
-          echo ""
-          echo "Required secrets for SSH deployment:"
-          echo "  - DEPLOY_HOST: Server IP or hostname"
-          echo "  - DEPLOY_USER: SSH username"
-          echo "  - DEPLOY_SSH_KEY: SSH private key"
-          echo ""
-          echo "Published images:"
-          echo "  - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest"
-          echo "  - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web:latest"
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="latest"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::Deploying images with tag: $TAG"
+
+      - name: Deploy to server via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/oneerp
+            echo "=== Pulling images (tag: ${{ steps.tag.outputs.tag }}) ==="
+            IMAGE_TAG=${{ steps.tag.outputs.tag }} docker compose -f docker-compose.prod.yml pull
+            echo "=== Starting services ==="
+            IMAGE_TAG=${{ steps.tag.outputs.tag }} docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            echo "=== Waiting for health checks ==="
+            sleep 15
+            IMAGE_TAG=${{ steps.tag.outputs.tag }} docker compose -f docker-compose.prod.yml ps
+            echo "=== Pruning old images ==="
+            docker image prune -f
+
+      - name: Verify deployment
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/oneerp
+            echo "=== Checking container health ==="
+            docker compose -f docker-compose.prod.yml ps --format "table {{.Name}}\t{{.Status}}"
+            # 检查 API 是否可访问
+            if curl -sf http://localhost:${API_PORT:-8000}/api/docs > /dev/null 2>&1; then
+              echo "✅ API health check passed"
+            else
+              echo "❌ API health check failed"
+              exit 1
+            fi

@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from '@/components/ui/Sheet';
 import { DataGrid } from '@/components/ui/data-grid/DataGrid';
 import api from '@/lib/api';
-import { CheckCircle2, Save, Activity, Layers, Info, Loader2 } from 'lucide-react';
+import { CheckCircle2, Save, Activity, Layers, Info, Loader2, Truck } from 'lucide-react';
+import { ShipmentsTable } from './ShipmentsTable';
+import { ShipmentTimeline } from './ShipmentTimeline';
 import type { ColumnDef } from '@tanstack/react-table';
 import toast from 'react-hot-toast';
 
@@ -39,6 +41,20 @@ interface TimelineEvent {
   };
 }
 
+export interface StockTransaction {
+  id: string;
+  type: string;
+  materialId: string;
+  material?: { id: string; sku: string; name: string; unit: string };
+  quantity: number;
+  batchNo?: string | null;
+  referenceNo?: string | null;
+  note?: string | null;
+  sourceLocation?: { id: string; name: string; code?: string | null; warehouse?: { id: string; name: string } } | null;
+  destLocation?: { id: string; name: string; code?: string | null; warehouse?: { id: string; name: string } } | null;
+  createdAt: string;
+}
+
 interface SaleOrderFormProps {
   open: boolean;
   onClose: () => void;
@@ -46,7 +62,7 @@ interface SaleOrderFormProps {
   onSaved?: () => void;
 }
 
-type TabType = 'LINES' | 'INFO' | 'CHATTER';
+type TabType = 'LINES' | 'INFO' | 'SHIPMENTS' | 'CHATTER';
 
 export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFormProps) {
   const [activeTab, setActiveTab] = useState<TabType>('LINES');
@@ -64,6 +80,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
   const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [stockTransactions, setStockTransactions] = useState<StockTransaction[]>([]);
 
   const [lines, setLines] = useState<OrderLine[]>([]);
   const [selectedLineIds, setSelectedLineIds] = useState<string[]>([]);
@@ -125,6 +142,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     setOrderDate(new Date().toISOString().slice(0, 10));
     setNotes('');
     setTimeline([]);
+    setStockTransactions([]);
     setSelectedLineIds([]);
     setLines([
       {
@@ -165,6 +183,13 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
 
     const timelineRes = await api.get<{ events: TimelineEvent[] }>(`/orders/${id}/timeline`);
     setTimeline(timelineRes.data?.events ?? []);
+
+    try {
+      const stockRes = await api.get<{ transactions: StockTransaction[] }>(`/orders/${id}/stock-transactions`);
+      setStockTransactions(stockRes.data?.transactions ?? []);
+    } catch {
+      setStockTransactions([]);
+    }
   };
 
   useEffect(() => {
@@ -196,6 +221,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     return () => {
       active = false;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, orderId]);
 
   const handleCellUpdate = (rowId: string, columnId: string, value: string) => {
@@ -508,6 +534,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           {[
             { id: 'LINES', label: '商品明细', icon: Layers },
             { id: 'INFO', label: '开票与物流', icon: Info },
+            { id: 'SHIPMENTS', label: '物流发货', icon: Truck },
             { id: 'CHATTER', label: '操作台账', icon: Activity }
           ].map(tab => (
             <button
@@ -646,6 +673,27 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
             </div>
           )}
 
+          
+          {activeTab === 'SHIPMENTS' && (
+            <div className="space-y-4">
+              <div className="bg-white p-5 rounded-2xl border border-slate-200/60 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">关联发货单 (Stock Pickings)</h3>
+                  <span className="text-xs text-slate-500">共 {stockTransactions.length} 条记录</span>
+                </div>
+                {stockTransactions.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Truck className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+                    <p className="text-sm text-slate-500">暂无关联的发货或库存过账记录</p>
+                    <p className="text-xs text-slate-400 mt-1">当订单执行发货操作后，相关记录将在此展示</p>
+                  </div>
+                ) : (
+                  <ShipmentsTable transactions={stockTransactions} />
+                )}
+              </div>
+              <ShipmentTimeline transactions={stockTransactions} />
+            </div>
+          )}
           {activeTab === 'CHATTER' && (
              <div className="bg-white p-6 rounded-2xl border border-slate-200/60 max-w-3xl">
                 {timeline.length === 0 ? (

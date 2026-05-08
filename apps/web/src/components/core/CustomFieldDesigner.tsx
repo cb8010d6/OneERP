@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchCustomFields,
   fetchSchema,
@@ -52,7 +52,7 @@ export function CustomFieldDesigner() {
     [modelName],
   );
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -66,11 +66,11 @@ export function CustomFieldDesigner() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [modelName]);
 
   useEffect(() => {
     void load();
-  }, [modelName]);
+  }, [load]);
 
   const submit = async () => {
     const trimmedFieldName = form.fieldName.trim();

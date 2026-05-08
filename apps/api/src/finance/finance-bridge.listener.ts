@@ -14,6 +14,16 @@ interface StockDepletedPayload {
   operatorId?: string;
 }
 
+interface VendorBillPostedPayload {
+  companyId: string;
+  idempotencyKey?: string;
+  invoiceId: string;
+  taxCodeId?: string | null;
+  taxAccountId?: string | null;
+  taxRate?: number;
+  operatorId?: string;
+}
+
 interface InvoicePostedPayload {
   companyId: string;
   idempotencyKey?: string;
@@ -102,6 +112,45 @@ export class FinanceBridgeListener {
       this.logger.error(`发票过账事件记账失败: ${message}`);
       await this.financeDlqService.recordFailure({
         eventName: 'finance.invoice.posted',
+        idempotencyKey: payload.idempotencyKey,
+        payload: payload as unknown as Record<string, unknown>,
+        error: message,
+        companyId: payload.companyId,
+      });
+    }
+  }
+
+  @OnEvent('finance.vendor_bill.posted')
+  async onVendorBillPosted(payload: VendorBillPostedPayload) {
+    try {
+      const invoice = await this.prisma.purchaseInvoice.findFirst({
+        where: { id: payload.invoiceId, companyId: payload.companyId },
+        select: { invoiceNo: true },
+      });
+
+      if (invoice?.invoiceNo) {
+        const existing = await this.prisma.journalEntry.findFirst({
+          where: {
+            companyId: payload.companyId,
+            ref: invoice.invoiceNo,
+            journal: { code: 'PUR' },
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          this.logger.debug(
+            `幂等跳过采购凭证: ref=${invoice.invoiceNo} 已存在 (id=${existing.id})`,
+          );
+          return;
+        }
+      }
+
+      await this.accountingService.postVendorBillPostedEntry(payload);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`采购发票过账事件记账失败: ${message}`);
+      await this.financeDlqService.recordFailure({
+        eventName: 'finance.vendor_bill.posted',
         idempotencyKey: payload.idempotencyKey,
         payload: payload as unknown as Record<string, unknown>,
         error: message,
