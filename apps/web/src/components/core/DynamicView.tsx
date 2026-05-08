@@ -37,6 +37,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const [commentInput, setCommentInput] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const initialFormValue = useMemo(() => {
     if (!schema) return {};
@@ -206,6 +207,57 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     };
   }, [isFormOpen, saveForm]);
 
+  const executeAction = async (action: NonNullable<UiSchema['actions']>[number]) => {
+    const recordId = selected?.id;
+    if (!recordId) return;
+
+    if (action.prompt) {
+      const result = window.prompt(action.prompt);
+      if (result === null) return;
+      // We could send the prompt result in the body if needed, e.g. { reason: result }
+      // For now, let's keep it simple or implement specific logic if required.
+    } else {
+      if (!window.confirm(`确定要执行 [${action.label}] 操作吗？`)) {
+        return;
+      }
+    }
+
+    setActionLoading(action.name);
+    try {
+      const url = action.endpoint.replace(':id', String(recordId));
+      const method = (action.method || 'POST').toLowerCase() as 'post' | 'put' | 'delete';
+      await api[method](url);
+      
+      // Refresh the form data and list
+      if (typeof recordId === 'string') {
+        const response = await api.get(`/v1/resource/${modelName}/${recordId}`);
+        setSelected(response.data as Record<string, unknown>);
+      }
+      await loadList();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : '操作失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const evaluateActionVisibility = (action: NonNullable<UiSchema['actions']>[number]) => {
+    if (!selected || !selected.id) return false; // Only show actions on existing records
+    if (!action.visibility) return true;
+    
+    if (action.visibility.startsWith('eval:')) {
+      const expression = action.visibility.replace('eval:', '').trim();
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func, @typescript-eslint/no-unsafe-argument
+        const func = new Function('doc', `return ${expression}`) as (doc: Record<string, unknown>) => unknown;
+        return Boolean(func(selected));
+      } catch (e) {
+        return false;
+      }
+    }
+    return true;
+  };
+
   if (error) {
     return (
       <div className="rounded-xl border border-rose-200 bg-rose-50 p-4">
@@ -341,11 +393,29 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-10">
           <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-7">
-            <div className="mb-3 flex justify-end">
+            <div className="mb-3 flex justify-end gap-2">
+              {schema.actions?.filter(evaluateActionVisibility).map((action) => (
+                <button
+                  key={action.name}
+                  type="button"
+                  onClick={() => void executeAction(action)}
+                  disabled={Boolean(actionLoading) || saving}
+                  className={`rounded-md px-3 py-1.5 text-xs transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                    action.style === 'danger'
+                      ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
+                      : action.style === 'primary'
+                      ? 'bg-blue-600 text-white hover:bg-blue-700'
+                      : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  {actionLoading === action.name ? '执行中...' : action.label}
+                </button>
+              ))}
+              <div className="w-px bg-gray-200 mx-1" /> {/* Divider between custom actions and save */}
               <button
                 type="button"
                 onClick={() => void saveForm()}
-                disabled={saving}
+                disabled={saving || Boolean(actionLoading)}
                 className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? '保存中...' : '保存 (Ctrl+Enter)'}

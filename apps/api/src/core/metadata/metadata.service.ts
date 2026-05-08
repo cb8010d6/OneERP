@@ -646,6 +646,30 @@ export class MetadataService {
           { name: 'taxTotal', label: '税额', type: 'number' },
           { name: 'totalAmount', label: '总金额', type: 'number' },
           { name: 'notes', label: '备注', type: 'text' },
+          {
+            name: 'lines',
+            label: '采购明细',
+            type: 'subtable',
+            subtable: {
+              fields: [
+                {
+                  name: 'materialId',
+                  label: '物料',
+                  type: 'reference',
+                  required: true,
+                  reference: {
+                    model: 'material',
+                    labelField: 'name',
+                    valueField: 'id',
+                    relationField: 'material',
+                  },
+                },
+                { name: 'quantity', label: '数量', type: 'number', required: true },
+                { name: 'unitPrice', label: '单价', type: 'number', required: true },
+                { name: 'taxRate', label: '税率(%)', type: 'number' },
+              ],
+            },
+          },
         ],
         views: {
           form: {
@@ -657,6 +681,7 @@ export class MetadataService {
               'expectedDate',
               'totalAmount',
               'notes',
+              'lines',
             ],
           },
           list: {
@@ -766,7 +791,7 @@ export class MetadataService {
             defaultSort: { createdAt: 'desc' },
             searchFields: ['invoiceNo', 'status'],
           },
-          kanban: {
+            kanban: {
             statusField: 'status',
             columns: [
               { value: 'UNPAID', label: '未付款', color: 'bg-rose-50' },
@@ -775,6 +800,116 @@ export class MetadataService {
             ],
           },
         },
+      },
+    ],
+    [
+      'journalEntry',
+      {
+        model: 'journalEntry',
+        label: '财务凭证',
+        description: '会计分录凭证。',
+        companyScoped: true,
+        fields: [
+          { name: 'entryNo', label: '凭证号', type: 'string', required: true },
+          { name: 'date', label: '凭证日期', type: 'date', required: true },
+          {
+            name: 'journalId',
+            label: '账簿',
+            type: 'reference',
+            required: true,
+            reference: {
+              model: 'journal',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'journal',
+            },
+          },
+          { name: 'reference', label: '参考/单据号', type: 'string' },
+          {
+            name: 'postingStatus',
+            label: '状态',
+            type: 'select',
+            options: [
+              { label: '草稿', value: 'DRAFT' },
+              { label: '已过账', value: 'POSTED' },
+              { label: '已冲销', value: 'REVERSED' },
+              { label: '已取消', value: 'CANCELLED' },
+            ],
+          },
+          { name: 'totalDebit', label: '总借方', type: 'number' },
+          { name: 'totalCredit', label: '总贷方', type: 'number' },
+          {
+            name: 'lines',
+            label: '分录明细',
+            type: 'subtable',
+            subtable: {
+              fields: [
+                {
+                  name: 'accountId',
+                  label: '科目',
+                  type: 'reference',
+                  required: true,
+                  reference: {
+                    model: 'account',
+                    labelField: 'name',
+                    valueField: 'id',
+                    relationField: 'account',
+                  },
+                },
+                { name: 'debit', label: '借方金额', type: 'number' },
+                { name: 'credit', label: '贷方金额', type: 'number' },
+                { name: 'description', label: '摘要', type: 'string' },
+              ],
+            },
+          },
+        ],
+        views: {
+          form: {
+            fields: [
+              'entryNo',
+              'date',
+              'journalId',
+              'reference',
+              'postingStatus',
+              'totalDebit',
+              'totalCredit',
+              'lines',
+            ],
+          },
+          list: {
+            columns: [
+              'entryNo',
+              'date',
+              'journalId',
+              'reference',
+              'postingStatus',
+              'totalDebit',
+              'totalCredit',
+            ],
+            defaultSort: { date: 'desc' },
+            searchFields: ['entryNo', 'reference'],
+          },
+          kanban: {
+            statusField: 'postingStatus',
+            columns: [
+              { value: 'DRAFT', label: '草稿', color: 'bg-slate-50' },
+              { value: 'POSTED', label: '已过账', color: 'bg-emerald-50' },
+              { value: 'REVERSED', label: '已冲销', color: 'bg-rose-50' },
+            ],
+          },
+        },
+        actions: [
+          {
+            name: 'reverse',
+            label: '冲销凭证',
+            style: 'danger',
+            endpoint: '/v1/finance/journal-entries/:id/reverse',
+            method: 'POST',
+            visibility: "eval:doc.postingStatus==='POSTED'",
+            requiresPermission: ['finance:reverse', 'finance:write'],
+            prompt: '请输入冲销原因：',
+          },
+        ],
       },
     ],
   ]);

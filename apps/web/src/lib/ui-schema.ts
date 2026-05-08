@@ -5,7 +5,8 @@ export type UiFieldType =
   | 'date'
   | 'select'
   | 'text'
-  | 'reference';
+  | 'reference'
+  | 'subtable';
 
 export interface UiFieldOption {
   label: string;
@@ -19,6 +20,12 @@ export interface UiFieldReference {
   relationField?: string;
 }
 
+export interface UiSubtableConfig {
+  fields: UiFieldSchema[];
+  minRows?: number;
+  maxRows?: number;
+}
+
 export interface UiFieldSchema {
   name: string;
   label: string;
@@ -30,6 +37,7 @@ export interface UiFieldSchema {
   depends_on?: string; // e.g. "eval:doc.status=='Draft'"
   hidden_depends_on?: string;
   read_only_depends_on?: string;
+  subtable?: UiSubtableConfig;
 }
 
 export interface UiFormSection {
@@ -60,6 +68,18 @@ export interface UiKanbanView {
   transitionForms?: Record<string, Array<{ name: string; label: string; placeholder?: string }>>;
 }
 
+export interface UiAction {
+  name: string;
+  label: string;
+  icon?: string;
+  style?: 'primary' | 'danger' | 'default';
+  endpoint: string; // e.g. /v1/purchase-orders/:id/cancel
+  method?: 'POST' | 'PUT' | 'DELETE';
+  visibility?: string; // eval expression, e.g. "eval:doc.status==='DRAFT'"
+  requiresPermission?: string[];
+  prompt?: string; // If set, prompt user for confirmation or input (e.g. reason)
+}
+
 export interface UiSchema {
   model: string;
   label: string;
@@ -71,4 +91,5 @@ export interface UiSchema {
     list: UiListView;
     kanban?: UiKanbanView;
   };
+  actions?: UiAction[];
 }

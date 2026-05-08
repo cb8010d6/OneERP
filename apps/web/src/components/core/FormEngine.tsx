@@ -5,6 +5,7 @@ import type { ChangeEvent } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { UiFieldSchema, UiSchema } from '@/lib/ui-schema';
 import { fetchResourceList } from '@/lib/dynamic-resource';
+import { SubTableEngine } from './SubTableEngine';
 
 interface FormEngineProps {
   schema: UiSchema;
@@ -12,12 +13,13 @@ interface FormEngineProps {
   onChange: (next: Record<string, unknown>) => void;
   onSubmit?: () => void;
   readOnly?: boolean;
+  hideLabels?: boolean;
 }
 
 const inputClass =
   'h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none focus:border-gray-300 focus:ring-2 focus:ring-gray-100';
 
-export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: FormEngineProps) {
+export function FormEngine({ schema, value, onChange, onSubmit, readOnly, hideLabels }: FormEngineProps) {
   const [referenceOptions, setReferenceOptions] = useState<
     Record<string, Array<{ label: string; value: string }>>
   >({});
@@ -89,7 +91,7 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
         : '';
     
     // Allow field-level readOnly override from condition evaluation
-    const isReadOnly = (field as any).readOnly ?? readOnly;
+    const isReadOnly = (field as UiFieldSchema & { readOnly?: boolean }).readOnly ?? readOnly;
 
     const commonProps = {
       id: field.name,
@@ -153,6 +155,17 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
       );
     }
 
+    if (field.type === 'subtable' && field.subtable) {
+      return (
+        <SubTableEngine
+          schema={field.subtable}
+          value={(rawValue as Record<string, unknown>[]) ?? []}
+          onChange={(next) => onChange(setNestedValue(value, field.name, next))}
+          readOnly={isReadOnly}
+        />
+      );
+    }
+
     const type = field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text';
     return <input {...commonProps} type={type} />;
   };
@@ -186,13 +199,13 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
 
     return (
       <div key={field.name} className="space-y-2">
-        {field.type !== 'boolean' && (
-          <label htmlFor={field.name} className="text-sm font-medium text-gray-700">
+        {(!hideLabels && field.type !== 'boolean') && (
+          <label htmlFor={field.name} className="text-sm font-medium text-gray-700 mb-1 block">
             {field.label}
             {field.required ? <span className="text-rose-500"> *</span> : null}
           </label>
         )}
-        {renderField({ ...field, readOnly: isReadOnly } as any)} {/* Assuming readOnly override if needed, though commonProps uses outer readOnly. Let's fix that. */}
+        {renderField({ ...field, readOnly: isReadOnly } as UiFieldSchema & { readOnly?: boolean })}
       </div>
     );
   };
