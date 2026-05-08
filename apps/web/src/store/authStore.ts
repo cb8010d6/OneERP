@@ -11,7 +11,7 @@ export interface User {
 export interface Company {
   id: string;
   name: string;
-  role: string;
+  role: string | { name: string; permissions: string[] };
 }
 
 interface AuthState {

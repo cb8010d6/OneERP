@@ -10,6 +10,7 @@ import { ListEngine } from './ListEngine';
 import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
+import { usePermissions } from '@/lib/permissions-context';
 
 type ViewMode = 'list' | 'kanban';
 
@@ -38,6 +39,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const [commentSaving, setCommentSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const { hasAnyPermission } = usePermissions();
 
   const initialFormValue = useMemo(() => {
     if (!schema) return {};
@@ -243,6 +245,13 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
 
   const evaluateActionVisibility = (action: NonNullable<UiSchema['actions']>[number]) => {
     if (!selected || !selected.id) return false; // Only show actions on existing records
+
+    if (action.requiresPermission && action.requiresPermission.length > 0) {
+      if (!hasAnyPermission(action.requiresPermission)) {
+        return false;
+      }
+    }
+
     if (!action.visibility) return true;
     
     if (action.visibility.startsWith('eval:')) {

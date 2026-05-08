@@ -17,6 +17,7 @@ export interface AuthCompanyRef {
 
 export interface AuthRoleRef {
   name: string;
+  permissions: string[];
 }
 
 export interface AuthCompanyMembership {

@@ -24,7 +24,10 @@ type AuthResult = {
   companies: Array<{
     id: string;
     name: string;
-    role: string;
+    role: {
+      name: string;
+      permissions: string[];
+    };
   }>;
 };
 
@@ -71,7 +74,10 @@ export class AuthService {
       companies: user.companies.map((membership) => ({
         id: membership.company.id,
         name: membership.company.name,
-        role: membership.role.name,
+        role: {
+          name: membership.role.name,
+          permissions: membership.role.permissions,
+        },
       })),
     };
   }
@@ -132,7 +138,10 @@ export class AuthService {
       companies: user.companies.map((membership) => ({
         id: membership.company.id,
         name: membership.company.name,
-        role: membership.role.name,
+        role: {
+          name: membership.role.name,
+          permissions: membership.role.permissions,
+        },
       })),
     };
   }

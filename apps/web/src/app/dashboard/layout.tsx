@@ -7,6 +7,7 @@ import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
 import { useWorkspaceTabsStore } from '../../store/workspaceTabsStore';
+import { PermissionsProvider } from '../../lib/permissions-context';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -104,9 +105,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!token || !user || !currentCompanyId) return null;
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
+    <PermissionsProvider>
+      <div className="flex h-screen bg-gray-50">
+        {/* Sidebar */}
+        <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="h-16 flex items-center justify-center border-b border-gray-200">
           <h1 className="text-xl font-bold text-blue-600">OneERP</h1>
         </div>
@@ -152,8 +154,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 {user?.username?.charAt(0)?.toUpperCase()}
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-900">{user?.username || 'User'}</p>
-                <p className="text-xs text-gray-500">{user?.role || 'Role'}</p>
+                <p className="text-sm font-medium text-gray-900">{user?.username || user?.name || 'User'}</p>
+                <p className="text-xs text-gray-500">
+                  {companies.find(c => c.id === currentCompanyId)?.role 
+                    ? typeof companies.find(c => c.id === currentCompanyId)!.role === 'object' 
+                      ? (companies.find(c => c.id === currentCompanyId)!.role as {name: string}).name 
+                      : companies.find(c => c.id === currentCompanyId)!.role as string
+                    : user?.role || 'Role'}
+                </p>
               </div>
             </div>
             <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100">
@@ -220,5 +228,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </main>
     </div>
+    </PermissionsProvider>
   );
 }
