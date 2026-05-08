@@ -252,9 +252,7 @@ export class FinanceService {
     };
     if (
       status &&
-      Object.values(EntryPostingStatus).includes(
-        status as EntryPostingStatus,
-      )
+      Object.values(EntryPostingStatus).includes(status as EntryPostingStatus)
     ) {
       where.postingStatus = status as EntryPostingStatus;
     }
@@ -265,7 +263,10 @@ export class FinanceService {
         include: {
           journal: { select: { id: true, code: true, name: true, type: true } },
           lines: {
-            include: { account: true, partner: { select: { id: true, name: true } } },
+            include: {
+              account: true,
+              partner: { select: { id: true, name: true } },
+            },
             orderBy: { lineNo: 'asc' },
           },
         },

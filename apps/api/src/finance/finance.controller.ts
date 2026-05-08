@@ -7,7 +7,12 @@ import {
   UseGuards,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiBearerAuth,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { FinanceService } from './finance.service';
 import { FinanceDlqService } from './finance-dlq.service';
 import { AccountingService } from './accounting.service';
@@ -86,7 +91,9 @@ export class FinanceController {
   }
 
   @Post('journal-entries/:id/reverse')
-  @ApiOperation({ summary: '冲销凭证（生成反向借贷分录，原凭证标记 REVERSED）' })
+  @ApiOperation({
+    summary: '冲销凭证（生成反向借贷分录，原凭证标记 REVERSED）',
+  })
   @RequirePermissions('finance:reverse', 'finance:write')
   async reverseJournalEntry(
     @CurrentCompany() companyId: string,
@@ -108,7 +115,11 @@ export class FinanceController {
   @ApiOperation({ summary: '试算平衡表（按科目聚合已过账凭证借贷合计）' })
   @ApiQuery({ name: 'startDate', required: false, description: '起始日期 ISO' })
   @ApiQuery({ name: 'endDate', required: false, description: '结束日期 ISO' })
-  @ApiQuery({ name: 'accountType', required: false, description: 'ASSET/LIABILITY/EQUITY/REVENUE/EXPENSE' })
+  @ApiQuery({
+    name: 'accountType',
+    required: false,
+    description: 'ASSET/LIABILITY/EQUITY/REVENUE/EXPENSE',
+  })
   async getTrialBalance(
     @CurrentCompany() companyId: string,
     @Query('startDate') startDate?: string,
@@ -138,4 +149,3 @@ export class FinanceController {
     return this.financeDlqService.retryPending(body?.limit ?? 20);
   }
 }
-

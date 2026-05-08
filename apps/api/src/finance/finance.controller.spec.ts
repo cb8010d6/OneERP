@@ -185,10 +185,10 @@ describe('FinanceController', () => {
       const expected = { data: [], total: 0 };
       mockFinanceService.getJournalEntries.mockResolvedValue(expected);
 
-      const result = await controller.getJournalEntries(
-        'c1',
-        { page: 1, limit: 20 },
-      );
+      const result = await controller.getJournalEntries('c1', {
+        page: 1,
+        limit: 20,
+      });
 
       expect(result).toEqual(expected);
     });

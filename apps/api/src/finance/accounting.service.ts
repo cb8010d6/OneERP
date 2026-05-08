@@ -641,8 +641,7 @@ export class AccountingService {
 
     // 生成反向分录：借方 ↔ 贷方
     const reversalDescription =
-      `冲销凭证 ${original.entryNo}` +
-      (reason ? ` (原因: ${reason})` : '');
+      `冲销凭证 ${original.entryNo}` + (reason ? ` (原因: ${reason})` : '');
 
     return this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(

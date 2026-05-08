@@ -664,8 +664,18 @@ export class MetadataService {
                     relationField: 'material',
                   },
                 },
-                { name: 'quantity', label: '数量', type: 'number', required: true },
-                { name: 'unitPrice', label: '单价', type: 'number', required: true },
+                {
+                  name: 'quantity',
+                  label: '数量',
+                  type: 'number',
+                  required: true,
+                },
+                {
+                  name: 'unitPrice',
+                  label: '单价',
+                  type: 'number',
+                  required: true,
+                },
                 { name: 'taxRate', label: '税率(%)', type: 'number' },
               ],
             },
@@ -791,7 +801,7 @@ export class MetadataService {
             defaultSort: { createdAt: 'desc' },
             searchFields: ['invoiceNo', 'status'],
           },
-            kanban: {
+          kanban: {
             statusField: 'status',
             columns: [
               { value: 'UNPAID', label: '未付款', color: 'bg-rose-50' },

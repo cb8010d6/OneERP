@@ -384,7 +384,12 @@ export class PurchaseOrdersService {
   // 取消采购单 (DRAFT/SUBMITTED/APPROVED → CANCELLED)
   // 已收货的采购单不允许直接取消
   // =======================================
-  async cancel(orderId: string, companyId: string, userId: string, reason?: string) {
+  async cancel(
+    orderId: string,
+    companyId: string,
+    userId: string,
+    reason?: string,
+  ) {
     const po = await this.prisma.purchaseOrder.findFirst({
       where: { id: orderId, companyId },
       include: { lines: true, receipts: { where: { status: 'CONFIRMED' } } },
