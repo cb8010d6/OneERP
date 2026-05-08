@@ -1,1 +1,5 @@
-fix(api): fix prettier linting issues in metadata service
+feat(api): implement finance DLQ scheduled retry
+
+- Installed `@nestjs/schedule` and imported `ScheduleModule` in `AppModule`.
+- Added `@Cron(CronExpression.EVERY_5_MINUTES)` to `FinanceDlqService` to automatically retry pending events.
+- Fixed `RetryPendingResult` type usage to correctly log processed/succeeded/failed counts.
