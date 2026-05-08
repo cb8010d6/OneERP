@@ -612,7 +612,12 @@ export class MetadataService {
         description: '采购入库管理与质检记录。',
         companyScoped: true,
         fields: [
-          { name: 'receiptNo', label: '收货单号', type: 'string', required: true },
+          {
+            name: 'receiptNo',
+            label: '收货单号',
+            type: 'string',
+            required: true,
+          },
           {
             name: 'partnerId',
             label: '供应商',
@@ -691,7 +696,12 @@ export class MetadataService {
                     relationField: 'location',
                   },
                 },
-                { name: 'quantity', label: '收货数量', type: 'number', required: true },
+                {
+                  name: 'quantity',
+                  label: '收货数量',
+                  type: 'number',
+                  required: true,
+                },
                 { name: 'batchNo', label: '批次号', type: 'string' },
               ],
             },
@@ -724,8 +734,16 @@ export class MetadataService {
             statusField: 'status',
             columns: [
               { value: 'DRAFT', label: '草稿', color: 'bg-slate-50' },
-              { value: 'PENDING_INSPECTION', label: '待检验', color: 'bg-amber-50' },
-              { value: 'CONFIRMED', label: '已确认入库', color: 'bg-emerald-50' },
+              {
+                value: 'PENDING_INSPECTION',
+                label: '待检验',
+                color: 'bg-amber-50',
+              },
+              {
+                value: 'CONFIRMED',
+                label: '已确认入库',
+                color: 'bg-emerald-50',
+              },
               { value: 'REVERSED', label: '已冲销', color: 'bg-rose-50' },
             ],
           },
