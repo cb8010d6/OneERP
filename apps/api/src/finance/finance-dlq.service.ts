@@ -43,9 +43,15 @@ export class FinanceDlqService {
     try {
       const result = await this.retryPending(50);
       if (result.total > 0) {
-        const succeeded = result.results.filter((r) => r.status === 'RESOLVED').length;
-        const failed = result.results.filter((r) => r.status === 'FAILED').length;
-        this.logger.log(`DLQ retry completed. Processed: ${result.total}, Succeeded: ${succeeded}, Failed: ${failed}`);
+        const succeeded = result.results.filter(
+          (r) => r.status === 'RESOLVED',
+        ).length;
+        const failed = result.results.filter(
+          (r) => r.status === 'FAILED',
+        ).length;
+        this.logger.log(
+          `DLQ retry completed. Processed: ${result.total}, Succeeded: ${succeeded}, Failed: ${failed}`,
+        );
       }
     } catch (error) {
       this.logger.error('Failed to run scheduled DLQ retry', error);
