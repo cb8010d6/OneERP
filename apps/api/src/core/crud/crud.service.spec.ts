@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { CrudService } from './crud.service';
 
 // ---------------------------------------------------------------------------
@@ -16,7 +20,9 @@ function createMockDelegate() {
   };
 }
 
-function createMockPrisma(modelDelegate: ReturnType<typeof createMockDelegate>) {
+function createMockPrisma(
+  modelDelegate: ReturnType<typeof createMockDelegate>,
+) {
   return {
     order: modelDelegate,
     partner: modelDelegate,
@@ -27,10 +33,25 @@ function createMockPrisma(modelDelegate: ReturnType<typeof createMockDelegate>) 
           fields: [
             { name: 'id', kind: 'scalar', type: 'String', isList: false },
             { name: 'orderNo', kind: 'scalar', type: 'String', isList: false },
-            { name: 'partnerId', kind: 'scalar', type: 'String', isList: false },
-            { name: 'companyId', kind: 'scalar', type: 'String', isList: false },
+            {
+              name: 'partnerId',
+              kind: 'scalar',
+              type: 'String',
+              isList: false,
+            },
+            {
+              name: 'companyId',
+              kind: 'scalar',
+              type: 'String',
+              isList: false,
+            },
             { name: 'status', kind: 'scalar', type: 'String', isList: false },
-            { name: 'totalAmount', kind: 'scalar', type: 'Float', isList: false },
+            {
+              name: 'totalAmount',
+              kind: 'scalar',
+              type: 'Float',
+              isList: false,
+            },
             { name: 'partner', kind: 'object', type: 'Partner', isList: false },
             { name: 'items', kind: 'object', type: 'OrderItem', isList: true },
           ],
@@ -40,7 +61,12 @@ function createMockPrisma(modelDelegate: ReturnType<typeof createMockDelegate>) 
           fields: [
             { name: 'id', kind: 'scalar', type: 'String', isList: false },
             { name: 'name', kind: 'scalar', type: 'String', isList: false },
-            { name: 'companyId', kind: 'scalar', type: 'String', isList: false },
+            {
+              name: 'companyId',
+              kind: 'scalar',
+              type: 'String',
+              isList: false,
+            },
             { name: 'company', kind: 'object', type: 'Company', isList: false },
           ],
         },
@@ -49,7 +75,9 @@ function createMockPrisma(modelDelegate: ReturnType<typeof createMockDelegate>) 
   };
 }
 
-function createMockMetadataService(companyScoped = new Set(['order', 'partner'])) {
+function createMockMetadataService(
+  companyScoped = new Set(['order', 'partner']),
+) {
   return {
     isCompanyScoped: jest.fn((m: string) => companyScoped.has(m)),
     getSchema: jest.fn().mockRejectedValue(new Error('not found')),
@@ -58,7 +86,9 @@ function createMockMetadataService(companyScoped = new Set(['order', 'partner'])
 }
 
 function createMockHooksService() {
-  return { execute: jest.fn((_e: string, ctx: unknown) => Promise.resolve(ctx)) };
+  return {
+    execute: jest.fn((_e: string, ctx: unknown) => Promise.resolve(ctx)),
+  };
 }
 
 function createMockAuditService() {
@@ -72,7 +102,10 @@ function buildService(deps?: { companyScopedModels?: Set<string> }) {
   const hooks = createMockHooksService();
   const audit = createMockAuditService();
   const service = new CrudService(
-    prisma as never, metadata as never, hooks as never, audit as never,
+    prisma as never,
+    metadata as never,
+    hooks as never,
+    audit as never,
   );
   return { service, delegate, metadata };
 }
@@ -91,7 +124,7 @@ describe('CrudService – 租户隔离: list()', () => {
 
     expect(delegate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ companyId: 'c1' }),
+        where: expect.objectContaining({ companyId: 'c1' }) as unknown,
       }),
     );
   });
@@ -110,7 +143,11 @@ describe('CrudService – 租户隔离: list()', () => {
     const { service } = buildService();
 
     await expect(
-      service.list('order', { filter: JSON.stringify({ companyId: 'c2' }) }, 'c1'),
+      service.list(
+        'order',
+        { filter: JSON.stringify({ companyId: 'c2' }) },
+        'c1',
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
@@ -130,7 +167,10 @@ describe('CrudService – 租户隔离: findOne()', () => {
     expect(result).toEqual(record);
     expect(delegate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: 'r1', companyId: 'c1' }),
+        where: expect.objectContaining({
+          id: 'r1',
+          companyId: 'c1',
+        }) as unknown,
       }),
     );
   });
@@ -158,7 +198,7 @@ describe('CrudService – 租户隔离: create()', () => {
 
     expect(delegate.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ companyId: 'c1' }),
+        data: expect.objectContaining({ companyId: 'c1' }) as unknown,
       }),
     );
   });
@@ -186,7 +226,10 @@ describe('CrudService – 租户隔离: update()', () => {
 
     expect(delegate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: 'r1', companyId: 'c1' }),
+        where: expect.objectContaining({
+          id: 'r1',
+          companyId: 'c1',
+        }) as unknown,
       }),
     );
   });
@@ -215,7 +258,10 @@ describe('CrudService – 租户隔离: remove()', () => {
 
     expect(delegate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: 'r1', companyId: 'c1' }),
+        where: expect.objectContaining({
+          id: 'r1',
+          companyId: 'c1',
+        }) as unknown,
       }),
     );
   });
@@ -224,9 +270,9 @@ describe('CrudService – 租户隔离: remove()', () => {
     const { service, delegate } = buildService();
     delegate.findFirst.mockResolvedValue(null);
 
-    await expect(
-      service.remove('order', 'r1', 'c1'),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.remove('order', 'r1', 'c1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });
 

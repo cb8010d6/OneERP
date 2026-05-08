@@ -95,9 +95,14 @@ describe('FinanceController', () => {
       const expected = { id: 'inv1', postingStatus: 'POSTED' };
       mockFinanceService.postInvoice.mockResolvedValue(expected);
 
-      const result = await controller.postInvoice('c1', { id: 'u1', email: 'test@example.com' }, 'inv1', {
-        taxRate: 0.13,
-      });
+      const result = await controller.postInvoice(
+        'c1',
+        { id: 'u1', email: 'test@example.com' },
+        'inv1',
+        {
+          taxRate: 0.13,
+        },
+      );
 
       expect(result).toEqual(expected);
       expect(mockFinanceService.postInvoice).toHaveBeenCalledWith(

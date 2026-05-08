@@ -91,7 +91,8 @@ export class OrdersService {
   }
 
   async createOrder(companyId: string, userId: string, data: CreateOrderInput) {
-    const { partnerId, items, aiSummary, expectedDate, notes, taxCodeId } = data;
+    const { partnerId, items, aiSummary, expectedDate, notes, taxCodeId } =
+      data;
 
     // 自动生成订单号
     const orderNo = `ORD-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;

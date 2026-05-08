@@ -137,7 +137,7 @@ export function sanitizeFilter(
     if (PRISMA_LOGICAL_OPERATORS.has(key)) {
       const value = filter[key];
       if (Array.isArray(value)) {
-        result[key] = value.map((item) =>
+        result[key] = (value as unknown[]).map((item: unknown): unknown =>
           typeof item === 'object' && item !== null
             ? sanitizeFilter(item as Record<string, unknown>, modelMeta)
             : item,

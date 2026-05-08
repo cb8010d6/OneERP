@@ -13,8 +13,8 @@ import { Request } from 'express';
  */
 @Injectable()
 export class ThrottlerBehindProxyGuard extends ThrottlerGuard {
-  protected async getTracker(req: Record<string, any>): Promise<string> {
-    const request = req as Request;
+  protected getTracker(req: Record<string, unknown>): Promise<string> {
+    const request = req as unknown as Request;
 
     // X-Forwarded-For 可能包含多个 IP（经过多级代理），取第一个即真实客户端 IP
     const forwarded = request.headers['x-forwarded-for'];
@@ -22,16 +22,16 @@ export class ThrottlerBehindProxyGuard extends ThrottlerGuard {
       const ip = Array.isArray(forwarded)
         ? forwarded[0]
         : forwarded.split(',')[0].trim();
-      return ip;
+      return Promise.resolve(ip);
     }
 
     // 其次尝试 X-Real-IP（Nginx 常用配置）
     const realIp = request.headers['x-real-ip'];
     if (realIp) {
-      return Array.isArray(realIp) ? realIp[0] : realIp;
+      return Promise.resolve(Array.isArray(realIp) ? realIp[0] : realIp);
     }
 
     // 兜底使用 Express 解析出的 IP
-    return request.ip ?? 'unknown';
+    return Promise.resolve(request.ip ?? 'unknown');
   }
 }

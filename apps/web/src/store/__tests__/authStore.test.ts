@@ -30,13 +30,13 @@ describe('authStore', () => {
   // We need to require the module fresh each time to reset zustand state
   let useAuthStore: any;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.resetModules();
     localStorageMock.clear();
     jest.clearAllMocks();
 
-    // 必须在每次重置模块后重新 require，因为 zustand create 在模块加载时执行
-    const mod = require('../authStore');
+    // 必须在每次重置模块后重新导入，因为 zustand create 在模块加载时执行
+    const mod = await import('../authStore');
     useAuthStore = mod.useAuthStore;
   });
 
@@ -103,7 +103,7 @@ describe('authStore', () => {
   });
 
   describe('JWT 过期检测', () => {
-    it('过期 token 不恢复到初始状态', () => {
+    it('过期 token 不恢复到初始状态', async () => {
       // 创建一个已过期的 JWT (exp = 0 → 1970-01-01)
       // header: {"alg":"HS256","typ":"JWT"}
       // payload: {"sub":"1234567890","exp":0}
@@ -125,7 +125,7 @@ describe('authStore', () => {
 
       // 重新加载模块来触发 getInitialAuthState
       jest.resetModules();
-      const mod = require('../authStore');
+      const mod = await import('../authStore');
       const freshStore = mod.useAuthStore;
 
       // 过期 token 应该被清除

@@ -109,10 +109,7 @@ export class AccountingService {
     if (revenue <= 0 && tax <= 0) {
       const fallbackRate = Math.max(
         0,
-        Math.min(
-          1,
-          Number(payload.taxRate ?? invoice.taxCode?.rate ?? 0.13),
-        ),
+        Math.min(1, Number(payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)),
       );
       revenue = this.round2(amount / (1 + fallbackRate));
       tax = this.round2(amount - revenue);

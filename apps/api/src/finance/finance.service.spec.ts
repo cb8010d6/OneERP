@@ -193,12 +193,18 @@ describe('FinanceService', () => {
       });
       prisma.auditLog.create.mockResolvedValue({});
 
-      const result = await service.postInvoice('c1', 'inv1', 'u1', undefined, 0.13);
+      const result = await service.postInvoice(
+        'c1',
+        'inv1',
+        'u1',
+        undefined,
+        0.13,
+      );
 
       expect(result.postingStatus).toBe('POSTED');
       expect(prisma.invoice.update).toHaveBeenCalledWith({
         where: { id: 'inv1' },
-        data: expect.objectContaining({ postingStatus: 'POSTED' }),
+        data: expect.objectContaining({ postingStatus: 'POSTED' }) as unknown,
       });
       expect(eventEmitter.emit).toHaveBeenCalledWith(
         'finance.invoice.posted',

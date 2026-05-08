@@ -241,7 +241,17 @@ export class WorkflowService {
             throw new NotFoundException('目标业务单据不存在或无权限访问');
           }
 
-          const currentState = String(record[target.statusField] ?? '');
+          const rawCurrentState = record[target.statusField];
+          const currentState =
+            typeof rawCurrentState === 'string'
+              ? rawCurrentState
+              : rawCurrentState == null
+                ? ''
+                : typeof rawCurrentState === 'number' ||
+                    typeof rawCurrentState === 'boolean' ||
+                    typeof rawCurrentState === 'bigint'
+                  ? String(rawCurrentState)
+                  : '';
           const matched = workflow.transitions.find(
             (item) =>
               item.action === action && item.fromState.value === currentState,

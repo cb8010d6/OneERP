@@ -55,7 +55,8 @@ export class CrudService {
     const normalizedModelName = this.normalizeModelName(modelName);
     const model = this.resolveModel(normalizedModelName);
     const modelMeta = this.getDmmfModelMeta(normalizedModelName);
-    const rawFilter = parseJsonParam<Record<string, unknown>>(query.filter) ?? {};
+    const rawFilter =
+      parseJsonParam<Record<string, unknown>>(query.filter) ?? {};
     const filter = sanitizeFilter(rawFilter, modelMeta);
     const where = this.applyCompanyScope(
       normalizedModelName,
@@ -71,7 +72,9 @@ export class CrudService {
 
     const fields = parseJsonParam(query.fields, { allowCommaList: true });
     const select = normalizeSelect(fields);
-    const rawInclude = select ? undefined : parseJsonParam<Record<string, unknown>>(query.include);
+    const rawInclude = select
+      ? undefined
+      : parseJsonParam<Record<string, unknown>>(query.include);
     const include = sanitizeInclude(rawInclude, modelMeta);
     const schema = await this.getSchemaIfExists(normalizedModelName, companyId);
     const rawOrderBy =
@@ -112,7 +115,9 @@ export class CrudService {
     const fields = parseJsonParam(query.fields, { allowCommaList: true });
     const select = normalizeSelect(fields);
     const findOneModelMeta = this.getDmmfModelMeta(normalizedModelName);
-    const rawInclude = select ? undefined : parseJsonParam<Record<string, unknown>>(query.include);
+    const rawInclude = select
+      ? undefined
+      : parseJsonParam<Record<string, unknown>>(query.include);
     const include = sanitizeInclude(rawInclude, findOneModelMeta);
 
     const record = await model.findFirst({ where, select, include });

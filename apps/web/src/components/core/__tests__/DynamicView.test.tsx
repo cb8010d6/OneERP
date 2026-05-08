@@ -40,7 +40,11 @@ jest.mock('@/lib/dynamic-resource', () => ({
 }));
 
 jest.mock('@/lib/api', () => ({
-  default: { get: (...a: any[]) => mockApiGet(...a), post: (...a: any[]) => mockApiPost(...a) },
+  __esModule: true,
+  default: {
+    get: (...a: any[]) => mockApiGet(...a),
+    post: (...a: any[]) => mockApiPost(...a),
+  },
 }));
 
 /* ---------- Mock 子组件 ---------- */

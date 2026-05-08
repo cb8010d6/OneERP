@@ -19,7 +19,10 @@ export class CreateInvoiceDto {
   @Min(0)
   amount!: number;
 
-  @ApiProperty({ description: '税码ID (建议填写，未填将使用默认税码)', required: false })
+  @ApiProperty({
+    description: '税码ID (建议填写，未填将使用默认税码)',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   taxCodeId?: string;
