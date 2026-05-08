@@ -17,6 +17,8 @@ import {
 import { PurchaseOrdersService } from './purchase-orders.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
+import { PermissionsGuard } from '../core/guards/permissions.guard';
+import { RequirePermissions } from '../core/decorators/require-permissions.decorator';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
 import {
@@ -28,13 +30,14 @@ import type { JwtUserPayload } from '../core/http/request.types';
 
 @ApiTags('采购管理 (Purchase Orders)')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
 @Controller('purchase-orders')
 export class PurchaseOrdersController {
   constructor(private readonly poService: PurchaseOrdersService) {}
 
   @Post()
   @ApiOperation({ summary: '创建采购单' })
+  @RequirePermissions('purchase:write')
   async create(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: JwtUserPayload,
@@ -82,6 +85,7 @@ export class PurchaseOrdersController {
 
   @Post(':id/submit')
   @ApiOperation({ summary: '提交采购单审核 (DRAFT → SUBMITTED)' })
+  @RequirePermissions('purchase:write')
   async submit(
     @Param('id') id: string,
     @CurrentCompany() companyId: string,
@@ -94,6 +98,7 @@ export class PurchaseOrdersController {
   @ApiOperation({
     summary: '确认采购单 (SUBMITTED → APPROVED)，确认后可生成收货单',
   })
+  @RequirePermissions('purchase:approve')
   async confirm(
     @Param('id') id: string,
     @CurrentCompany() companyId: string,
@@ -104,6 +109,7 @@ export class PurchaseOrdersController {
 
   @Delete(':id')
   @ApiOperation({ summary: '删除草稿采购单' })
+  @RequirePermissions('purchase:write')
   async remove(
     @Param('id') id: string,
     @CurrentCompany() companyId: string,
@@ -116,6 +122,7 @@ export class PurchaseOrdersController {
   @ApiOperation({
     summary: '取消采购单 (DRAFT/SUBMITTED/APPROVED → CANCELLED)',
   })
+  @RequirePermissions('purchase:cancel', 'purchase:write')
   async cancel(
     @Param('id') id: string,
     @CurrentCompany() companyId: string,

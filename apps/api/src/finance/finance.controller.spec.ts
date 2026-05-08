@@ -5,6 +5,7 @@ import { FinanceDlqService } from './finance-dlq.service';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
+import { PermissionsGuard } from '../core/guards/permissions.guard';
 
 describe('FinanceController', () => {
   let controller: FinanceController;
@@ -39,6 +40,8 @@ describe('FinanceController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TenantGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PermissionsGuard)
       .useValue({ canActivate: () => true })
       .compile();
 

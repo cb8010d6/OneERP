@@ -13,6 +13,8 @@ import { FinanceDlqService } from './finance-dlq.service';
 import { AccountingService } from './accounting.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
+import { PermissionsGuard } from '../core/guards/permissions.guard';
+import { RequirePermissions } from '../core/decorators/require-permissions.decorator';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
 import { CreateInvoiceDto, CreatePaymentDto } from './dto/finance.dto';
@@ -21,7 +23,7 @@ import type { JwtUserPayload } from '../core/http/request.types';
 
 @ApiTags('财务管理 (Finance)')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
 @Controller('finance')
 export class FinanceController {
   constructor(
@@ -61,6 +63,7 @@ export class FinanceController {
 
   @Post('invoices/:id/post')
   @ApiOperation({ summary: '发票过账（触发收入凭证生成）' })
+  @RequirePermissions('finance:post', 'finance:write')
   async postInvoice(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: JwtUserPayload,
@@ -84,6 +87,7 @@ export class FinanceController {
 
   @Post('journal-entries/:id/reverse')
   @ApiOperation({ summary: '冲销凭证（生成反向借贷分录，原凭证标记 REVERSED）' })
+  @RequirePermissions('finance:reverse', 'finance:write')
   async reverseJournalEntry(
     @CurrentCompany() companyId: string,
     @CurrentUser() user: JwtUserPayload,
@@ -129,6 +133,7 @@ export class FinanceController {
 
   @Post('dlq/retry')
   @ApiOperation({ summary: '重试财务事件补偿队列' })
+  @RequirePermissions('finance:admin')
   async retryDlq(@Body() body?: { limit?: number }) {
     return this.financeDlqService.retryPending(body?.limit ?? 20);
   }
