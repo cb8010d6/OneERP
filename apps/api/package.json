@@ -8,6 +8,7 @@
   "scripts": {
     "build": "nest build",
     "seed": "ts-node seed.ts",
+    "init:prod": "ts-node scripts/production-init.ts",
     "ai:ddl": "ts-node scripts/export-prisma-ddl-context.ts",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",

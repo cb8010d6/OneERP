@@ -18,6 +18,9 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+ARG NEXT_PUBLIC_API_BASE_URL=/api/proxy
+ARG API_BASE_URL=http://api:8000
+
 # Copy dependencies from deps stage
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 
@@ -29,6 +32,8 @@ COPY apps/web ./apps/web
 # Set build-time environment variables
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
+ENV API_BASE_URL=${API_BASE_URL}
 
 # Build the Next.js application (standalone mode)
 RUN npm run build --prefix apps/web

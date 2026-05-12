@@ -85,6 +85,23 @@ npm run dev
 - API: http://localhost:8000/api
 - Swagger: http://localhost:8000/api/docs
 
+## 单机一键部署
+
+适合内测、试运行和生产演练：
+
+```powershell
+.\scripts\quickstart.ps1 -Rebuild
+```
+
+Linux/macOS:
+
+```bash
+sh scripts/quickstart.sh --rebuild
+```
+
+部署说明见 [docs/QUICKSTART_DEPLOY.md](./docs/QUICKSTART_DEPLOY.md)。
+真实库存/财务生产使用前必须完成 [docs/PRODUCTION_READINESS.md](./docs/PRODUCTION_READINESS.md)。
+
 ## 架构图
 
 ```mermaid

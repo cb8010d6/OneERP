@@ -11,7 +11,9 @@
     "lint": "npm --prefix apps/api run lint && npm --prefix apps/web run lint",
     "test": "npm --prefix apps/api run test -- --passWithNoTests && npm --prefix apps/web run test",
     "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
-    "validate": "npm --prefix apps/api run prisma:validate && npm --prefix apps/api run prisma:generate && npm run typecheck && npm run lint && npm run test && npm run build"
+    "validate": "npm --prefix apps/api run prisma:validate && npm --prefix apps/api run prisma:generate && npm run typecheck && npm run lint && npm run test && npm run build",
+    "quickstart": "powershell -ExecutionPolicy Bypass -File scripts/quickstart.ps1",
+    "backup": "powershell -ExecutionPolicy Bypass -File scripts/backup.ps1"
   },
   "dependencies": {
     "@nestjs/event-emitter": "^3.0.1",

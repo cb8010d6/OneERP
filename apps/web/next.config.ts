@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const appDir = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  turbopack: {
+    root: resolve(appDir, "..", ".."),
+  },
   /* ===== 生产构建配置 ===== */
   // 独立输出模式，适合 Docker / Serverless 部署
   output: "standalone",
@@ -85,7 +92,7 @@ const nextConfig: NextConfig = {
 
   /* ===== API 代理（rewrites） ===== */
   async rewrites() {
-    const apiBase = process.env.API_BASE_URL ?? "http://localhost:3001";
+    const apiBase = process.env.API_BASE_URL ?? "http://api:8000";
     return [
       {
         // 将 /api/proxy/* 请求代理到后端服务
