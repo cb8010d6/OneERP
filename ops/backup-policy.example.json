@@ -1,0 +1,7 @@
+{
+  "postgresIntervalMinutes": 15,
+  "minioIntervalMinutes": 60,
+  "retentionDays": 14,
+  "backupDir": "backups",
+  "offsiteDir": ""
+}

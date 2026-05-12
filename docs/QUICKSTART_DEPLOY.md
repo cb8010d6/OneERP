@@ -1,80 +1,81 @@
-# OneERP Quickstart Deployment
+# OneERP 快速部署 / Quickstart Deployment
 
-This guide is for a single-machine deployment suitable for internal trial use,
-pilot teams, and production rehearsals. It runs PostgreSQL, Redis, MinIO, API,
-Web, migration, and production initialization through Docker Compose.
+本文档以中文为主，英文作为辅助说明。它面向单机内测、试运行和生产演练，使用 Docker Compose 启动 PostgreSQL、Redis、MinIO、API、Web、迁移和生产初始化。
 
-## Prerequisites
+For bilingual teams: Chinese is the primary instruction; English labels clarify the commands and checkpoints.
 
-- Docker Desktop on Windows, or Docker Engine + Compose on Linux.
-- At least 4 CPU cores, 8 GB RAM, and 30 GB free disk.
-- A backup location outside the server if using real business data.
+真实库存或财务试生产时，先跑通本文档，再切换到 [`docs/HA_LITE_RUNBOOK.md`](./HA_LITE_RUNBOOK.md) 和 `docker-compose.ha-lite.yml`。
 
-## One Command Start
+## 前置条件 / Prerequisites
 
-### Windows PowerShell
+- Windows 使用 Docker Desktop；Linux 使用 Docker Engine + Compose。
+- 至少 4 CPU、8 GB RAM、30 GB 可用磁盘。
+- 如果使用真实业务数据，必须准备应用服务器之外的备份位置。
+
+## 一条命令启动 / One Command Start
+
+Windows PowerShell:
 
 ```powershell
 .\scripts\quickstart.ps1 -Rebuild
 ```
 
-### Linux/macOS
+Linux/macOS:
 
 ```bash
 sh scripts/quickstart.sh --rebuild
 ```
 
-The script creates `.env` with generated secrets if it does not exist.
+如果 `.env` 不存在，脚本会自动创建并生成本地密钥。
 
-Default URLs:
+默认地址 / Default URLs:
 
 - Web: http://localhost:3000
 - API docs: http://localhost:8000/api/docs
 - MinIO console: http://localhost:9001
 
-Default admin:
+默认管理员 / Default admin:
 
 - Email: `admin@oneerp.local`
-- Password: read `INIT_ADMIN_PASSWORD` in `.env`
+- Password: 查看 `.env` 中的 `INIT_ADMIN_PASSWORD`
 
-Change the admin password after first login.
+首次登录后必须修改管理员密码。
 
-## Daily Operations
+## 日常操作 / Daily Operations
 
-Start:
+启动 / Start:
 
 ```bash
 docker compose -f docker-compose.easy.yml up -d
 ```
 
-Stop:
+停止 / Stop:
 
 ```bash
 docker compose -f docker-compose.easy.yml down
 ```
 
-Status:
+状态 / Status:
 
 ```bash
 docker compose -f docker-compose.easy.yml ps
 ```
 
-Logs:
+日志 / Logs:
 
 ```bash
 docker compose -f docker-compose.easy.yml logs -f api web
 ```
 
-Upgrade after pulling new code:
+拉取新代码后升级 / Upgrade after pulling new code:
 
 ```bash
 docker compose -f docker-compose.easy.yml up -d --build
 ```
 
-The `migrate` service runs `prisma migrate deploy` and idempotent production
-initialization before the API starts.
+`migrate` 服务会在 API 启动前执行 `prisma migrate deploy` 和幂等生产初始化。
 
-## Backup
+## 备份 / Backup
 
 Windows:
 
@@ -88,17 +89,17 @@ Linux/macOS:
 sh scripts/backup.sh
 ```
 
-Backups are written to `backups/YYYYMMDD-HHMMSS/` and include:
+备份输出到 `backups/YYYYMMDD-HHMMSS/`，包含：
 
 - `postgres.sql`
 - `minio-data.tgz`
 - `.env.copy`
 
-Move backups off the application server.
+使用真实业务数据时，必须把备份移动或复制到应用服务器之外。
 
-## Restore
+## 恢复 / Restore
 
-Stop write traffic before restore.
+恢复前必须停止写入流量。
 
 Windows:
 
@@ -112,18 +113,30 @@ Linux/macOS:
 sh scripts/restore.sh backups/YYYYMMDD-HHMMSS
 ```
 
-## Internet Deployment Notes
+## 互联网部署注意事项 / Internet Deployment Notes
 
-For public internet access:
+公网或跨办公区访问时：
 
-1. Put a reverse proxy in front of Web/API, such as Caddy, Nginx, or a cloud load balancer.
-2. Enable HTTPS.
-3. Set `CORS_ORIGINS` to your real Web origin.
-4. Keep `NEXT_PUBLIC_API_BASE_URL=/api/proxy` if Web and API share one domain.
-5. Use strong secrets in `.env`.
-6. Do not expose PostgreSQL, Redis, or MinIO API ports to the public internet.
+1. 在 Web/API 前放置反向代理，例如 Caddy、Nginx 或云负载均衡。
+2. 启用 HTTPS。
+3. 将 `CORS_ORIGINS` 设置为真实 Web 域名。
+4. 如果 Web 和 API 使用同一个域名，保留 `NEXT_PUBLIC_API_BASE_URL=/api/proxy`。
+5. `.env` 必须使用强密钥。
+6. 不要把 PostgreSQL、Redis、MinIO API 端口暴露到公网。
 
-## Production Readiness Gate
+## 生产就绪门禁 / Production Readiness Gate
 
-Before using real inventory or finance data, complete
-[`docs/PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
+使用真实库存或财务数据前，必须完成：
+
+- [`docs/PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md)
+- [`docs/GO_LIVE_CHECKLIST.md`](./GO_LIVE_CHECKLIST.md)
+
+HA-lite 最小命令 / Minimum HA-lite commands:
+
+```powershell
+docker compose -f docker-compose.ha-lite.yml up -d --build
+.\scripts\deploy-check.ps1
+.\scripts\audit-prod-config.ps1
+.\scripts\backup.ps1 -ComposeFile docker-compose.ha-lite.yml
+.\scripts\restore-drill.ps1
+```

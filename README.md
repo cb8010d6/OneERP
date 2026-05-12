@@ -100,7 +100,10 @@ sh scripts/quickstart.sh --rebuild
 ```
 
 部署说明见 [docs/QUICKSTART_DEPLOY.md](./docs/QUICKSTART_DEPLOY.md)。
-真实库存/财务生产使用前必须完成 [docs/PRODUCTION_READINESS.md](./docs/PRODUCTION_READINESS.md)。
+真实库存/财务生产试运行使用 `docker-compose.ha-lite.yml`，并必须完成
+[docs/HA_LITE_RUNBOOK.md](./docs/HA_LITE_RUNBOOK.md)、
+[docs/PRODUCTION_READINESS.md](./docs/PRODUCTION_READINESS.md) 和
+[docs/GO_LIVE_CHECKLIST.md](./docs/GO_LIVE_CHECKLIST.md)。
 
 ## 架构图
 

@@ -1,10 +1,60 @@
 param(
-  [string]$OutputDir = "backups"
+  [string]$OutputDir = "",
+  [string]$PolicyFile = "ops/backup-policy.example.json",
+  [string]$ComposeFile = "docker-compose.easy.yml"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$backupRoot = Join-Path $root $OutputDir
+function Read-BackupPolicy {
+  param([string]$Path)
+
+  $defaults = [ordered]@{
+    postgresIntervalMinutes = 15
+    minioIntervalMinutes = 60
+    retentionDays = 14
+    backupDir = "backups"
+    offsiteDir = ""
+  }
+
+  $resolvedPath = Join-Path $root $Path
+  if (Test-Path $resolvedPath) {
+    $policy = Get-Content $resolvedPath -Raw | ConvertFrom-Json
+    foreach ($key in @($defaults.Keys)) {
+      if ($null -ne $policy.$key -and "$($policy.$key)" -ne "") {
+        $defaults[$key] = $policy.$key
+      }
+    }
+  }
+
+  return [pscustomobject]$defaults
+}
+
+function Remove-ExpiredBackups {
+  param(
+    [string]$BackupRoot,
+    [int]$RetentionDays
+  )
+
+  if (!(Test-Path $BackupRoot)) {
+    return
+  }
+
+  $cutoff = (Get-Date).AddDays(-1 * $RetentionDays)
+  Get-ChildItem -Path $BackupRoot -Directory |
+    Where-Object { $_.LastWriteTime -lt $cutoff } |
+    ForEach-Object {
+      Remove-Item -LiteralPath $_.FullName -Recurse -Force
+      Write-Host "Removed expired backup $($_.FullName)"
+    }
+}
+
+$policy = Read-BackupPolicy -Path $PolicyFile
+if ($OutputDir -eq "") {
+  $OutputDir = [string]$policy.backupDir
+}
+
+$backupRoot = if ([System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path $root $OutputDir }
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $target = Join-Path $backupRoot $stamp
 
@@ -12,9 +62,32 @@ New-Item -ItemType Directory -Force -Path $target | Out-Null
 
 Push-Location $root
 try {
-  docker compose -f docker-compose.easy.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > (Join-Path $target "postgres.sql")
-  docker compose -f docker-compose.easy.yml exec -T minio sh -c "cd /data && tar czf - ." > (Join-Path $target "minio-data.tgz")
-  Copy-Item .env (Join-Path $target ".env.copy")
+  docker compose -f $ComposeFile exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > (Join-Path $target "postgres.sql")
+  docker compose -f $ComposeFile exec -T minio sh -c "cd /data && tar czf - ." > (Join-Path $target "minio-data.tgz")
+  if (Test-Path ".env") {
+    Copy-Item .env (Join-Path $target ".env.copy")
+  }
+
+  $manifest = [ordered]@{
+    createdAt = (Get-Date).ToString("o")
+    composeFile = $ComposeFile
+    postgresIntervalMinutes = [int]$policy.postgresIntervalMinutes
+    minioIntervalMinutes = [int]$policy.minioIntervalMinutes
+    retentionDays = [int]$policy.retentionDays
+    files = @("postgres.sql", "minio-data.tgz", ".env.copy")
+  }
+  $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $target "backup-manifest.json") -Encoding UTF8
+
+  Remove-ExpiredBackups -BackupRoot $backupRoot -RetentionDays ([int]$policy.retentionDays)
+
+  if ("$($policy.offsiteDir)" -ne "") {
+    $offsiteRoot = [string]$policy.offsiteDir
+    $offsiteTarget = Join-Path $offsiteRoot $stamp
+    New-Item -ItemType Directory -Force -Path $offsiteTarget | Out-Null
+    Copy-Item -Path (Join-Path $target "*") -Destination $offsiteTarget -Recurse -Force
+    Write-Host "Off-site backup copy written to $offsiteTarget"
+  }
+
   Write-Host "Backup written to $target"
 } finally {
   Pop-Location

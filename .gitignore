@@ -58,6 +58,11 @@ target/
 
 # Local helper artifacts
 *.local
+backups/
+deploy-check-report.json
+prod-config-audit.json
+restore-drill-report.json
+.restore-drill/
 
 # Reference codebases not tracked in this repo
 
