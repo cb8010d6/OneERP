@@ -10,6 +10,26 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateInvoiceDto, CreatePaymentDto } from './dto/finance.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 
+export interface TrialBalanceRow {
+  accountId: string;
+  code: string;
+  name: string;
+  type: string;
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+export interface TrialBalanceResult {
+  startDate: string | null;
+  endDate: string | null;
+  totalDebit: number;
+  totalCredit: number;
+  difference: number;
+  balanced: boolean;
+  rows: TrialBalanceRow[];
+}
+
 @Injectable()
 export class FinanceService {
   private readonly logger = new Logger(FinanceService.name);
@@ -28,6 +48,23 @@ export class FinanceService {
     const subTotal = this.round2(total / (1 + safeRate));
     const taxAmount = this.round2(total - subTotal);
     return { subTotal, taxAmount, taxRate: safeRate };
+  }
+
+  private parseTrialBalanceDate(
+    value: string | undefined,
+    fieldName: 'startDate' | 'endDate',
+  ) {
+    if (!value) return undefined;
+
+    const normalized =
+      fieldName === 'endDate' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T23:59:59.999Z`
+        : value;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${fieldName} 日期格式无效`);
+    }
+    return date;
   }
 
   private async resolveTaxCode(companyId: string, taxCodeId?: string | null) {
@@ -244,5 +281,82 @@ export class FinanceService {
     });
 
     return updated;
+  }
+
+  async getTrialBalance(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<TrialBalanceResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate = this.parseTrialBalanceDate(endDate, 'endDate');
+
+    if (
+      parsedStartDate &&
+      parsedEndDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const journalEntryWhere: Prisma.JournalEntryWhereInput = {
+      companyId,
+      postingStatus: EntryPostingStatus.POSTED,
+    };
+    const dateFilter: Prisma.DateTimeFilter = {};
+    if (parsedStartDate) dateFilter.gte = parsedStartDate;
+    if (parsedEndDate) dateFilter.lte = parsedEndDate;
+    if (Object.keys(dateFilter).length > 0) {
+      journalEntryWhere.date = dateFilter;
+    }
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: { journalEntry: journalEntryWhere },
+      include: { account: true },
+    });
+
+    const rowsByAccount = new Map<string, TrialBalanceRow>();
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    for (const line of lines) {
+      const debit = this.round2(Number(line.debit ?? 0));
+      const credit = this.round2(Number(line.credit ?? 0));
+      totalDebit = this.round2(totalDebit + debit);
+      totalCredit = this.round2(totalCredit + credit);
+
+      const existing = rowsByAccount.get(line.accountId);
+      if (existing) {
+        existing.debit = this.round2(existing.debit + debit);
+        existing.credit = this.round2(existing.credit + credit);
+        existing.balance = this.round2(existing.debit - existing.credit);
+        continue;
+      }
+
+      rowsByAccount.set(line.accountId, {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type: line.account.type,
+        debit,
+        credit,
+        balance: this.round2(debit - credit),
+      });
+    }
+
+    const rows = [...rowsByAccount.values()].sort((a, b) =>
+      a.code.localeCompare(b.code),
+    );
+    const difference = this.round2(totalDebit - totalCredit);
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate?.toISOString() ?? null,
+      totalDebit,
+      totalCredit,
+      difference,
+      balanced: Math.abs(difference) < 0.01,
+      rows,
+    };
   }
 }

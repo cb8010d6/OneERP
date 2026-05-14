@@ -46,6 +46,10 @@ if ($cors -eq "" -or $cors -match '\*' -or $cors -match 'localhost') {
   Add-Finding "P1" "cors-origins" "Use real trusted origins for production CORS_ORIGINS"
 }
 
+if ([string]$envMap["AI_WRITE_ENABLED"] -eq "true") {
+  Add-Finding "P1" "ai-write-enabled" "AI write actions require completed staff permission acceptance and explicit approval"
+}
+
 if (Test-Path $composePath) {
   $composeText = Get-Content $composePath -Raw
   foreach ($port in @("5432", "6379", "9000", "9001")) {

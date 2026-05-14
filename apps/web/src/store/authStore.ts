@@ -2,14 +2,17 @@ import { create } from 'zustand';
 
 export interface User {
   id: string;
-  username: string;
-  role: string;
+  email?: string;
+  name?: string;
+  username?: string;
+  role?: string;
 }
 
 export interface Company {
   id: string;
   name: string;
   role: string;
+  permissions?: string[];
 }
 
 interface AuthState {

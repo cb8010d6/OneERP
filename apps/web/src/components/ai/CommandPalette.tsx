@@ -13,6 +13,7 @@ type Message = {
     originalInput: string;
     toolName: string;
     args: Record<string, unknown>;
+    writeEnabled?: boolean;
   };
 };
 
@@ -239,13 +240,19 @@ export function CommandPalette() {
                     {msg.draft ? (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                         <p className="text-xs text-amber-800">待确认动作: {msg.draft.toolName}</p>
+                        {msg.draft.writeEnabled === false ? (
+                          <p className="mt-1 text-xs text-amber-700">
+                            AI 写操作当前已关闭，请先完成员工权限验收后再启用。
+                          </p>
+                        ) : null}
                         <pre className="mt-1 overflow-auto rounded bg-white p-2 text-[11px] text-slate-600">
                           {JSON.stringify(msg.draft.args, null, 2)}
                         </pre>
                         <div className="mt-2 flex justify-end">
                           <button
                             type="button"
-                            className="rounded-md bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-700"
+                            disabled={msg.draft.writeEnabled === false}
+                            className="rounded-md bg-amber-600 px-3 py-1 text-xs text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-50"
                             onClick={async () => {
                               try {
                                 setLoading(true);

@@ -109,7 +109,9 @@ try {
   Add-Check "postgres-restore" "passed" $sql
 
   if (Test-Path $minio) {
-    Get-Content $minio -AsByteStream | docker compose -p $ProjectName --env-file $drillEnv -f $ComposeFile exec -T minio sh -c "cd /data && tar xzf -" | Out-Null
+    docker compose -p $ProjectName --env-file $drillEnv -f $ComposeFile cp $minio minio:/tmp/minio-data.tgz
+    if ($LASTEXITCODE -ne 0) { throw "MinIO archive copy failed" }
+    docker compose -p $ProjectName --env-file $drillEnv -f $ComposeFile exec -T minio sh -c "cd /data && tar xzf /tmp/minio-data.tgz && rm -f /tmp/minio-data.tgz" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "MinIO restore failed" }
     Add-Check "minio-restore" "passed" $minio
   } else {

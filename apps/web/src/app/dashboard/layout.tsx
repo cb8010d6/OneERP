@@ -8,6 +8,15 @@ import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
 import { useWorkspaceTabsStore } from '../../store/workspaceTabsStore';
 
+function hasPermission(permissions: readonly string[], required?: string) {
+  if (!required) return true;
+  if (permissions.includes('ALL') || permissions.includes(required)) return true;
+  const parts = required.split(':');
+  const resource = parts[0];
+  const action = parts[parts.length - 1];
+  return permissions.includes(`${resource}:*`) || permissions.includes(`*:${action}`);
+}
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -16,15 +25,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { user, token, companies, currentCompanyId, setCurrentCompany, logout } = useAuthStore();
   const { openTab, activateTab, closeTab, activePath } = useWorkspaceTabsStore();
 
+  const currentPermissions =
+    companies.find((company) => company.id === currentCompanyId)?.permissions ?? [];
+  const currentCompany = companies.find((company) => company.id === currentCompanyId);
+
   const navItems = [
     { icon: LayoutDashboard, label: '概览', href: '/dashboard' },
-    { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales' },
-    { icon: Package, label: '生产与库存', href: '/dashboard/inventory' },
-    { icon: FileText, label: '图纸文档', href: '/dashboard/files' },
-    { icon: Users, label: '客户管理', href: '/dashboard/customers' },
-    { icon: Settings, label: '系统设置', href: '/dashboard/settings' },
-    { icon: Table, label: '网格实验', href: '/dashboard/lab/data-grid' },
+    { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales', permission: 'order:read' },
+    { icon: Package, label: '生产与库存', href: '/dashboard/inventory', permission: 'inventory:read' },
+    { icon: FileText, label: '图纸文档', href: '/dashboard/files', permission: 'fileRecord:read' },
+    { icon: Users, label: '客户管理', href: '/dashboard/customers', permission: 'partner:read' },
+    { icon: Settings, label: '系统设置', href: '/dashboard/settings', permission: 'user:read' },
+    { icon: Table, label: '网格实验', href: '/dashboard/lab/data-grid', permission: 'ALL' },
   ];
+  const visibleNavItems = navItems.filter((item) =>
+    hasPermission(currentPermissions, item.permission),
+  );
 
   useEffect(() => {
     setMounted(true);
@@ -122,7 +138,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = pathname === item.href;
             return (
               <button
@@ -145,11 +161,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
-                {user?.username?.charAt(0)?.toUpperCase()}
+                {(user?.name || user?.username || user?.email || 'U').charAt(0).toUpperCase()}
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-900">{user?.username || 'User'}</p>
-                <p className="text-xs text-gray-500">{user?.role || 'Role'}</p>
+                <p className="text-sm font-medium text-gray-900">
+                  {user?.name || user?.username || user?.email || 'User'}
+                </p>
+                <p className="text-xs text-gray-500">{currentCompany?.role || user?.role || 'Role'}</p>
               </div>
             </div>
             <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100">

@@ -9,6 +9,9 @@ Chinese is the source of truth. English labels are provided for bilingual review
 - [ ] 发布 commit 上 `npm run validate` 已通过。
 - [ ] `docker compose -f docker-compose.ha-lite.yml config` 已通过。
 - [ ] `scripts/deploy-check.*` 已通过。
+- [ ] `scripts/prod-smoke.*` 已通过，登录、订单、库存、发票页面/API 可用。
+- [ ] `scripts/staff-permission-smoke.*` 已通过，员工登录和无权限写操作拒绝均可用。
+- [ ] `scripts/business-acceptance.*` 已通过，采购收货、销售发货、发票过账、试算平衡均可用。
 - [ ] `scripts/audit-prod-config.*` 无 P0 问题。
 - [ ] 外网或跨办公区访问已启用 HTTPS。
 - [ ] PostgreSQL、Redis、MinIO 端口没有公网暴露。
@@ -23,6 +26,8 @@ Chinese is the source of truth. English labels are provided for bilingual review
 - [ ] `.env` 未进入 Git，并已安全备份。
 - [ ] JWT、数据库、MinIO、管理员密码均为生产唯一密钥。
 - [ ] 真实用户已分配业务角色，不能只依赖 `SuperAdmin`。
+- [ ] 员工账号创建、邀请链接、禁用、角色变更和重置密码均已验收。
+- [ ] `AI_WRITE_ENABLED=false`，除非已完成员工权限验收并单独批准 AI 写操作。
 
 负责人 / Owner: `________________`
 
@@ -46,6 +51,7 @@ Chinese is the source of truth. English labels are provided for bilingual review
 - [ ] 物料/产品和期初库存已导入。
 - [ ] 采购收货会增加库存，并产生库存流水。
 - [ ] 销售发货会扣减库存，库存不足时会拒绝。
+- [ ] `business-acceptance-report.json` 中库存相关步骤均为 `passed`。
 - [ ] 调拨会扣减源库位并增加目标库位。
 - [ ] 库存更正使用业务冲销/调整流程，不直接改数量。
 - [ ] 库存报表与实际期望数量一致。
@@ -62,6 +68,7 @@ Chinese is the source of truth. English labels are provided for bilingual review
 - [ ] 采购发票过账会生成借贷平衡凭证。
 - [ ] 冲销会生成反向凭证，不删除历史凭证。
 - [ ] 试算平衡表借贷相等。
+- [ ] `business-acceptance-report.json` 中财务相关步骤均为 `passed`。
 - [ ] Finance DLQ 重试已测试或已观察到正常运行。
 
 财务负责人 / Finance owner: `________________`

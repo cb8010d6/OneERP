@@ -17,13 +17,17 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../guards/jwt-auth.guard';
 import { TenantGuard } from '../guards/tenant.guard';
+import { PermissionsGuard } from '../guards/permissions.guard';
 import { CurrentCompany } from '../decorators/current-company.decorator';
+import { RequirePermissions } from '../decorators/permissions.decorator';
+import { Permission } from '../permissions/permissions';
 import { CrudService } from './crud.service';
 import { ResourceQueryDto } from './resource-query.dto';
 
 @ApiTags('通用资源 (Generic CRUD)')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
+@RequirePermissions(Permission.CrudAuto)
 @Controller('v1/resource')
 export class CrudController {
   constructor(private readonly crudService: CrudService) {}

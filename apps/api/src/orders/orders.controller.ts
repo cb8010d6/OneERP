@@ -17,8 +17,10 @@ import {
 import { OrdersService } from './orders.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
+import { PermissionsGuard } from '../core/guards/permissions.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
+import { RequirePermissions } from '../core/decorators/permissions.decorator';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 
@@ -28,12 +30,13 @@ interface CurrentUserPayload {
 
 @ApiTags('订单管理 (Orders)')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
 @Controller('orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Post()
+  @RequirePermissions('order:create')
   @ApiOperation({ summary: '创建新订单' })
   async createOrder(
     @CurrentCompany() companyId: string,
@@ -45,6 +48,7 @@ export class OrdersController {
   }
 
   @Get()
+  @RequirePermissions('order:read')
   @ApiOperation({ summary: '获取订单列表（支持分页和搜索）' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -65,6 +69,7 @@ export class OrdersController {
   }
 
   @Get(':id')
+  @RequirePermissions('order:read')
   @ApiOperation({ summary: '获取订单详情' })
   async getOrderById(
     @Param('id') orderId: string,
@@ -74,6 +79,7 @@ export class OrdersController {
   }
 
   @Get(':id/timeline')
+  @RequirePermissions('order:read')
   @ApiOperation({ summary: '获取订单时间线（审计与流转记录）' })
   async getOrderTimeline(
     @Param('id') orderId: string,
@@ -83,6 +89,7 @@ export class OrdersController {
   }
 
   @Delete(':id')
+  @RequirePermissions('order:delete')
   @ApiOperation({ summary: '删除草稿订单' })
   async deleteOrder(
     @Param('id') orderId: string,

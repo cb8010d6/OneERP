@@ -45,6 +45,7 @@ model Company {
   journalEntries JournalEntry[]
   eventDlqRecords EventDlq[]
   taxCodes    TaxCode[]
+  userInvitations UserInvitation[]
 }
 
 enum PartnerType {
@@ -94,6 +95,8 @@ model User {
   FileRecord FileRecord[]
   WorkReport WorkReport[]
   auditLogs  AuditLog[]
+  createdInvitations UserInvitation[] @relation("InvitationCreatedBy")
+  acceptedInvitations UserInvitation[] @relation("InvitationAcceptedBy")
 }
 
 model Role {
@@ -102,6 +105,7 @@ model Role {
   permissions String[] // JSON or Array 存放详细权限点，例如 ["order:read", "order:write"]
 
   users UserCompanyRole[]
+  invitations UserInvitation[]
 }
 
 // 用户在特定公司下的角色关联表
@@ -116,6 +120,29 @@ model UserCompanyRole {
   role    Role    @relation(fields: [roleId], references: [id])
 
   @@unique([userId, companyId])
+}
+
+model UserInvitation {
+  id          String    @id @default(uuid())
+  email       String
+  name        String?
+  tokenHash   String    @unique
+  companyId   String
+  roleId      String
+  createdById String
+  acceptedById String?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  company    Company @relation(fields: [companyId], references: [id])
+  role       Role    @relation(fields: [roleId], references: [id])
+  createdBy  User    @relation("InvitationCreatedBy", fields: [createdById], references: [id])
+  acceptedBy User?   @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id])
+
+  @@index([companyId, email])
+  @@index([companyId, createdAt])
 }
 
 model Department {
@@ -530,6 +557,8 @@ model Invoice {
   companyId  String
   dueDate    DateTime?
   issuedDate DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
   order    Order     @relation(fields: [orderId], references: [id])
   taxCode  TaxCode?  @relation(fields: [taxCodeId], references: [id])

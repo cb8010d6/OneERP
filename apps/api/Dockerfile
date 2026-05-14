@@ -62,4 +62,4 @@ EXPOSE 8000
 ENTRYPOINT ["/sbin/tini", "--"]
 
 # Start the production server
-CMD ["node", "dist/main"]
+CMD ["node", "dist/src/main.js"]

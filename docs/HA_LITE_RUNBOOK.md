@@ -28,6 +28,9 @@ docker compose -f docker-compose.ha-lite.yml up -d --build
 
 ```powershell
 .\scripts\deploy-check.ps1
+.\scripts\prod-smoke.ps1
+.\scripts\staff-permission-smoke.ps1
+.\scripts\business-acceptance.ps1
 .\scripts\audit-prod-config.ps1
 ```
 
@@ -126,7 +129,7 @@ docker compose -f docker-compose.ha-lite.yml up -d --build
 docker compose -f docker-compose.ha-lite.yml ps
 ```
 
-5. 执行部署检查和业务冒烟测试。
+5. 执行部署检查、业务冒烟测试、员工权限验收和真实业务数据验收：`scripts/deploy-check.*`、`scripts/prod-smoke.*`、`scripts/staff-permission-smoke.*`、`scripts/business-acceptance.*`。
 
 ## 回滚 / Rollback
 
@@ -134,12 +137,13 @@ docker compose -f docker-compose.ha-lite.yml ps
 
 1. 切回上一个确认可用的 Git commit。
 2. 使用 `docker-compose.ha-lite.yml` 重建服务。
-3. 执行 `scripts/deploy-check.*`。
+3. 执行 `scripts/deploy-check.*` 和 `scripts/prod-smoke.*`。
+4. 对真实库存/财务环境，再执行 `scripts/business-acceptance.*` 并复核报告。
 
 数据回滚 / Data rollback:
 
 1. 停止写入流量。
-2. 使用 `scripts/restore.*` 恢复 PostgreSQL 和 MinIO。
+2. 使用 `scripts/restore.*` 恢复 PostgreSQL 和 MinIO；HA-lite 环境使用 `-ComposeFile docker-compose.ha-lite.yml`。
 3. 使用同一个备份在临时 project 中执行恢复演练。
 4. 财务和库存负责人确认恢复数据后，再恢复对外服务。
 

@@ -7,8 +7,10 @@ import api from '../../lib/api';
 import { Building2, Lock, Mail } from 'lucide-react';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('admin@erp.com'); //  默认初始账号
-  const [password, setPassword] = useState('admin'); // 密码默认也是admin
+  const [email, setEmail] = useState(
+    process.env.NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL ?? 'admin@oneerp.local',
+  );
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
@@ -21,18 +23,18 @@ export default function LoginPage() {
     setError('');
 
     try {
-      // 呼叫咱们启动的黑窗口 8000 端口
       const res = await api.post('/auth/login', { email, password });
       
       const { accessToken, user, companies } = res.data;
       
-      // Zustand Store 全局状态记录
       setAuth(accessToken, user, companies);
       
-      // 登入成功，去工作台
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.message || '邮箱或密码错误，或系统未启动');
+      setError(
+        err.response?.data?.message ||
+          '邮箱或密码错误。Quickstart 本地默认密码见 .env.quickstart 的 INIT_ADMIN_PASSWORD。',
+      );
     } finally {
       setLoading(false);
     }
@@ -44,7 +46,7 @@ export default function LoginPage() {
         <div className="bg-slate-900 p-6 text-white text-center">
           <Building2 className="w-12 h-12 mx-auto mb-4 text-blue-400" />
           <h1 className="text-2xl font-bold">智能制造 EIP 全局系统</h1>
-          <p className="text-slate-400 text-sm mt-2">使用超级老板账号或员工账号进行接驳</p>
+          <p className="text-slate-400 text-sm mt-2">使用管理员账号或员工账号登录</p>
         </div>
         
         <form onSubmit={handleLogin} className="p-8 space-y-6">
@@ -86,6 +88,9 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+            <p className="mt-2 text-xs text-slate-500">
+              本地 quickstart 默认密码见 .env.quickstart 的 INIT_ADMIN_PASSWORD；上线后必须立即修改管理员密码。
+            </p>
           </div>
 
           <button

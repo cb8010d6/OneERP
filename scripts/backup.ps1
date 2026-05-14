@@ -63,7 +63,12 @@ New-Item -ItemType Directory -Force -Path $target | Out-Null
 Push-Location $root
 try {
   docker compose -f $ComposeFile exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > (Join-Path $target "postgres.sql")
-  docker compose -f $ComposeFile exec -T minio sh -c "cd /data && tar czf - ." > (Join-Path $target "minio-data.tgz")
+  if ($LASTEXITCODE -ne 0) { throw "PostgreSQL dump failed" }
+  docker compose -f $ComposeFile exec -T minio sh -c "tar czf /tmp/minio-data.tgz -C /data ."
+  if ($LASTEXITCODE -ne 0) { throw "MinIO archive creation failed" }
+  docker compose -f $ComposeFile cp minio:/tmp/minio-data.tgz (Join-Path $target "minio-data.tgz")
+  if ($LASTEXITCODE -ne 0) { throw "MinIO archive copy failed" }
+  docker compose -f $ComposeFile exec -T minio sh -c "rm -f /tmp/minio-data.tgz" | Out-Null
   if (Test-Path ".env") {
     Copy-Item .env (Join-Path $target ".env.copy")
   }

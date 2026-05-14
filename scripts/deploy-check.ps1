@@ -39,6 +39,16 @@ function Test-Http {
   }
 }
 
+function Invoke-Compose {
+  param([string[]]$ComposeArgs)
+  $baseArgs = @()
+  if ($EnvFile -ne "" -and (Test-Path (Join-Path $root $EnvFile))) {
+    $baseArgs += @("--env-file", $EnvFile)
+  }
+  $baseArgs += @("-f", $ComposeFile)
+  docker compose @baseArgs @ComposeArgs
+}
+
 Push-Location $root
 try {
   $envPath = Join-Path $root $EnvFile
@@ -47,13 +57,20 @@ try {
   if ($apiPort -eq "") { $apiPort = "8000" }
   $webPort = [string]$envMap["WEB_PORT"]
   if ($webPort -eq "") { $webPort = "3000" }
+  if ($ApiUrl -eq "" -and $env:API_BASE_URL -ne "") {
+    $ApiUrl = $env:API_BASE_URL
+    if ($ApiUrl -notmatch '/api/health$') { $ApiUrl = "$($ApiUrl.TrimEnd('/'))/health" }
+  }
+  if ($WebUrl -eq "" -and $env:WEB_BASE_URL -ne "") {
+    $WebUrl = $env:WEB_BASE_URL
+  }
   if ($ApiUrl -eq "") { $ApiUrl = "http://localhost:$apiPort/api/health" }
   if ($WebUrl -eq "") { $WebUrl = "http://localhost:$webPort/" }
 
   docker version | Out-Null
   Add-Result "docker" ($LASTEXITCODE -eq 0) "Docker CLI is available"
 
-  docker compose -f $ComposeFile config | Out-Null
+  Invoke-Compose -ComposeArgs @("config") | Out-Null
   Add-Result "compose-config" ($LASTEXITCODE -eq 0) "$ComposeFile is valid"
 
   Add-Result "env-file" (Test-Path $envPath) "$EnvFile exists"
@@ -64,7 +81,7 @@ try {
     Add-Result "secret-$name" $strong "length=$($value.Length)"
   }
 
-  $ps = docker compose -f $ComposeFile ps --format json
+  $ps = Invoke-Compose -ComposeArgs @("ps", "--format", "json")
   if ($LASTEXITCODE -eq 0 -and "$ps" -ne "") {
     Add-Result "compose-ps" $true "services reported by docker compose"
   } else {

@@ -10,6 +10,7 @@ import { AuthService } from './auth.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
+import { AcceptInviteDto } from './dto/accept-invite.dto';
 
 @ApiTags('认证 (Auth)')
 @Controller('auth')
@@ -38,5 +39,12 @@ export class AuthController {
       signUpDto.password,
       signUpDto.name,
     );
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('accept-invite')
+  @ApiOperation({ summary: '接受员工邀请并设置密码' })
+  acceptInvite(@Body() dto: AcceptInviteDto) {
+    return this.authService.acceptInvite(dto.token, dto.password, dto.name);
   }
 }

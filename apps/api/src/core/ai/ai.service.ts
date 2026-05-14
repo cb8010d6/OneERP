@@ -160,7 +160,7 @@ export class AIService {
       throw new BadRequestException('指令不能为空');
     }
 
-    const dryRun = Boolean(options?.dryRun);
+    const dryRun = options?.dryRun !== false;
     if (options?.overrideTool?.toolName) {
       if (dryRun && this.isWriteTool(options.overrideTool.toolName)) {
         return this.buildDraftResponse(
@@ -696,6 +696,7 @@ export class AIService {
         originalInput,
         toolName,
         args,
+        writeEnabled: process.env.AI_WRITE_ENABLED === 'true',
       },
     };
   }

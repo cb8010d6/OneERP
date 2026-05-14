@@ -7,7 +7,9 @@ type PrismaMiddlewareParams = Parameters<PrismaMiddleware>[0];
 type PrismaMiddlewareNext = Parameters<PrismaMiddleware>[1];
 
 type MiddlewareArgs = {
+  create?: unknown;
   data?: unknown;
+  update?: unknown;
   where?: unknown;
   [key: string]: unknown;
 };
@@ -18,23 +20,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const COMPANY_SCOPED_MODELS = new Set([
   'Order',
-  'OrderItem',
   'Partner',
+  'TaxCode',
   'Warehouse',
   'StockLocation',
-  'StockQuant',
   'Material',
   'ProductCategory',
   'Product',
   'Bom',
-  'BomLine',
   'FileRecord',
   'InventoryTransaction',
   'WorkOrder',
   'Invoice',
   'Workflow',
-  'WorkflowState',
-  'WorkflowTransition',
   'CustomFieldDefinition',
   'Account',
   'Journal',
@@ -65,7 +63,20 @@ export class PrismaService
         return next(params);
       }
 
-      if (!companyId) {
+      const args = (params.args ?? {}) as MiddlewareArgs;
+      const explicitCreateCompanyId =
+        params.action === 'create' && isRecord(args.data)
+          ? args.data.companyId
+          : params.action === 'upsert' && isRecord(args.create)
+            ? args.create.companyId
+            : undefined;
+      const resolvedCompanyId =
+        companyId ||
+        (typeof explicitCreateCompanyId === 'string'
+          ? explicitCreateCompanyId
+          : undefined);
+
+      if (!resolvedCompanyId) {
         throw new Error(
           '租户上下文缺失: 未携带 x-company-id，数据库访问已阻止',
         );
@@ -76,18 +87,21 @@ export class PrismaService
       // 由于 Prisma 默认的连接池机制，该连接会被污染并复用，导致跨租户越权漏洞。
       // 当前暂时依靠下面的 parameters 拦截级 where 子句进行隔离。
 
-      const args = (params.args ?? {}) as MiddlewareArgs;
-
-      if (params.action === 'create' || params.action === 'upsert') {
+      if (params.action === 'create') {
         const data = isRecord(args.data) ? args.data : {};
-        args.data = { ...data, companyId };
+        args.data = { ...data, companyId: resolvedCompanyId };
+      }
+
+      if (params.action === 'upsert') {
+        const create = isRecord(args.create) ? args.create : {};
+        args.create = { ...create, companyId: resolvedCompanyId };
       }
 
       if (params.action === 'createMany') {
         const data = Array.isArray(args.data) ? args.data : [args.data];
         args.data = data.map((item) => ({
           ...(isRecord(item) ? item : {}),
-          companyId,
+          companyId: resolvedCompanyId,
         }));
       }
 
@@ -102,7 +116,7 @@ export class PrismaService
       ) {
         const where = isRecord(args.where) ? args.where : {};
         args.where = {
-          AND: [where, { companyId }],
+          AND: [where, { companyId: resolvedCompanyId }],
         };
       }
 

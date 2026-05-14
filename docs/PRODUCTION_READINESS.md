@@ -20,6 +20,9 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - [ ] 干净服务器上 `docker compose -f docker-compose.ha-lite.yml up -d --build` 成功。
 - [ ] `docker compose -f docker-compose.ha-lite.yml config` 通过。
 - [ ] `scripts/deploy-check.*` 通过。
+- [ ] `scripts/prod-smoke.*` 通过，核心登录、订单、库存、发票接口无 500。
+- [ ] `scripts/staff-permission-smoke.*` 通过，员工只读和越权拒绝均可验证。
+- [ ] `scripts/business-acceptance.*` 通过，真实业务数据验收报告为 `passed`。
 - [ ] `scripts/audit-prod-config.*` 无 P0 问题。
 - [ ] `/api/health` 返回 `status: ok`。
 - [ ] 管理员登录可用，默认管理员密码已修改。
@@ -47,6 +50,7 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - [ ] 增加 PostgreSQL 和 MinIO 卷磁盘监控。
 - [ ] 创建明确业务角色，不能只依赖 `SuperAdmin`。
 - [ ] 复核财务和库存使用到的所有权限点。
+- [ ] AI 写操作保持关闭；开启前必须完成动作级权限验收和审计抽查。
 - [ ] 财务上线前记录期初余额。
 - [ ] 按顺序导入主数据：公司、用户、往来单位、会计科目、税码、仓库、库位、物料、产品、期初库存。
 - [ ] 试运行会计期间内冻结非必要 schema 变更。
@@ -55,6 +59,7 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 
 使用接近真实的 SKU、批次和库位执行：
 
+- 自动验收 / Automated check：`scripts/business-acceptance.*`。
 - [ ] 采购收货通过库存流水增加库存。
 - [ ] 调拨扣减源库位并增加目标库位。
 - [ ] 发货在可用库存不足时拒绝。
@@ -66,6 +71,7 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 
 使用接近真实的会计科目和税码执行：
 
+- 自动验收 / Automated check：`scripts/business-acceptance.*`。
 - [ ] 销售发票过账生成借贷平衡凭证。
 - [ ] 采购发票过账生成借贷平衡凭证。
 - [ ] 冲销生成反向凭证，不删除历史。
@@ -112,3 +118,4 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - 异地备份依赖 `offsiteDir` 或外部存储配置。
 - 前端 lint 仍有 warnings；不阻塞部署，但收紧 CI 前应继续减少。
 - GitHub 依赖漏洞告警需要单独做依赖加固迭代。
+- 项目领域语言记录在 [`CONTEXT.md`](../CONTEXT.md)，架构决策记录在 [`docs/adr`](./adr)。

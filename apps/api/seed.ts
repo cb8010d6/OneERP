@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { ROLE_TEMPLATES } from './src/core/permissions/permissions';
 
 const prisma = new PrismaClient();
 
@@ -14,9 +15,22 @@ async function main() {
   });
 
   // 2. 创建角色
-  const role = await prisma.role.create({
-      data: { name: 'SuperAdmin', permissions: ['ALL'] }
-  }).catch(async () => await prisma.role.findFirst());
+  const roles = new Map<string, { id: string }>();
+  for (const template of ROLE_TEMPLATES) {
+    const existing = await prisma.role.findFirst({
+      where: { name: template.name },
+    });
+    const role = existing
+      ? await prisma.role.update({
+          where: { id: existing.id },
+          data: { permissions: template.permissions },
+        })
+      : await prisma.role.create({
+          data: { name: template.name, permissions: template.permissions },
+        });
+    roles.set(role.name, role);
+  }
+  const role = roles.get('SuperAdmin');
 
   // 3. 创建您的两个主要公司
   const comp1 = await prisma.company.create({

@@ -5,11 +5,12 @@ import { CrudModule } from '../crud/crud.module';
 import { MetadataModule } from '../metadata/metadata.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { LlmAdapterService } from './llm-adapter.service';
+import { PermissionsGuard } from '../guards/permissions.guard';
 
 @Module({
   imports: [CrudModule, MetadataModule, WorkflowModule],
   controllers: [AIController],
-  providers: [AIService, LlmAdapterService],
+  providers: [AIService, LlmAdapterService, PermissionsGuard],
   exports: [AIService],
 })
 export class AIModule {}

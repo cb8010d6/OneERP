@@ -37,6 +37,8 @@ case "$CORS" in
   ""|*"*"*|*localhost*) finding P1 cors-origins "Use real trusted origins for production CORS_ORIGINS" ;;
 esac
 
+[ "$(env_value AI_WRITE_ENABLED)" = "true" ] && finding P1 ai-write-enabled "AI write actions require completed staff permission acceptance and explicit approval"
+
 if [ -f "$ROOT/$COMPOSE_FILE" ]; then
   for port in 5432 6379 9000 9001; do
     if grep -Eq ":[[:space:]]*$port\"|$port:$port" "$ROOT/$COMPOSE_FILE"; then

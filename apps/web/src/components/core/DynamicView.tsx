@@ -10,6 +10,7 @@ import { ListEngine } from './ListEngine';
 import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
+import { useAuthStore } from '@/store/authStore';
 
 type ViewMode = 'list' | 'kanban';
 
@@ -19,7 +20,16 @@ interface DynamicViewProps {
   externalDraft?: Record<string, unknown> | null;
 }
 
+function hasPermission(permissions: readonly string[], required: string) {
+  if (permissions.includes('ALL') || permissions.includes(required)) return true;
+  const parts = required.split(':');
+  const resource = parts[0];
+  const action = parts[parts.length - 1];
+  return permissions.includes(`${resource}:*`) || permissions.includes(`*:${action}`);
+}
+
 export function DynamicView({ modelName, title, externalDraft }: DynamicViewProps) {
+  const { companies, currentCompanyId } = useAuthStore();
   const [schema, setSchema] = useState<UiSchema | null>(null);
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [page, setPage] = useState(1);
@@ -46,6 +56,14 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   }, [schema]);
 
   const activeTitle = title ?? schema?.label ?? modelName;
+  const currentPermissions =
+    companies.find((company) => company.id === currentCompanyId)?.permissions ?? [];
+  const canCreate = hasPermission(currentPermissions, `${modelName}:create`);
+  const canUpdate = hasPermission(currentPermissions, `${modelName}:update`);
+  const selectedCanSave =
+    selected && typeof selected.id === 'string' && selected.id.trim()
+      ? canUpdate
+      : canCreate;
 
   const loadSchema = useCallback(async () => {
     try {
@@ -170,7 +188,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   };
 
   const saveForm = async () => {
-    if (!schema || !selected || saving) {
+    if (!schema || !selected || saving || !selectedCanSave) {
       return;
     }
 
@@ -245,6 +263,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
           <ViewButton
             icon={<SquarePen className="h-4 w-4" />}
             active={isFormOpen}
+            disabled={!canCreate}
             onClick={() => {
               setSelected(initialFormValue);
               setIsFormOpen(true);
@@ -324,10 +343,10 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
               <button
                 type="button"
                 onClick={() => void saveForm()}
-                disabled={saving}
+                disabled={saving || !selectedCanSave}
                 className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {saving ? '保存中...' : '保存 (Ctrl+Enter)'}
+                {saving ? '保存中...' : selectedCanSave ? '保存 (Ctrl+Enter)' : '无保存权限'}
               </button>
             </div>
             <FormEngine
@@ -424,18 +443,20 @@ function setNestedValue(
 interface ViewButtonProps {
   icon: ReactNode;
   active: boolean;
+  disabled?: boolean;
   label: string;
   onClick: () => void;
 }
 
-function ViewButton({ icon, active, label, onClick }: ViewButtonProps) {
+function ViewButton({ icon, active, disabled = false, label, onClick }: ViewButtonProps) {
   return (
     <button
       type="button"
       className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm transition ${
         active ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
-      }`}
+      } disabled:cursor-not-allowed disabled:opacity-50`}
       onClick={onClick}
+      disabled={disabled}
     >
       {icon}
       {label}

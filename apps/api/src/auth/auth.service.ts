@@ -14,6 +14,7 @@ type AuthResult = {
     id: string;
     name: string;
     role: string;
+    permissions: string[];
   }>;
 };
 
@@ -29,7 +30,11 @@ export class AuthService {
     pass: string,
   ): Promise<AuthenticatedUser | null> {
     const user = await this.usersService.findByEmail(email);
-    if (user && (await bcrypt.compare(pass, user.passwordHash))) {
+    if (
+      user &&
+      user.isActive &&
+      (await bcrypt.compare(pass, user.passwordHash))
+    ) {
       return {
         id: user.id,
         email: user.email,
@@ -53,6 +58,7 @@ export class AuthService {
         id: membership.company.id,
         name: membership.company.name,
         role: membership.role.name,
+        permissions: membership.role.permissions ?? [],
       })),
     };
   }
@@ -73,6 +79,20 @@ export class AuthService {
       email: user.email,
       name: user.name,
       companies: [],
+    });
+  }
+
+  async acceptInvite(token: string, password: string, name?: string) {
+    const user = await this.usersService.acceptInvitation(token, password, name);
+    if (!user) {
+      throw new UnauthorizedException('邀请接受失败');
+    }
+
+    return this.login({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      companies: user.companies,
     });
   }
 }

@@ -6,6 +6,7 @@ import { AccountingService } from './accounting.service';
 import { FinanceDlqService } from './finance-dlq.service';
 import { FinanceBridgeListener } from './finance-bridge.listener';
 import { EventQueueModule } from '../core/events/event-queue.module';
+import { PermissionsGuard } from '../core/guards/permissions.guard';
 
 @Module({
   imports: [PrismaModule, EventQueueModule],
@@ -15,6 +16,7 @@ import { EventQueueModule } from '../core/events/event-queue.module';
     AccountingService,
     FinanceDlqService,
     FinanceBridgeListener,
+    PermissionsGuard,
   ],
   exports: [AccountingService, FinanceDlqService],
 })

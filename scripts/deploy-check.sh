@@ -36,18 +36,29 @@ strong_secret() {
 
 API_PORT="$(env_value API_PORT 8000)"
 WEB_PORT="$(env_value WEB_PORT 3000)"
+if [ "${API_BASE_URL:-}" != "" ] && [ "${API_URL:-}" = "" ]; then
+  API_URL="${API_BASE_URL%/}/health"
+fi
+if [ "${WEB_BASE_URL:-}" != "" ] && [ "${WEB_URL:-}" = "" ]; then
+  WEB_URL="$WEB_BASE_URL"
+fi
 API_URL="${API_URL:-http://localhost:$API_PORT/api/health}"
 WEB_URL="${WEB_URL:-http://localhost:$WEB_PORT/}"
 
 cd "$ROOT"
 check docker docker version
-check compose-config docker compose -f "$COMPOSE_FILE" config
+if [ -f "$ROOT/$ENV_FILE" ]; then
+  COMPOSE_ENV_ARGS="--env-file $ENV_FILE"
+else
+  COMPOSE_ENV_ARGS=""
+fi
+check compose-config docker compose $COMPOSE_ENV_ARGS -f "$COMPOSE_FILE" config
 check env-file test -f "$ENV_FILE"
 check secret-POSTGRES_PASSWORD strong_secret POSTGRES_PASSWORD
 check secret-JWT_SECRET strong_secret JWT_SECRET
 check secret-MINIO_SECRET_KEY strong_secret MINIO_SECRET_KEY
 check secret-INIT_ADMIN_PASSWORD strong_secret INIT_ADMIN_PASSWORD
-check compose-ps docker compose -f "$COMPOSE_FILE" ps
+check compose-ps docker compose $COMPOSE_ENV_ARGS -f "$COMPOSE_FILE" ps
 check api-health curl -fsS "$API_URL"
 check web-root curl -fsS "$WEB_URL"
 

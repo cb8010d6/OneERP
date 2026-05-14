@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/store/authStore';
 import { Users, Building2, Settings } from 'lucide-react';
 import { CustomFieldDesigner, DynamicView } from '@/components/core';
+import { EmployeeManagement } from '@/components/settings/EmployeeManagement';
 
 interface Company {
   id: string;
@@ -63,7 +64,7 @@ export default function SettingsPage() {
 
         <div className="p-6">
           {activeTab === 'users' && (
-            <DynamicView modelName="userCompanyRole" title="员工与账号" />
+            <EmployeeManagement />
           )}
 
           {activeTab === 'departments' && (

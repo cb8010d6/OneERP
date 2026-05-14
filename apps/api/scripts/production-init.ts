@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { ROLE_TEMPLATES } from '../src/core/permissions/permissions';
 
 const prisma = new PrismaClient();
 
@@ -97,17 +98,29 @@ async function main() {
     (await prisma.company.findFirst({ where: { name: companyName } })) ??
     (await prisma.company.create({ data: { name: companyName } }));
 
-  const existingRole = await prisma.role.findFirst({
-    where: { name: 'SuperAdmin' },
-  });
-  const role = existingRole
-    ? await prisma.role.update({
-        where: { id: existingRole.id },
-        data: { permissions: ['ALL'] },
-      })
-    : await prisma.role.create({
-        data: { name: 'SuperAdmin', permissions: ['ALL'] },
-      });
+  const roles = new Map<string, { id: string }>();
+  for (const template of ROLE_TEMPLATES) {
+    const existingRole = await prisma.role.findFirst({
+      where: { name: template.name },
+    });
+    const role = existingRole
+      ? await prisma.role.update({
+          where: { id: existingRole.id },
+          data: { permissions: template.permissions },
+        })
+      : await prisma.role.create({
+          data: {
+            name: template.name,
+            permissions: template.permissions,
+          },
+        });
+    roles.set(role.name, role);
+  }
+
+  const role = roles.get('SuperAdmin');
+  if (!role) {
+    throw new Error('SuperAdmin role initialization failed');
+  }
 
   const admin = await prisma.user.upsert({
     where: { email },

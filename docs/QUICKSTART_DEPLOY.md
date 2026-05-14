@@ -107,6 +107,12 @@ Windows:
 .\scripts\restore.ps1 -BackupDir .\backups\YYYYMMDD-HHMMSS
 ```
 
+HA-lite 环境使用：
+
+```powershell
+.\scripts\restore.ps1 -BackupDir .\backups\YYYYMMDD-HHMMSS -ComposeFile docker-compose.ha-lite.yml
+```
+
 Linux/macOS:
 
 ```bash
@@ -136,6 +142,9 @@ HA-lite 最小命令 / Minimum HA-lite commands:
 ```powershell
 docker compose -f docker-compose.ha-lite.yml up -d --build
 .\scripts\deploy-check.ps1
+.\scripts\prod-smoke.ps1
+.\scripts\staff-permission-smoke.ps1
+.\scripts\business-acceptance.ps1
 .\scripts\audit-prod-config.ps1
 .\scripts\backup.ps1 -ComposeFile docker-compose.ha-lite.yml
 .\scripts\restore-drill.ps1
