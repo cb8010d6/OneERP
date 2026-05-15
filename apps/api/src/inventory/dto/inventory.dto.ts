@@ -5,7 +5,10 @@ import {
   IsNumber,
   Min,
   IsOptional,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateInboundDto {
   @ApiProperty({ description: '目标库位ID' })
@@ -103,6 +106,15 @@ export class SaleOrderShipmentDto {
   @IsString()
   sourceLocationId?: string;
 
+  @ApiProperty({
+    description: '发货明细列表',
+    type: () => [SaleOrderShipmentItemDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SaleOrderShipmentItemDto)
+  items!: SaleOrderShipmentItemDto[];
+
   @ApiPropertyOptional({ description: '批次号（可选）' })
   @IsOptional()
   @IsString()
@@ -112,6 +124,18 @@ export class SaleOrderShipmentDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+export class SaleOrderShipmentItemDto {
+  @ApiProperty({ description: '产品ID' })
+  @IsString()
+  @IsNotEmpty()
+  productId!: string;
+
+  @ApiProperty({ description: '发货数量' })
+  @IsNumber()
+  @Min(1)
+  shipQuantity!: number;
 }
 
 export class PurchaseInboundPostingDto {

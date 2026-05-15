@@ -114,8 +114,9 @@ async function main() {
       { value: 'DRAFT', label: '草稿', sort: 10, isInitial: true, isFinal: false },
       { value: 'PENDING', label: '待处理', sort: 20, isInitial: false, isFinal: false },
       { value: 'IN_PRODUCTION', label: '生产中', sort: 30, isInitial: false, isFinal: false },
-      { value: 'SHIPPED', label: '已发货', sort: 40, isInitial: false, isFinal: false },
-      { value: 'COMPLETED', label: '已完成', sort: 50, isInitial: false, isFinal: true },
+      { value: 'PARTIAL_SHIPPED', label: '部分发货', sort: 40, isInitial: false, isFinal: false },
+      { value: 'SHIPPED', label: '已发货', sort: 50, isInitial: false, isFinal: false },
+      { value: 'COMPLETED', label: '已完成', sort: 60, isInitial: false, isFinal: true },
       { value: 'CANCELLED', label: '已取消', sort: 99, isInitial: false, isFinal: true },
     ] as const;
 
@@ -149,11 +150,13 @@ async function main() {
     const transitions = [
       { from: 'DRAFT', to: 'PENDING', action: 'submit', label: '提交订单' },
       { from: 'PENDING', to: 'IN_PRODUCTION', action: 'start_production', label: '开始生产' },
-      { from: 'IN_PRODUCTION', to: 'SHIPPED', action: 'ship', label: '发货' },
+      { from: 'IN_PRODUCTION', to: 'PARTIAL_SHIPPED', action: 'ship', label: '发货' },
+      { from: 'PARTIAL_SHIPPED', to: 'SHIPPED', action: 'ship', label: '完成发货' },
       { from: 'SHIPPED', to: 'COMPLETED', action: 'complete', label: '完成' },
       { from: 'DRAFT', to: 'CANCELLED', action: 'cancel', label: '取消' },
       { from: 'PENDING', to: 'CANCELLED', action: 'cancel', label: '取消' },
       { from: 'IN_PRODUCTION', to: 'CANCELLED', action: 'cancel', label: '取消' },
+      { from: 'PARTIAL_SHIPPED', to: 'CANCELLED', action: 'cancel', label: '取消' },
       { from: 'SHIPPED', to: 'CANCELLED', action: 'cancel', label: '取消' },
     ] as const;
 

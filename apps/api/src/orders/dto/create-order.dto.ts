@@ -7,6 +7,7 @@ import {
   IsArray,
   ValidateNested,
   IsOptional,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -21,10 +22,12 @@ export class OrderItemDto {
   @Min(1)
   quantity!: number;
 
-  @ApiProperty({ description: '单价' })
+  @ApiPropertyOptional({ description: '请求折扣（百分比，支持 0.15 或 15 表示 15%）' })
+  @IsOptional()
   @IsNumber()
   @Min(0)
-  unitPrice!: number;
+  @Max(100)
+  requestedDiscount?: number;
 
   @ApiPropertyOptional({ description: '税码ID (建议填写，未填将使用默认税码)' })
   @IsOptional()

@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { UiFieldSchema, UiSchema } from '@/lib/ui-schema';
-import { fetchResourceList } from '@/lib/dynamic-resource';
+import { AsyncSelect } from './AsyncSelect';
 
 interface FormEngineProps {
   schema: UiSchema;
@@ -18,10 +18,6 @@ const inputClass =
   'h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none focus:border-gray-300 focus:ring-2 focus:ring-gray-100';
 
 export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: FormEngineProps) {
-  const [referenceOptions, setReferenceOptions] = useState<
-    Record<string, Array<{ label: string; value: string }>>
-  >({});
-
   const fieldMap = useMemo(() => {
     return schema.fields.reduce<Record<string, UiFieldSchema>>((acc, field) => {
       acc[field.name] = field;
@@ -32,54 +28,6 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
   const fieldOrder = schema.views.form?.fields ?? schema.fields.map((field) => field.name);
 
   const sections = schema.views.form?.sections;
-
-  useEffect(() => {
-    const referenceFields = schema.fields.filter((field) => field.type === 'reference' && field.reference?.model);
-    if (!referenceFields.length) {
-      setReferenceOptions({});
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadOptions = async () => {
-      const next: Record<string, Array<{ label: string; value: string }>> = {};
-
-      for (const field of referenceFields) {
-        const model = field.reference?.model;
-        if (!model) continue;
-
-        try {
-          const list = await fetchResourceList(model, {
-            page: 1,
-            limit: 200,
-          });
-
-          const labelField = field.reference?.labelField ?? 'name';
-          const valueField = field.reference?.valueField ?? 'id';
-
-          next[field.name] = (list.data as Record<string, unknown>[])
-            .map((item) => ({
-              label: String(item[labelField] ?? item[valueField] ?? ''),
-              value: String(item[valueField] ?? ''),
-            }))
-            .filter((item) => item.value);
-        } catch {
-          next[field.name] = [];
-        }
-      }
-
-      if (!cancelled) {
-        setReferenceOptions(next);
-      }
-    };
-
-    void loadOptions();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [schema.fields]);
 
   const renderField = (field: UiFieldSchema) => {
     const rawValue = getNestedValue(value, field.name);
@@ -125,16 +73,22 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
     }
 
     if (field.type === 'reference') {
-      const options = referenceOptions[field.name] ?? [];
+      const reference = field.reference;
+      if (!reference?.model) {
+        return <input {...commonProps} type="text" />;
+      }
+
       return (
-        <select {...commonProps}>
-          <option value="">请选择</option>
-          {options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+        <AsyncSelect
+          id={field.name}
+          value={String(rawValue ?? '')}
+          reference={reference}
+          disabled={isReadOnly}
+          className={inputClass}
+          placeholder={`请选择${field.label}`}
+          onSubmit={onSubmit}
+          onChange={(nextValue) => onChange(setNestedValue(value, field.name, nextValue))}
+        />
       );
     }
 

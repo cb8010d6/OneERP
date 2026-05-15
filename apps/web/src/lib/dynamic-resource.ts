@@ -14,6 +14,7 @@ interface ListParams {
   limit?: number;
   search?: string;
   searchFields?: string[];
+  filter?: Record<string, unknown>;
   orderBy?: Record<string, 'asc' | 'desc'>;
   include?: Record<string, unknown>;
 }
@@ -62,6 +63,10 @@ export async function fetchResourceList(modelName: string, params: ListParams) {
 
   if (params.searchFields?.length) {
     query.set('searchFields', params.searchFields.join(','));
+  }
+
+  if (params.filter) {
+    query.set('filter', JSON.stringify(params.filter));
   }
 
   if (params.orderBy) {

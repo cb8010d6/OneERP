@@ -83,6 +83,7 @@ export class MetadataService {
               { value: 'DRAFT', label: '草稿', color: 'bg-slate-50' },
               { value: 'PENDING', label: '待处理', color: 'bg-amber-50' },
               { value: 'IN_PRODUCTION', label: '生产中', color: 'bg-sky-50' },
+              { value: 'PARTIAL_SHIPPED', label: '部分发货', color: 'bg-violet-50' },
               { value: 'SHIPPED', label: '已发货', color: 'bg-indigo-50' },
               { value: 'COMPLETED', label: '已完成', color: 'bg-emerald-50' },
               { value: 'CANCELLED', label: '已取消', color: 'bg-rose-50' },

@@ -12,7 +12,7 @@ import { EventQueueService } from '../core/events/event-queue.service';
 interface CreateOrderItemInput {
   productId: string;
   quantity: number;
-  unitPrice: number;
+  requestedDiscount?: number;
   taxCodeId?: string;
 }
 
@@ -36,6 +36,53 @@ export class OrdersService {
 
   private round2(value: number) {
     return Math.round((value + Number.EPSILON) * 100) / 100;
+  }
+
+  private normalizeDiscountRate(requestedDiscount?: number) {
+    if (requestedDiscount === undefined || requestedDiscount === null) {
+      return 0;
+    }
+
+    const numericDiscount = Number(requestedDiscount);
+    if (!Number.isFinite(numericDiscount) || numericDiscount < 0) {
+      throw new BadRequestException('折扣格式不正确');
+    }
+
+    if (numericDiscount > 100) {
+      throw new BadRequestException('折扣不能超过 100%');
+    }
+
+    return numericDiscount > 1 ? numericDiscount / 100 : numericDiscount;
+  }
+
+  private async resolveProductPrice(companyId: string, productId: string) {
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, companyId },
+      select: {
+        id: true,
+        name: true,
+        sku: true,
+        material: {
+          select: {
+            id: true,
+            unitPrice: true,
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new BadRequestException(`产品不存在或无权访问：${productId}`);
+    }
+
+    if (!product.material) {
+      throw new BadRequestException(`产品 ${product.name} 未绑定物料单价，无法创建订单`);
+    }
+
+    return {
+      product,
+      baseUnitPrice: this.round2(Number(product.material.unitPrice ?? 0)),
+    };
   }
 
   private calcTaxBreakdown(
@@ -100,17 +147,30 @@ export class OrdersService {
     let totalAmount = 0;
     let subTotal = 0;
     let taxTotal = 0;
+    let approvalRequired = false;
 
     const baseTaxCode = await this.resolveTaxCode(companyId, taxCodeId);
     const orderItems = await Promise.all(
       (items ?? []).map(async (item) => {
+        const { baseUnitPrice } = await this.resolveProductPrice(
+          companyId,
+          item.productId,
+        );
+
         const resolvedTaxCode = item.taxCodeId
           ? await this.resolveTaxCode(companyId, item.taxCodeId)
           : baseTaxCode;
 
-        const lineBase = item.quantity * item.unitPrice;
+        const discountRate = this.normalizeDiscountRate(item.requestedDiscount);
+        if (discountRate > 0.1) {
+          approvalRequired = true;
+        }
+
+        const lineBase = this.round2(item.quantity * baseUnitPrice);
+        const discountAmount = this.round2(lineBase * discountRate);
+        const discountedBase = this.round2(lineBase - discountAmount);
         const breakdown = this.calcTaxBreakdown(
-          lineBase,
+          discountedBase,
           resolvedTaxCode.rate,
           resolvedTaxCode.isTaxInclusive,
         );
@@ -122,12 +182,20 @@ export class OrdersService {
         return {
           productId: item.productId,
           quantity: item.quantity,
-          unitPrice: item.unitPrice,
+          unitPrice: baseUnitPrice,
           totalPrice: breakdown.total,
           subTotal: breakdown.subTotal,
           taxAmount: breakdown.taxAmount,
           taxRate: Number(resolvedTaxCode.rate ?? 0),
           taxCodeId: resolvedTaxCode.id ?? null,
+          customAttributes:
+            discountRate > 0
+              ? {
+                  requestedDiscount: item.requestedDiscount,
+                  discountRate,
+                  discountAmount,
+                }
+              : undefined,
         };
       }),
     );
@@ -138,7 +206,7 @@ export class OrdersService {
         companyId,
         salesId: userId,
         partnerId,
-        status: 'DRAFT',
+        status: approvalRequired ? 'PENDING_APPROVAL' : 'DRAFT',
         totalAmount,
         subTotal: this.round2(subTotal),
         taxTotal: this.round2(taxTotal),

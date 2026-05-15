@@ -306,7 +306,6 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       .map((line) => ({
         productId: line.productId,
         quantity: Math.max(1, Number(line.quantity || 1)),
-        unitPrice: Math.max(0, Number(line.unitPrice || 0)),
       }));
 
     if (!items.length) {
