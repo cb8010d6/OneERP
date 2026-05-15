@@ -28,7 +28,11 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>((set, get) => ({
     const state = get();
     const exists = state.tabs.some((item) => item.path === tab.path);
     set({
-      tabs: exists ? state.tabs : [...state.tabs, tab],
+      tabs: exists
+        ? state.tabs.map((item) =>
+            item.path === tab.path ? { ...item, label: tab.label } : item,
+          )
+        : [...state.tabs, tab],
       activePath: tab.path,
     });
   },

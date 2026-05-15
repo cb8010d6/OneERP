@@ -6,8 +6,10 @@ import { DocumentDraftUploader } from '@/components/ai/DocumentDraftUploader';
 import { TrialBalanceView } from './TrialBalanceView';
 import { FileText, BarChart3 } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useI18n } from '@/lib/i18n';
 
 export default function FinancePageClient() {
+  const { t } = useI18n();
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [activeTab, setActiveTab] = useState<'invoices' | 'trial-balance'>('invoices');
 
@@ -36,7 +38,7 @@ export default function FinancePageClient() {
             )}
           >
             <FileText className="h-4 w-4" />
-            应收发票
+            {t('financeInvoices')}
           </button>
           <button
             onClick={() => setActiveTab('trial-balance')}
@@ -48,7 +50,7 @@ export default function FinancePageClient() {
             )}
           >
             <BarChart3 className="h-4 w-4" />
-            试算平衡表
+            {t('financeTrialBalance')}
           </button>
         </div>
       </div>
@@ -59,7 +61,7 @@ export default function FinancePageClient() {
 
           {draft ? (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-              <p className="text-sm font-medium text-amber-900">AI 草稿已就绪，已自动填充下方表单。</p>
+              <p className="text-sm font-medium text-amber-900">{t('financeDraftReady')}</p>
               <div className="mt-2 grid gap-2 text-xs text-amber-800 md:grid-cols-2">
                 {preview.map((item) => (
                   <div key={item.key} className="rounded bg-white/80 px-2 py-1 shadow-sm border border-amber-100">
@@ -70,7 +72,7 @@ export default function FinancePageClient() {
             </div>
           ) : null}
 
-          <DynamicView modelName="invoice" title="应收发票管理" externalDraft={draft} />
+          <DynamicView modelName="invoice" title={t('financeInvoiceManagement')} externalDraft={draft} />
         </div>
       ) : (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">

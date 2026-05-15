@@ -11,7 +11,7 @@ async function main() {
   const admin = await prisma.user.upsert({
     where: { email: 'admin@erp.com' },
     update: { passwordHash: pass },
-    create: { email: 'admin@erp.com', name: '系统大Boss', passwordHash: pass },
+    create: { email: 'admin@erp.com', name: '系统管理员', passwordHash: pass },
   });
 
   // 2. 创建角色
@@ -41,7 +41,7 @@ async function main() {
       data: { name: '精密器件二厂(分部)' }
   }).catch(async () => (await prisma.company.findMany())[1]);
 
-  // 4. 将老板和两家公司绑定权限，展示同一账号多公司的热切换功能
+  // 4. 将管理员和两家公司绑定权限，展示同一账号多公司的热切换功能
   if (comp1 && role) {
     await prisma.userCompanyRole.upsert({
         where: { userId_companyId: { userId: admin.id, companyId: comp1.id } },

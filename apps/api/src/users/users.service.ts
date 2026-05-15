@@ -105,7 +105,11 @@ export class UsersService {
     return { id: user.id, email: user.email, name: user.name };
   }
 
-  async toggleUserActive(userId: string, companyId: string, operatorId: string) {
+  async toggleUserActive(
+    userId: string,
+    companyId: string,
+    operatorId: string,
+  ) {
     if (userId === operatorId) {
       throw new ForbiddenException('不能禁用当前登录账号');
     }
@@ -126,9 +130,15 @@ export class UsersService {
       select: { id: true, isActive: true },
     });
 
-    await this.logUserAudit(companyId, operatorId, userId, 'USER_TOGGLE_ACTIVE', {
-      isActive: updated.isActive,
-    });
+    await this.logUserAudit(
+      companyId,
+      operatorId,
+      userId,
+      'USER_TOGGLE_ACTIVE',
+      {
+        isActive: updated.isActive,
+      },
+    );
 
     return updated;
   }
@@ -190,9 +200,15 @@ export class UsersService {
       data: { passwordHash },
     });
 
-    await this.logUserAudit(companyId, operatorId, userId, 'USER_PASSWORD_RESET', {
-      by: operatorId,
-    });
+    await this.logUserAudit(
+      companyId,
+      operatorId,
+      userId,
+      'USER_PASSWORD_RESET',
+      {
+        by: operatorId,
+      },
+    );
 
     return { id: userId, passwordReset: true };
   }
@@ -258,11 +274,17 @@ export class UsersService {
       },
     });
 
-    await this.logUserAudit(companyId, operatorId, invitation.id, 'USER_INVITE', {
-      email: dto.email,
-      roleId: role.id,
-      expiresAt: invitation.expiresAt,
-    });
+    await this.logUserAudit(
+      companyId,
+      operatorId,
+      invitation.id,
+      'USER_INVITE',
+      {
+        email: dto.email,
+        roleId: role.id,
+        expiresAt: invitation.expiresAt,
+      },
+    );
 
     return {
       id: invitation.id,
@@ -375,8 +397,8 @@ export class UsersService {
   private async resolveRole(roleId?: string) {
     const role = roleId
       ? await this.prisma.role.findUnique({ where: { id: roleId } })
-      : (await this.prisma.role.findFirst({ where: { name: 'Readonly' } })) ??
-        (await this.prisma.role.findFirst());
+      : ((await this.prisma.role.findFirst({ where: { name: 'Readonly' } })) ??
+        (await this.prisma.role.findFirst()));
 
     if (!role) throw new NotFoundException('系统中没有可用角色，请先创建角色');
     return role;

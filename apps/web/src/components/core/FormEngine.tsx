@@ -167,7 +167,7 @@ export function FormEngine({ schema, value, onChange, onSubmit, readOnly }: Form
       if (condition.startsWith('eval:')) {
         const expression = condition.replace('eval:', '').trim();
         try {
-          // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+           
           const func = new Function('doc', `return ${expression}`);
           return func(value);
         } catch (e) {

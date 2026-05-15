@@ -6,9 +6,11 @@ import { useAuthStore } from '../../store/authStore';
 import { Activity, Box, CreditCard, ShoppingBag, Sparkles, Truck } from 'lucide-react';
 import { Sheet } from '../../components/ui/Sheet';
 import { Chat2DashPanel } from '../../components/ai/Chat2DashPanel';
+import { useI18n } from '../../lib/i18n';
 
 export default function DashboardClient() {
   const { currentCompanyId, token } = useAuthStore();
+  const { t, locale } = useI18n();
   const [chat2DashOpen, setChat2DashOpen] = useState(false);
   const [stats, setStats] = useState({
     totalOrders: 0,
@@ -51,7 +53,7 @@ export default function DashboardClient() {
           className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-700 transition hover:bg-cyan-100"
         >
           <Sparkles className="h-4 w-4" />
-          打开 Chat2Dash
+          {t('dashboardOpenChat2Dash')}
         </button>
       </div>
 
@@ -62,7 +64,7 @@ export default function DashboardClient() {
             <ShoppingBag className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-500">总订单数</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboardTotalOrders')}</p>
             <p className="text-2xl font-bold text-gray-900">{stats.totalOrders}</p>
           </div>
         </div>
@@ -72,7 +74,7 @@ export default function DashboardClient() {
             <Activity className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-500">生产品产中</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboardInProduction')}</p>
             <p className="text-2xl font-bold text-gray-900">{stats.activeOrders}</p>
           </div>
         </div>
@@ -82,8 +84,8 @@ export default function DashboardClient() {
             <CreditCard className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-500">库存总价值 (元)</p>
-            <p className="text-2xl font-bold text-gray-900">¥{(stats.totalStockValue).toLocaleString()}</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboardInventoryValue')}</p>
+            <p className="text-2xl font-bold text-gray-900">¥{(stats.totalStockValue).toLocaleString(locale)}</p>
           </div>
         </div>
 
@@ -92,7 +94,7 @@ export default function DashboardClient() {
             <Box className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-500">低库存预警</p>
+            <p className="text-sm font-medium text-gray-500">{t('dashboardLowStock')}</p>
             <p className="text-2xl font-bold text-gray-900">{stats.lowStockItems}</p>
           </div>
         </div>
@@ -101,14 +103,14 @@ export default function DashboardClient() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
           <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
-             <Truck className="h-5 w-5 mr-2 text-gray-500" /> 近期订单动态
+             <Truck className="h-5 w-5 mr-2 text-gray-500" /> {t('dashboardRecentOrders')}
           </h3>
           <div className="space-y-4">
              {recentOrders.length > 0 ? recentOrders.map(order => (
                <div key={order.id} className="p-4 rounded-lg bg-gray-50 border border-gray-100 flex justify-between items-center">
                   <div>
                      <p className="font-medium text-gray-900">{order.orderNo}</p>
-                     <p className="text-sm text-gray-500">客户: {order.partner?.name || '未知'}</p>
+                     <p className="text-sm text-gray-500">{t('dashboardCustomer')}: {order.partner?.name || t('dashboardUnknown')}</p>
                   </div>
                   <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
                      order.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
@@ -121,16 +123,16 @@ export default function DashboardClient() {
                   </span>
                </div>
              )) : (
-               <div className="text-sm text-gray-500 text-center py-4">暂无近期订单</div>
+               <div className="text-sm text-gray-500 text-center py-4">{t('dashboardNoRecentOrders')}</div>
              )}
           </div>
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">系统公告</h3>
+          <h3 className="text-lg font-bold text-gray-900 mb-4">{t('dashboardAnnouncements')}</h3>
           <div className="prose text-gray-600 text-sm">
-             <p>欢迎使用现代企业EIP系统。您的账号已绑定多公司管理权限，请在左侧侧边栏切换需要管理的企业数据域。</p>
-             <p>系统已升级至最新版本，全面支持基于隔离数据沙箱的库存和订单流转。</p>
+             <p>{t('dashboardAnnouncement1')}</p>
+             <p>{t('dashboardAnnouncement2')}</p>
           </div>
         </div>
       </div>

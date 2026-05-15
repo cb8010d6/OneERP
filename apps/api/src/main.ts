@@ -10,6 +10,7 @@ import { AllExceptionsFilter } from './core/filters/all-exceptions.filter';
 // CORS 白名单：通过环境变量 CORS_ORIGINS 配置（逗号分隔），未配置时使用开发默认值
 const DEFAULT_CORS_ORIGINS = [
   'http://localhost:3000',
+  'http://localhost:30055',
   'http://localhost:5173',
   'http://localhost:8080',
 ];
@@ -101,20 +102,17 @@ async function bootstrap() {
 
   // 配置 Swagger
   const config = new DocumentBuilder()
-    .setTitle('EIP API')
-    .setDescription('ERP/EIP 后端接口文档')
+    .setTitle('OneERP API')
+    .setDescription('OneERP 后端接口文档')
     .setVersion('1.0')
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
-  // 监听 0.0.0.0 使暴露在内网网段
-  // 确保端口为 8000 避免和其他默认应用冲突
-  await app.listen(process.env.PORT ?? 8000, '0.0.0.0');
-  console.log(
-    `EIP 核心服务已运行，内网任意设备均可通过 http://[主机局域网IP]:8000/api 访问 API`,
-  );
-  console.log(`Swagger 接口文档地址: http://localhost:8000/api/docs`);
+  const port = Number(process.env.PORT ?? 8000);
+  await app.listen(port, '0.0.0.0');
+  console.log(`OneERP API 已启动: http://localhost:${port}/api`);
+  console.log(`Swagger 接口文档地址: http://localhost:${port}/api/docs`);
 }
 void bootstrap();

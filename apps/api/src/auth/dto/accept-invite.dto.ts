@@ -12,7 +12,9 @@ export class AcceptInviteDto {
   @MinLength(6)
   password!: string;
 
-  @ApiPropertyOptional({ description: '员工姓名，不填则使用邀请中的姓名或邮箱前缀' })
+  @ApiPropertyOptional({
+    description: '员工姓名，不填则使用邀请中的姓名或邮箱前缀',
+  })
   @IsOptional()
   @IsString()
   name?: string;

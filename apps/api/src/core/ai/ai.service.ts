@@ -85,12 +85,17 @@ export class AIService {
     return [
       {
         name: 'create_resource',
-        description: '用来对任意模型创建记录 create_resource(modelName, data)',
+        description:
+          '用来对任意模型创建记录。例如: "创建一个名为阿里科技的客户", "新建一个产品，SKU为XYZ"。支持模型: partner (客户/供应商), product (产品), material (原材料), order (销售订单)。',
         parameters: {
           type: 'object',
           properties: {
             modelName: { type: 'string', enum: models },
-            data: { type: 'object' },
+            data: {
+              type: 'object',
+              description:
+                '模型字段。partner: {name, type: "CUSTOMER"|"SUPPLIER"}, product: {sku, name, type: "STOCKABLE"|"SERVICE"}, order: {partnerId, status: "DRAFT"}',
+            },
           },
           required: ['modelName', 'data'],
         },
@@ -98,7 +103,7 @@ export class AIService {
       {
         name: 'transition_workflow',
         description:
-          '执行工作流流转 transition_workflow(modelName, recordId, action, note)',
+          '执行工作流流转（如订单发货、提交、完成）。例如: "把订单 ORD-001 标记为发货", "完成发票 INV-123"。action 对应 transition action code。',
         parameters: {
           type: 'object',
           properties: {
@@ -106,8 +111,21 @@ export class AIService {
               type: 'string',
               enum: ['order', 'workOrder', 'invoice'],
             },
-            recordId: { type: 'string' },
-            action: { type: 'string' },
+            recordId: {
+              type: 'string',
+              description: '记录 UUID。业务编号需要先由只读查询找到对应 id。',
+            },
+            action: {
+              type: 'string',
+              enum: [
+                'submit',
+                'start_production',
+                'ship',
+                'complete',
+                'cancel',
+                'post',
+              ],
+            },
             note: { type: 'string' },
           },
           required: ['modelName', 'recordId', 'action'],
@@ -703,20 +721,27 @@ export class AIService {
 
   private buildReadSchemaContext() {
     return `
-Tables:
-- "Order"(id, orderNo, status, totalAmount, companyId, createdAt)
-- "Invoice"(id, invoiceNo, amount, status, postingStatus, companyId, issuedDate)
-- "Payment"(id, invoiceId, amount, method, paymentDate)
-- "Partner"(id, name, type, companyId)
-- "InventoryTransaction"(id, type, materialId, quantity, companyId, createdAt)
-- "Material"(id, sku, name, category, unitPrice, companyId)
-- "JournalEntry"(id, entryNo, date, ref, companyId)
-- "JournalEntryLine"(id, journalEntryId, accountId, debit, credit)
+Tables and Fields:
+- "Order": id(uuid), orderNo(string), status(enum: DRAFT, PENDING, SHIPPED, COMPLETED), totalAmount(decimal), partnerId(uuid), companyId(uuid), createdAt(datetime)
+- "Invoice": id(uuid), invoiceNo(string), amount(decimal), status(enum: UNPAID, PARTIAL, PAID), postingStatus(enum: DRAFT, POSTED), companyId(uuid), orderId(uuid)
+- "Payment": id(uuid), invoiceId(uuid), amount(decimal), method(enum: CASH, TRANSFER, ALIPAY, WECHAT), paymentDate(datetime)
+- "Partner": id(uuid), name(string), code(string), type(enum: CUSTOMER, SUPPLIER, BOTH), companyId(uuid)
+- "InventoryTransaction": id(uuid), type(enum: INBOUND, OUTBOUND, TRANSFER), materialId(uuid), quantity(decimal), companyId(uuid), createdAt(datetime)
+- "Material": id(uuid), sku(string), name(string), category(string), unitPrice(decimal), companyId(uuid)
+- "JournalEntry": id(uuid), entryNo(string), date(datetime), ref(string), companyId(uuid)
+- "JournalEntryLine": id(uuid), journalEntryId(uuid), accountId(uuid), debit(decimal), credit(decimal)
+
+Relations:
+- Invoice.orderId -> Order.id
+- Order.partnerId -> Partner.id
+- Payment.invoiceId -> Invoice.id
+- JournalEntryLine.journalEntryId -> JournalEntry.id
 
 Rules:
-1) SQL must be read-only SELECT.
-2) Must include filter: "companyId" = $1 on company scoped table.
-3) No CTE, no semicolon, no DDL/DML.
+1) SQL must be a single read-only SELECT statement.
+2) MUST include filter: "companyId" = $1.
+3) Use JOINs for cross-table queries (e.g., to filter by Partner Name).
+4) No CTE, no semicolon, no DDL/DML.
     `.trim();
   }
 

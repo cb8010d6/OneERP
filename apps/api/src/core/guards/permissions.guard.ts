@@ -5,7 +5,12 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { PERMISSIONS_KEY, Permission, hasPermission } from '../permissions/permissions';
+import {
+  PERMISSIONS_ANY_KEY,
+  PERMISSIONS_KEY,
+  Permission,
+  hasPermission,
+} from '../permissions/permissions';
 import type { RequestWithAuth } from '../http/request.types';
 
 @Injectable()
@@ -19,6 +24,11 @@ export class PermissionsGuard implements CanActivate {
         context.getHandler(),
         context.getClass(),
       ]) ?? [];
+    const anyRequired =
+      this.reflector.getAllAndOverride<string[]>(PERMISSIONS_ANY_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]) ?? [];
 
     const permissions = request.userRole?.permissions ?? [];
     const requiredPermissions = required.flatMap((permission) =>
@@ -27,11 +37,17 @@ export class PermissionsGuard implements CanActivate {
         : [permission],
     );
 
-    if (
-      requiredPermissions.every((permission) =>
-        hasPermission(permissions, permission),
-      )
-    ) {
+    const allPassed = requiredPermissions.every((permission) => {
+      if (permission === Permission.WorkflowTransitionAuto) {
+        return this.canTransitionWorkflow(request, permissions);
+      }
+      return hasPermission(permissions, permission);
+    });
+    const anyPassed =
+      anyRequired.length === 0 ||
+      anyRequired.some((permission) => hasPermission(permissions, permission));
+
+    if (allPassed && anyPassed) {
       return true;
     }
 
@@ -48,5 +64,17 @@ export class PermissionsGuard implements CanActivate {
     if (method === 'PUT' || method === 'PATCH') return `${resource}:update`;
     if (method === 'DELETE') return `${resource}:delete`;
     return `${resource}:read`;
+  }
+
+  private canTransitionWorkflow(
+    request: RequestWithAuth,
+    permissions: readonly string[],
+  ) {
+    if (hasPermission(permissions, Permission.WorkflowTransition)) {
+      return true;
+    }
+
+    const modelName = String(request.params?.modelName ?? '').trim();
+    return modelName === 'order' && hasPermission(permissions, 'order:update');
   }
 }

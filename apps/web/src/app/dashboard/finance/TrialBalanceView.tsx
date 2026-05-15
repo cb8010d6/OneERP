@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import api from '@/lib/api';
 import { Loader2, AlertCircle, CheckCircle2, Calculator, ArrowRightLeft } from 'lucide-react';
 import { clsx } from 'clsx';
+import { useI18n } from '@/lib/i18n';
 
 interface TrialBalanceRow {
   accountId: string;
@@ -26,6 +27,7 @@ interface TrialBalanceData {
 }
 
 export function TrialBalanceView() {
+  const { t, locale } = useI18n();
   const [data, setData] = useState<TrialBalanceData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export function TrialBalanceView() {
       const response = await api.get<TrialBalanceData>('/finance/trial-balance');
       setData(response.data);
     } catch (err: any) {
-      setError(err.response?.data?.message || '获取试算平衡表失败');
+      setError(err.response?.data?.message || t('trialLoadFailed'));
     } finally {
       setLoading(false);
     }
@@ -51,7 +53,7 @@ export function TrialBalanceView() {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm text-slate-500">正在计算实时财务数据...</p>
+        <p className="text-sm text-slate-500">{t('trialLoading')}</p>
       </div>
     );
   }
@@ -60,13 +62,13 @@ export function TrialBalanceView() {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-xl border border-red-100 bg-red-50 p-6 text-center">
         <AlertCircle className="h-8 w-8 text-red-500" />
-        <p className="font-medium text-red-900">出错了</p>
+        <p className="font-medium text-red-900">{t('trialErrorTitle')}</p>
         <p className="text-sm text-red-700">{error}</p>
         <button
           onClick={fetchTrialBalance}
           className="mt-4 rounded-lg bg-red-100 px-4 py-2 text-sm font-medium text-red-900 hover:bg-red-200 transition-colors"
         >
-          重试
+          {t('trialRetry')}
         </button>
       </div>
     );
@@ -76,7 +78,7 @@ export function TrialBalanceView() {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/50">
         <ArrowRightLeft className="h-8 w-8 text-slate-300" />
-        <p className="text-sm text-slate-500">暂无已过账凭证，无法生成试算平衡表。</p>
+        <p className="text-sm text-slate-500">{t('trialEmpty')}</p>
       </div>
     );
   }
@@ -99,38 +101,38 @@ export function TrialBalanceView() {
               "text-sm font-semibold",
               data.balanced ? "text-emerald-900" : "text-amber-900"
             )}>
-              {data.balanced ? "借贷已平衡" : "借贷不平衡"}
+              {data.balanced ? t('trialBalanced') : t('trialUnbalanced')}
             </span>
           </div>
-          <p className="mt-1 text-xs text-slate-500">所有已过账凭证的状态汇总</p>
+          <p className="mt-1 text-xs text-slate-500">{t('trialSummaryHint')}</p>
         </div>
 
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 text-slate-600">
             <Calculator className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">借方合计 (Debit)</span>
+            <span className="text-xs font-medium uppercase tracking-wider">{t('trialDebitTotal')} (Debit)</span>
           </div>
-          <p className="mt-1 text-2xl font-bold text-slate-900">¥{data.totalDebit.toLocaleString()}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">¥{data.totalDebit.toLocaleString(locale)}</p>
         </div>
 
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 text-slate-600">
             <Calculator className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">贷方合计 (Credit)</span>
+            <span className="text-xs font-medium uppercase tracking-wider">{t('trialCreditTotal')} (Credit)</span>
           </div>
-          <p className="mt-1 text-2xl font-bold text-slate-900">¥{data.totalCredit.toLocaleString()}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">¥{data.totalCredit.toLocaleString(locale)}</p>
         </div>
 
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2 text-slate-600">
             <ArrowRightLeft className="h-4 w-4" />
-            <span className="text-xs font-medium uppercase tracking-wider">差异 (Diff)</span>
+            <span className="text-xs font-medium uppercase tracking-wider">{t('trialDifference')} (Diff)</span>
           </div>
           <p className={clsx(
             "mt-1 text-2xl font-bold",
             data.difference === 0 ? "text-slate-400" : "text-red-600"
           )}>
-            ¥{Math.abs(data.difference).toLocaleString()}
+            ¥{Math.abs(data.difference).toLocaleString(locale)}
           </p>
         </div>
       </div>
@@ -140,12 +142,12 @@ export function TrialBalanceView() {
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs font-semibold uppercase text-slate-500 border-b border-slate-200">
             <tr>
-              <th className="px-6 py-3">科目代码</th>
-              <th className="px-6 py-3">科目名称</th>
-              <th className="px-6 py-3">科目类型</th>
-              <th className="px-6 py-3 text-right">借方余额 (Debit)</th>
-              <th className="px-6 py-3 text-right">贷方余额 (Credit)</th>
-              <th className="px-6 py-3 text-right">净余额 (Balance)</th>
+              <th className="px-6 py-3">{t('trialAccountCode')}</th>
+              <th className="px-6 py-3">{t('trialAccountName')}</th>
+              <th className="px-6 py-3">{t('trialAccountType')}</th>
+              <th className="px-6 py-3 text-right">{t('trialDebitBalance')} (Debit)</th>
+              <th className="px-6 py-3 text-right">{t('trialCreditBalance')} (Credit)</th>
+              <th className="px-6 py-3 text-right">{t('trialNetBalance')} (Balance)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -169,30 +171,30 @@ export function TrialBalanceView() {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right font-mono text-slate-600">
-                  {row.debit > 0 ? `¥${row.debit.toLocaleString()}` : '-'}
+                  {row.debit > 0 ? `¥${row.debit.toLocaleString(locale)}` : '-'}
                 </td>
                 <td className="px-6 py-4 text-right font-mono text-slate-600">
-                  {row.credit > 0 ? `¥${row.credit.toLocaleString()}` : '-'}
+                  {row.credit > 0 ? `¥${row.credit.toLocaleString(locale)}` : '-'}
                 </td>
                 <td className={clsx(
                   "px-6 py-4 text-right font-mono font-bold",
                   row.balance >= 0 ? "text-slate-900" : "text-red-600"
                 )}>
-                  ¥{row.balance.toLocaleString()}
+                  ¥{row.balance.toLocaleString(locale)}
                 </td>
               </tr>
             ))}
           </tbody>
           <tfoot className="bg-slate-50 font-bold border-t border-slate-200">
             <tr>
-              <td colSpan={3} className="px-6 py-4 text-slate-900">合计 (Total)</td>
-              <td className="px-6 py-4 text-right font-mono text-slate-900">¥{data.totalDebit.toLocaleString()}</td>
-              <td className="px-6 py-4 text-right font-mono text-slate-900">¥{data.totalCredit.toLocaleString()}</td>
+              <td colSpan={3} className="px-6 py-4 text-slate-900">{t('trialTotal')} (Total)</td>
+              <td className="px-6 py-4 text-right font-mono text-slate-900">¥{data.totalDebit.toLocaleString(locale)}</td>
+              <td className="px-6 py-4 text-right font-mono text-slate-900">¥{data.totalCredit.toLocaleString(locale)}</td>
               <td className={clsx(
                 "px-6 py-4 text-right font-mono",
                 data.balanced ? "text-slate-900" : "text-red-600"
               )}>
-                ¥{Math.abs(data.difference).toLocaleString()}
+                ¥{Math.abs(data.difference).toLocaleString(locale)}
               </td>
             </tr>
           </tfoot>

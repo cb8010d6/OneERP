@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: eip_password
       POSTGRES_DB: eip_db
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - eip_pgdata:/var/lib/postgresql/data
 
@@ -19,7 +19,7 @@ services:
     container_name: eip_redis
     restart: always
     ports:
-      - "6379:6379"
+      - "16379:6379"
     volumes:
       - eip_redisdata:/data
 

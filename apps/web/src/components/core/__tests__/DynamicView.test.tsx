@@ -112,10 +112,24 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DynamicView } from '../DynamicView';
+import { useAuthStore } from '@/store/authStore';
 
 describe('DynamicView', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useAuthStore.setState({
+      token: 'test-token',
+      user: { id: 'user-1', email: 'admin@test.com' },
+      companies: [
+        {
+          id: 'company-1',
+          name: '测试公司',
+          role: 'Admin',
+          permissions: ['product:create', 'product:update'],
+        },
+      ],
+      currentCompanyId: 'company-1',
+    });
     mockFetchSchema.mockResolvedValue(mockSchema);
     mockFetchResourceList.mockResolvedValue(mockListResponse);
     mockApiGet.mockResolvedValue(mockTimelineEvents);

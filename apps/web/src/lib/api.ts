@@ -38,7 +38,7 @@ const api = axios.create({
   timeout: 10000,
 });
 
-// 请求拦截器：防屎山核心 - 自动为主管带上身份证明(Token)和当前所处的公司阵营(X-Company-Id)
+// 请求拦截器：自动附加身份令牌和当前公司上下文。
 api.interceptors.request.use(
   (config) => {
     config.url = sanitizePaginationInUrl(config.url);
@@ -59,7 +59,7 @@ api.interceptors.request.use(
       headers.set('Authorization', `Bearer ${token}`);
     }
     
-    // 如果该请求不是 auth/login 这种接口，必须带上当前公司 ID
+    // 业务请求必须带上当前公司 ID。
     if (!isAuthRequest && companyId) {
       headers.set('x-company-id', companyId);
     }
@@ -79,7 +79,7 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// 响应拦截器：当 Token 过期或者无权限时，强制踢回登录页
+// 响应拦截器：当 Token 过期或租户上下文失效时返回登录页。
 api.interceptors.response.use(
   (response) => response,
   (error) => {

@@ -11,6 +11,7 @@ import { createResource, fetchResourceList, fetchSchema, updateResource } from '
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
 import { useAuthStore } from '@/store/authStore';
+import { useI18n } from '@/lib/i18n';
 
 type ViewMode = 'list' | 'kanban';
 
@@ -30,6 +31,7 @@ function hasPermission(permissions: readonly string[], required: string) {
 
 export function DynamicView({ modelName, title, externalDraft }: DynamicViewProps) {
   const { companies, currentCompanyId } = useAuthStore();
+  const { t } = useI18n();
   const [schema, setSchema] = useState<UiSchema | null>(null);
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [page, setPage] = useState(1);
@@ -58,8 +60,9 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const activeTitle = title ?? schema?.label ?? modelName;
   const currentPermissions =
     companies.find((company) => company.id === currentCompanyId)?.permissions ?? [];
-  const canCreate = hasPermission(currentPermissions, `${modelName}:create`);
-  const canUpdate = hasPermission(currentPermissions, `${modelName}:update`);
+  const permissionResource = modelName.charAt(0).toLowerCase() + modelName.slice(1);
+  const canCreate = hasPermission(currentPermissions, `${permissionResource}:create`);
+  const canUpdate = hasPermission(currentPermissions, `${permissionResource}:update`);
   const selectedCanSave =
     selected && typeof selected.id === 'string' && selected.id.trim()
       ? canUpdate
@@ -235,7 +238,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   if (!schema) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
-        元数据加载中...
+        {t('dynamicMetadataLoading')}
       </div>
     );
   }
@@ -245,20 +248,20 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-gray-900">{activeTitle}</h2>
-          <p className="mt-1 text-sm text-gray-500">{schema.description ?? '元数据驱动的通用视图'}</p>
+          <p className="mt-1 text-sm text-gray-500">{schema.description ?? t('dynamicDefaultDescription')}</p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
           <ViewButton
             icon={<Rows3 className="h-4 w-4" />}
             active={mode === 'list'}
             onClick={() => setMode('list')}
-            label="列表"
+            label={t('dynamicList')}
           />
           <ViewButton
             icon={<LayoutGrid className="h-4 w-4" />}
             active={mode === 'kanban'}
             onClick={() => setMode('kanban')}
-            label="看板"
+            label={t('dynamicKanban')}
           />
           <ViewButton
             icon={<SquarePen className="h-4 w-4" />}
@@ -268,7 +271,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
               setSelected(initialFormValue);
               setIsFormOpen(true);
             }}
-            label="新建 / 编辑"
+            label={t('dynamicNewEdit')}
           />
         </div>
       </div>
@@ -334,7 +337,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       <Sheet
         open={isFormOpen}
         onClose={() => setIsFormOpen(false)}
-        title={selected && selected.id ? `编辑 ${activeTitle}` : `新建 ${activeTitle}`}
+        title={selected && selected.id ? `${t('dynamicEdit')} ${activeTitle}` : `${t('dynamicNew')} ${activeTitle}`}
         widthClassName="w-[min(1000px,95vw)]"
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-10">
@@ -346,7 +349,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                 disabled={saving || !selectedCanSave}
                 className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {saving ? '保存中...' : selectedCanSave ? '保存 (Ctrl+Enter)' : '无保存权限'}
+                {saving ? t('commonSaving') : selectedCanSave ? t('dynamicSaveShortcut') : t('dynamicNoSavePermission')}
               </button>
             </div>
             <FormEngine
@@ -360,12 +363,12 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
           </div>
 
           <aside className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">Chatter Timeline</h3>
-            <p className="mt-1 text-xs text-gray-500">员工批注、系统告警、自动化动作会出现在这里。</p>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">{t('dynamicTimeline')}</h3>
+            <p className="mt-1 text-xs text-gray-500">{t('dynamicTimelineHint')}</p>
 
             <div className="mt-3 max-h-[65vh] space-y-2 overflow-auto">
               {timelineLoading ? (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">时间线加载中...</div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">{t('dynamicTimelineLoading')}</div>
               ) : timeline.length ? (
                 timeline.map((event, index) => (
                   <div key={String(event.id ?? index)} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
@@ -380,7 +383,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                   </div>
                 ))
               ) : (
-                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-500">暂无时间线事件。</div>
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-500">{t('dynamicTimelineEmpty')}</div>
               )}
             </div>
 
@@ -388,7 +391,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
               <textarea
                 value={commentInput}
                 onChange={(event) => setCommentInput(event.target.value)}
-                placeholder="写入团队批注..."
+                placeholder={t('dynamicCommentPlaceholder')}
                 rows={3}
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 outline-none focus:border-gray-300 focus:ring-2 focus:ring-gray-100"
               />
@@ -399,7 +402,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                   disabled={commentSaving || !commentInput.trim()}
                   className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {commentSaving ? '提交中...' : '发布批注'}
+                  {commentSaving ? t('dynamicSubmitting') : t('dynamicPublishComment')}
                 </button>
               </div>
             </div>

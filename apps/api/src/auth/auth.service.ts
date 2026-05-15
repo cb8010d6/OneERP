@@ -83,7 +83,11 @@ export class AuthService {
   }
 
   async acceptInvite(token: string, password: string, name?: string) {
-    const user = await this.usersService.acceptInvitation(token, password, name);
+    const user = await this.usersService.acceptInvitation(
+      token,
+      password,
+      name,
+    );
     if (!user) {
       throw new UnauthorizedException('邀请接受失败');
     }

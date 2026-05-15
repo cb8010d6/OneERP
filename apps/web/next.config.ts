@@ -4,6 +4,29 @@ import { fileURLToPath } from "node:url";
 
 const appDir = dirname(fileURLToPath(import.meta.url));
 
+function getConnectSrc() {
+  const candidates = [
+    process.env.NEXT_PUBLIC_API_BASE_URL,
+    process.env.API_BASE_URL,
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:18000",
+    "http://127.0.0.1:18000",
+  ];
+
+  const origins = new Set(["'self'"]);
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      origins.add(new URL(candidate).origin);
+    } catch {
+      // API_BASE_URL may be a Docker service URL or path-like value; ignore invalid browser origins.
+    }
+  }
+
+  return `connect-src ${Array.from(origins).join(" ")}`;
+}
+
 const nextConfig: NextConfig = {
   turbopack: {
     root: resolve(appDir, "..", ".."),
@@ -79,7 +102,7 @@ const nextConfig: NextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' blob: data: https:",
               "font-src 'self' data:",
-              "connect-src 'self' https://api.example.com",
+              getConnectSrc(),
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",

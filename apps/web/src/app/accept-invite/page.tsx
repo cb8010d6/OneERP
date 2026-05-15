@@ -5,8 +5,10 @@ import { useRouter } from 'next/navigation';
 import { KeyRound, Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
+import { useI18n } from '@/lib/i18n';
 
 export default function AcceptInvitePage() {
+  const { t } = useI18n();
   const router = useRouter();
   const setAuth = useAuthStore((state) => state.setAuth);
   const [token, setToken] = useState('');
@@ -24,15 +26,15 @@ export default function AcceptInvitePage() {
     event.preventDefault();
     setError('');
     if (!token) {
-      setError('邀请链接缺少 token');
+      setError(t('inviteMissingToken'));
       return;
     }
     if (password.length < 6) {
-      setError('密码至少需要 6 位');
+      setError(t('invitePasswordTooShort'));
       return;
     }
     if (password !== confirmPassword) {
-      setError('两次输入的密码不一致');
+      setError(t('invitePasswordMismatch'));
       return;
     }
 
@@ -47,7 +49,7 @@ export default function AcceptInvitePage() {
       setAuth(accessToken, user, companies);
       router.push('/dashboard');
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '邀请接受失败');
+      setError(reason?.response?.data?.message || t('inviteFailed'));
     } finally {
       setLoading(false);
     }
@@ -64,8 +66,8 @@ export default function AcceptInvitePage() {
             <KeyRound className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-slate-900">接受员工邀请</h1>
-            <p className="text-sm text-slate-500">设置密码后即可进入 OneERP 工作台。</p>
+            <h1 className="text-xl font-semibold text-slate-900">{t('inviteTitle')}</h1>
+            <p className="text-sm text-slate-500">{t('inviteSubtitle')}</p>
           </div>
         </div>
 
@@ -79,14 +81,14 @@ export default function AcceptInvitePage() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          placeholder="姓名，可选"
+          placeholder={t('inviteName')}
         />
         <input
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          placeholder="新密码"
+          placeholder={t('invitePassword')}
           required
         />
         <input
@@ -94,7 +96,7 @@ export default function AcceptInvitePage() {
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-          placeholder="再次输入新密码"
+          placeholder={t('inviteConfirmPassword')}
           required
         />
 
@@ -104,7 +106,7 @@ export default function AcceptInvitePage() {
           className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-          接受邀请并登录
+          {t('inviteSubmit')}
         </button>
       </form>
     </div>

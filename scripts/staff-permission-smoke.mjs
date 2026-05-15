@@ -230,6 +230,55 @@ try {
     assertCondition(denied.status === 403, `期望 403，实际 ${denied.status}`);
     return { detail: 'inventory post denied' };
   });
+
+  await withStep('employee-workflow-transition-denied', async () => {
+    const denied = await employeeApi.post(
+      `/v1/workflow/order/not-real/transition`,
+      { action: 'submit' },
+      true,
+    );
+    assertCondition(denied.status === 403, `期望 403，实际 ${denied.status}`);
+    return { detail: 'workflow transition denied' };
+  });
+
+  await withStep('employee-department-create-denied', async () => {
+    const denied = await employeeApi.post(
+      '/departments',
+      { name: `Denied Dept ${suffix}` },
+      true,
+    );
+    assertCondition(denied.status === 403, `期望 403，实际 ${denied.status}`);
+    return { detail: 'department create denied' };
+  });
+
+  await withStep('employee-file-upload-denied', async () => {
+    const denied = await employeeApi.post('/files/upload', undefined, true);
+    assertCondition(denied.status === 403, `期望 403，实际 ${denied.status}`);
+    return { detail: 'file upload denied' };
+  });
+
+  await withStep('employee-ai-read-allowed', async () => {
+    const tools = await employeeApi.get('/v1/ai/tools');
+    assertCondition(tools.status === 200, '员工 AI 只读 tools 接口失败');
+    return { detail: 'GET /v1/ai/tools allowed' };
+  });
+
+  await withStep('employee-ai-write-denied', async () => {
+    const denied = await employeeApi.post(
+      '/v1/ai/command',
+      {
+        input: 'create customer',
+        dryRun: false,
+        overrideTool: {
+          toolName: 'create_resource',
+          args: { modelName: 'partner', data: { name: 'Denied' } },
+        },
+      },
+      true,
+    );
+    assertCondition(denied.status === 403, `期望 403，实际 ${denied.status}`);
+    return { detail: 'AI write denied' };
+  });
 } catch (error) {
   exitCode = 1;
   console.error(error instanceof Error ? error.message : String(error));

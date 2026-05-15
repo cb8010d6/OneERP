@@ -22,8 +22,11 @@ interface AuthState {
   currentCompanyId: string | null;
   setAuth: (token: string, user: User, companies: Company[]) => void;
   setCurrentCompany: (companyId: string) => void;
+  refreshPermissions: () => Promise<void>;
   logout: () => void;
 }
+
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (!raw) {
@@ -133,6 +136,41 @@ export const useAuthStore = create<AuthState>((set) => ({
   setCurrentCompany: (companyId) => {
     localStorage.setItem('currentCompanyId', companyId);
     set({ currentCompanyId: companyId });
+  },
+
+  refreshPermissions: async () => {
+    const state = useAuthStore.getState();
+    if (!state.token || !state.currentCompanyId) return;
+
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/users/permissions/me`, {
+      headers: {
+        Authorization: `Bearer ${state.token}`,
+        'x-company-id': state.currentCompanyId,
+        Accept: 'application/json',
+      },
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      state.logout();
+      throw new Error('AUTH_REFRESH_FORBIDDEN');
+    }
+    if (!response.ok) return;
+
+    const payload = (await response.json()) as {
+      role?: { id: string; name: string };
+      permissions?: string[];
+    };
+    const nextCompanies = state.companies.map((company) =>
+      company.id === state.currentCompanyId
+        ? {
+            ...company,
+            role: payload.role?.name ?? company.role,
+            permissions: payload.permissions ?? company.permissions,
+          }
+        : company,
+    );
+    localStorage.setItem('companies', JSON.stringify(nextCompanies));
+    set({ companies: nextCompanies });
   },
 
   logout: () => {

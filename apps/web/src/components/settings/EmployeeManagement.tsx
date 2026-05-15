@@ -13,6 +13,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import api from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { useAuthStore } from '@/store/authStore';
 
 type Role = {
@@ -68,6 +69,7 @@ function makePassword() {
 }
 
 export function EmployeeManagement() {
+  const { t } = useI18n();
   const { currentCompanyId } = useAuthStore();
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
@@ -130,7 +132,7 @@ export function EmployeeManagement() {
         roleId: prev.roleId || fallbackRole?.id || '',
       }));
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '员工账号数据加载失败');
+      setError(reason?.response?.data?.message || t('employeeLoadFailed'));
     } finally {
       setLoading(false);
     }
@@ -145,7 +147,7 @@ export function EmployeeManagement() {
     setMessage('');
     try {
       await api.post('/users', form);
-      setMessage('员工账号已创建');
+      setMessage(t('employeeCreated'));
       setForm((prev) => ({
         ...prev,
         name: '',
@@ -154,7 +156,7 @@ export function EmployeeManagement() {
       }));
       await load();
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '员工账号创建失败');
+      setError(reason?.response?.data?.message || t('employeeCreateFailed'));
     }
   };
 
@@ -167,11 +169,11 @@ export function EmployeeManagement() {
       const path = String(response.data?.invitePath ?? '');
       const url = `${window.location.origin}${path}`;
       setInviteUrl(url);
-      setMessage('邀请链接已生成');
+      setMessage(t('employeeInviteCreated'));
       setInviteForm((prev) => ({ ...prev, name: '', email: '' }));
       await load();
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '邀请链接生成失败');
+      setError(reason?.response?.data?.message || t('employeeInviteFailed'));
     }
   };
 
@@ -181,7 +183,7 @@ export function EmployeeManagement() {
       await api.put(`/users/${userId}/role`, { roleId });
       await load();
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '角色更新失败');
+      setError(reason?.response?.data?.message || t('employeeRoleFailed'));
     }
   };
 
@@ -191,7 +193,7 @@ export function EmployeeManagement() {
       await api.put(`/users/${userId}/toggle-active`);
       await load();
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '启用状态更新失败');
+      setError(reason?.response?.data?.message || t('employeeActiveFailed'));
     }
   };
 
@@ -202,22 +204,22 @@ export function EmployeeManagement() {
       await api.post(`/users/${userId}/reset-password`, { password });
       setMessage(`临时密码已重置：${password}`);
     } catch (reason: any) {
-      setError(reason?.response?.data?.message || '密码重置失败');
+      setError(reason?.response?.data?.message || t('employeePasswordResetFailed'));
     }
   };
 
   const copyInvite = async () => {
     if (!inviteUrl) return;
     await navigator.clipboard.writeText(inviteUrl);
-    setMessage('邀请链接已复制');
+    setMessage(t('employeeInviteCopied'));
   };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-lg font-semibold text-slate-900">员工账号与权限</h3>
-          <p className="text-sm text-slate-500">创建员工、分配角色、生成邀请链接并控制账号状态。</p>
+          <h3 className="text-lg font-semibold text-slate-900">{t('employeeTitle')}</h3>
+          <p className="text-sm text-slate-500">{t('employeeSubtitle')}</p>
         </div>
         <button
           type="button"
@@ -225,7 +227,7 @@ export function EmployeeManagement() {
           className="inline-flex items-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
         >
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserCog className="h-4 w-4" />}
-          刷新
+          {t('commonRefresh')}
         </button>
       </div>
 
@@ -244,26 +246,26 @@ export function EmployeeManagement() {
         <section className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-800">
             <UserPlus className="h-4 w-4" />
-            创建员工账号
+            {t('employeeCreateTitle')}
           </div>
           <div className="grid gap-3">
             <input
               value={form.name}
               onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))}
               className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="员工姓名"
+              placeholder={t('employeeName')}
             />
             <input
               value={form.email}
               onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
               className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="登录邮箱"
+              placeholder={t('employeeLoginEmail')}
             />
             <input
               value={form.password}
               onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
               className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="临时密码"
+              placeholder={t('employeeTempPassword')}
             />
             <select
               value={form.roleId}
@@ -284,7 +286,7 @@ export function EmployeeManagement() {
                   setForm((prev) => ({ ...prev, isActive: event.target.checked }))
                 }
               />
-              创建后立即启用
+              {t('employeeCreateEnabled')}
             </label>
             <button
               type="button"
@@ -293,7 +295,7 @@ export function EmployeeManagement() {
               className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
-              创建员工
+              {t('employeeCreateButton')}
             </button>
           </div>
         </section>
@@ -301,7 +303,7 @@ export function EmployeeManagement() {
         <section className="rounded-lg border border-slate-200 bg-white p-4">
           <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-800">
             <Link className="h-4 w-4" />
-            生成邀请链接
+            {t('employeeInviteTitle')}
           </div>
           <div className="grid gap-3">
             <input
@@ -310,7 +312,7 @@ export function EmployeeManagement() {
                 setInviteForm((prev) => ({ ...prev, name: event.target.value }))
               }
               className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="员工姓名，可选"
+              placeholder={t('employeeNameOptional')}
             />
             <input
               value={inviteForm.email}
@@ -318,7 +320,7 @@ export function EmployeeManagement() {
                 setInviteForm((prev) => ({ ...prev, email: event.target.value }))
               }
               className="rounded-md border border-slate-300 px-3 py-2 text-sm"
-              placeholder="员工邮箱"
+              placeholder={t('employeeEmail')}
             />
             <select
               value={inviteForm.roleId}
@@ -354,7 +356,7 @@ export function EmployeeManagement() {
               className="inline-flex items-center justify-center gap-2 rounded-md bg-cyan-700 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Link className="h-4 w-4" />
-              生成邀请
+              {t('employeeInviteButton')}
             </button>
             {inviteUrl && (
               <button
@@ -372,16 +374,16 @@ export function EmployeeManagement() {
 
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">
-          当前员工
+          {t('employeeCurrent')}
         </div>
         <div className="overflow-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs text-slate-500">
               <tr>
-                <th className="px-4 py-2 font-medium">员工</th>
-                <th className="px-4 py-2 font-medium">角色</th>
-                <th className="px-4 py-2 font-medium">状态</th>
-                <th className="px-4 py-2 font-medium">操作</th>
+                <th className="px-4 py-2 font-medium">{t('employeeColumnEmployee')}</th>
+                <th className="px-4 py-2 font-medium">{t('employeeColumnRole')}</th>
+                <th className="px-4 py-2 font-medium">{t('employeeColumnStatus')}</th>
+                <th className="px-4 py-2 font-medium">{t('employeeColumnActions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -414,7 +416,7 @@ export function EmployeeManagement() {
                       }`}
                     >
                       <CheckCircle2 className="h-3 w-3" />
-                      {employee.user.isActive ? '启用' : '停用'}
+                      {employee.user.isActive ? t('commonEnabled') : t('commonDisabled')}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -425,7 +427,7 @@ export function EmployeeManagement() {
                         onClick={() => void toggleActive(employee.userId)}
                         className="rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-50"
                       >
-                        {employee.user.isActive ? '禁用' : '启用'}
+                        {employee.user.isActive ? t('employeeDisable') : t('employeeEnable')}
                       </button>
                       <button
                         type="button"
@@ -434,7 +436,7 @@ export function EmployeeManagement() {
                         className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-700 disabled:opacity-50"
                       >
                         <KeyRound className="h-3 w-3" />
-                        重置密码
+                        {t('employeeResetPassword')}
                       </button>
                     </div>
                   </td>
@@ -447,7 +449,7 @@ export function EmployeeManagement() {
 
       <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         <div className="border-b border-slate-200 px-4 py-3 text-sm font-semibold text-slate-800">
-          邀请记录
+          {t('employeeInvitations')}
         </div>
         <div className="divide-y divide-slate-100">
           {invitations.map((invitation) => (
@@ -455,17 +457,17 @@ export function EmployeeManagement() {
               <div>
                 <div className="font-medium text-slate-900">{invitation.email}</div>
                 <div className="text-xs text-slate-500">
-                  {invitation.role.name} · 过期 {new Date(invitation.expiresAt).toLocaleString()}
+                  {invitation.role.name} · {t('employeeInviteExpires')} {new Date(invitation.expiresAt).toLocaleString()}
                 </div>
               </div>
               <div className="inline-flex items-center gap-1 text-xs text-slate-600">
                 <Shield className="h-3.5 w-3.5" />
-                {invitation.acceptedAt ? '已接受' : '待接受'}
+                {invitation.acceptedAt ? t('employeeInviteAccepted') : t('employeeInvitePending')}
               </div>
             </div>
           ))}
           {!invitations.length && (
-            <div className="px-4 py-6 text-sm text-slate-500">暂无邀请记录。</div>
+            <div className="px-4 py-6 text-sm text-slate-500">{t('employeeNoInvitations')}</div>
           )}
         </div>
       </section>

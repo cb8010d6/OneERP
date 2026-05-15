@@ -7,6 +7,7 @@ import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
 import { useWorkspaceTabsStore } from '../../store/workspaceTabsStore';
+import { useI18n } from '../../lib/i18n';
 
 function hasPermission(permissions: readonly string[], required?: string) {
   if (!required) return true;
@@ -22,21 +23,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [rightOpen, setRightOpen] = useState(true);
-  const { user, token, companies, currentCompanyId, setCurrentCompany, logout } = useAuthStore();
+  const { user, token, companies, currentCompanyId, setCurrentCompany, refreshPermissions, logout } = useAuthStore();
   const { openTab, activateTab, closeTab, activePath } = useWorkspaceTabsStore();
+  const { language, setLanguage, t } = useI18n();
 
   const currentPermissions =
     companies.find((company) => company.id === currentCompanyId)?.permissions ?? [];
   const currentCompany = companies.find((company) => company.id === currentCompanyId);
 
   const navItems = [
-    { icon: LayoutDashboard, label: '概览', href: '/dashboard' },
-    { icon: ShoppingCart, label: '销售打单', href: '/dashboard/sales', permission: 'order:read' },
-    { icon: Package, label: '生产与库存', href: '/dashboard/inventory', permission: 'inventory:read' },
-    { icon: FileText, label: '图纸文档', href: '/dashboard/files', permission: 'fileRecord:read' },
-    { icon: Users, label: '客户管理', href: '/dashboard/customers', permission: 'partner:read' },
-    { icon: Settings, label: '系统设置', href: '/dashboard/settings', permission: 'user:read' },
-    { icon: Table, label: '网格实验', href: '/dashboard/lab/data-grid', permission: 'ALL' },
+    { icon: LayoutDashboard, label: t('navOverview'), href: '/dashboard' },
+    { icon: ShoppingCart, label: t('navSales'), href: '/dashboard/sales', permission: 'order:read' },
+    { icon: Package, label: t('navInventory'), href: '/dashboard/inventory', permission: 'inventory:read' },
+    { icon: FileText, label: t('navFiles'), href: '/dashboard/files', permission: 'fileRecord:read' },
+    { icon: Users, label: t('navCustomers'), href: '/dashboard/customers', permission: 'partner:read' },
+    { icon: Settings, label: t('navSettings'), href: '/dashboard/settings', permission: 'user:read' },
+    { icon: Table, label: t('navGridLab'), href: '/dashboard/lab/data-grid', permission: 'ALL' },
   ];
   const visibleNavItems = navItems.filter((item) =>
     hasPermission(currentPermissions, item.permission),
@@ -53,14 +55,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [mounted, token, user, currentCompanyId, router]);
 
   useEffect(() => {
+    if (!mounted || !token || !currentCompanyId) return;
+    void refreshPermissions().catch(() => {
+      router.push('/login');
+    });
+  }, [mounted, token, currentCompanyId, refreshPermissions, router]);
+
+  useEffect(() => {
     if (!pathname) return;
     const item = navItems.find((entry) => entry.href === pathname);
     openTab({
       id: pathname,
       path: pathname,
-      label: item?.label || pathname.split('/').slice(-1)[0] || '工作区',
+      label: item?.label || pathname.split('/').slice(-1)[0] || t('workspace'),
     });
-  }, [pathname]);
+  }, [pathname, language]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -68,6 +77,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       if (isMetaSave) {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent('erp:shortcut-save'));
+        return;
+      }
+
+      const isCommandK = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k';
+      if (isCommandK) {
+        event.preventDefault();
+        window.dispatchEvent(new CustomEvent('erp:open-command-palette'));
         return;
       }
 
@@ -102,13 +118,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   const handleCompanyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setCurrentCompany(e.target.value);
-    window.location.reload(); 
+    void refreshPermissions();
   };
 
   if (!mounted) {
     return (
       <div className="flex h-screen bg-gray-50 items-center justify-center">
-        <div className="text-gray-400">加载中...</div>
+        <div className="text-gray-400">{t('loading')}</div>
       </div>
     );
   }
@@ -120,12 +136,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Sidebar */}
       <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
         <div className="h-16 flex items-center justify-center border-b border-gray-200">
-          <h1 className="text-xl font-bold text-blue-600">Enterprise ERP</h1>
+          <h1 className="text-xl font-bold text-blue-600">OneERP</h1>
         </div>
 
         {/* Company Switcher */}
         <div className="p-4 border-b border-gray-200">
-          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">当前公司</label>
+          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">{t('currentCompany')}</label>
           <select 
             className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
             value={currentCompanyId || ''}
@@ -171,7 +187,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               </div>
             </div>
             <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100">
-              <LogOut className="h-5 w-5" />
+            <LogOut className="h-5 w-5" />
             </button>
           </div>
         </div>
@@ -181,16 +197,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <main className="flex-1 flex flex-col overflow-hidden">
         <header className="relative h-16 bg-white border-b border-gray-200 flex items-center px-8 shadow-sm justify-between">
             <h2 className="text-lg font-semibold text-gray-800">
-                {navItems.find(i => i.href === pathname)?.label || '仪表盘'}
+                {navItems.find(i => i.href === pathname)?.label || t('navOverview')}
             </h2>
           <div className="absolute left-1/2 -translate-x-1/2">
             <CommandPalette />
           </div>
+          <select
+            value={language}
+            onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en-US')}
+            className="mr-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600"
+            aria-label="Language"
+          >
+            <option value="zh-CN">{t('languageChinese')}</option>
+            <option value="en-US">{t('languageEnglish')}</option>
+          </select>
           <button
             type="button"
             className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100"
             onClick={() => setRightOpen((prev) => !prev)}
-            title="切换右侧工作面板"
+            title={t('toggleSidePanel')}
           >
             <PanelRight className="h-4 w-4" />
           </button>
@@ -203,18 +228,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           {rightOpen ? (
             <aside className="hidden w-72 border-l border-gray-200 bg-white p-4 xl:block">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">效率面板</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">{t('productivityPanel')}</h3>
               <div className="mt-3 space-y-2 text-xs text-gray-600">
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
-                  <div className="font-medium text-gray-800">快捷键</div>
-                  <div className="mt-1">Ctrl/Cmd+S 保存当前表单</div>
-                  <div>/ 打开命令搜索</div>
-                  <div>Alt+N 新建订单草稿</div>
+                  <div className="font-medium text-gray-800">{t('shortcuts')}</div>
+                  <div className="mt-1">{t('shortcutSave')}</div>
+                  <div>{t('shortcutSearch')}</div>
+                  <div>{t('shortcutNewOrder')}</div>
                 </div>
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
-                  <div className="font-medium text-gray-800">多标签</div>
-                  <div>当前标签: {activePath || '/dashboard'}</div>
-                  <div className="mt-1">支持并行打开多个业务页面。</div>
+                  <div className="font-medium text-gray-800">{t('multiTabs')}</div>
+                  <div>{t('currentTab')}: {activePath || '/dashboard'}</div>
+                  <div className="mt-1">{t('multiTabsHint')}</div>
                 </div>
                 <button
                   type="button"
@@ -226,7 +251,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                     router.push(next);
                   }}
                 >
-                  关闭当前标签
+                  {t('closeCurrentTab')}
                 </button>
               </div>
             </aside>

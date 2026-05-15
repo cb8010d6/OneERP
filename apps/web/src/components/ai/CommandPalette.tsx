@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Command, Loader2, Mic, MicOff, Sparkles, X } from 'lucide-react';
 import api from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 
 type Message = {
   id: string;
@@ -46,6 +47,7 @@ function formatCard(card?: Record<string, unknown>) {
 }
 
 export function CommandPalette() {
+  const { language, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -79,8 +81,8 @@ export function CommandPalette() {
   }, []);
 
   const placeholder = useMemo(
-    () => '例如: 帮我创建一个销售给蓝海科技的10台服务器订单',
-    [],
+    () => t('aiPlaceholder'),
+    [language],
   );
 
   const SpeechRecognition =
@@ -100,7 +102,7 @@ export function CommandPalette() {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = 'zh-CN';
+    recognition.lang = language;
     recognition.interimResults = true;
     recognition.continuous = false;
 
@@ -132,10 +134,10 @@ export function CommandPalette() {
     if (card.widgetType === 'receivable') {
       return (
         <div className="mt-3 rounded-xl border border-cyan-200 bg-cyan-50 p-3">
-          <div className="text-xs uppercase tracking-wide text-cyan-700">应收账款微件</div>
-          <p className="mt-1 text-sm font-semibold text-cyan-900">{String(card.partnerName ?? '客户')}</p>
+          <div className="text-xs uppercase tracking-wide text-cyan-700">{t('aiReceivableWidget')}</div>
+          <p className="mt-1 text-sm font-semibold text-cyan-900">{String(card.partnerName ?? t('aiCustomer'))}</p>
           <p className="mt-1 text-lg font-bold text-cyan-900">¥{String(card.amount ?? '0')}</p>
-          <p className="mt-1 text-xs text-cyan-800">未结清发票数: {String(card.unpaidCount ?? '0')}</p>
+          <p className="mt-1 text-xs text-cyan-800">{t('aiUnpaidCount')}: {String(card.unpaidCount ?? '0')}</p>
         </div>
       );
     }
@@ -172,7 +174,7 @@ export function CommandPalette() {
       const assistantMessage: Message = {
         id: `a-${Date.now()}`,
         role: 'assistant',
-        text: response.data?.message || '已执行。',
+        text: response.data?.message || t('aiExecuted'),
         card: response.data?.card,
         draft: response.data?.type === 'draft' ? response.data?.draft : undefined,
       };
@@ -181,7 +183,7 @@ export function CommandPalette() {
       const assistantMessage: Message = {
         id: `a-${Date.now()}`,
         role: 'assistant',
-        text: error?.response?.data?.message || '执行失败，请稍后重试。',
+        text: error?.response?.data?.message || t('aiExecuteFailed'),
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } finally {
@@ -196,7 +198,7 @@ export function CommandPalette() {
         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-sm text-slate-600 shadow-sm backdrop-blur hover:bg-white"
       >
         <Command className="h-4 w-4" />
-        <span>AI Command</span>
+        <span>{t('aiCommand')}</span>
         <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">Ctrl/⌘ K</span>
       </button>
 
@@ -206,7 +208,7 @@ export function CommandPalette() {
             <div className="flex items-center justify-between border-b border-slate-200/70 px-4 py-3">
               <div className="flex items-center gap-2 text-slate-700">
                 <Sparkles className="h-4 w-4 text-cyan-600" />
-                <span className="text-sm font-medium">AI Copilot Command Bar</span>
+                <span className="text-sm font-medium">{t('aiCopilotTitle')}</span>
               </div>
               <button onClick={() => setOpen(false)} className="rounded p-1 text-slate-500 hover:bg-slate-100">
                 <X className="h-4 w-4" />
@@ -216,7 +218,7 @@ export function CommandPalette() {
             <div className="max-h-[55vh] space-y-3 overflow-auto px-4 py-4">
               {messages.length === 0 && !loading && (
                 <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-4 text-sm text-slate-500">
-                  输入自然语言指令，Copilot 将尝试调用 ERP 工具链执行动作。
+                  {t('aiEmpty')}
                 </div>
               )}
 
@@ -239,10 +241,10 @@ export function CommandPalette() {
                     {renderWidget(msg.card)}
                     {msg.draft ? (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                        <p className="text-xs text-amber-800">待确认动作: {msg.draft.toolName}</p>
+                        <p className="text-xs text-amber-800">{t('aiDraftAction')}: {msg.draft.toolName}</p>
                         {msg.draft.writeEnabled === false ? (
                           <p className="mt-1 text-xs text-amber-700">
-                            AI 写操作当前已关闭，请先完成员工权限验收后再启用。
+                            {t('aiWriteDisabled')}
                           </p>
                         ) : null}
                         <pre className="mt-1 overflow-auto rounded bg-white p-2 text-[11px] text-slate-600">
@@ -267,7 +269,7 @@ export function CommandPalette() {
                                 const confirmed: Message = {
                                   id: `a-${Date.now()}-confirm`,
                                   role: 'assistant',
-                                  text: confirmResp.data?.message || '已执行确认动作。',
+                                  text: confirmResp.data?.message || t('aiConfirmed'),
                                   card: confirmResp.data?.card,
                                 };
                                 setMessages((prev) => [...prev, confirmed]);
@@ -275,7 +277,7 @@ export function CommandPalette() {
                                 const failed: Message = {
                                   id: `a-${Date.now()}-failed`,
                                   role: 'assistant',
-                                  text: error?.response?.data?.message || '确认执行失败。',
+                                  text: error?.response?.data?.message || t('aiConfirmFailed'),
                                 };
                                 setMessages((prev) => [...prev, failed]);
                               } finally {
@@ -298,7 +300,7 @@ export function CommandPalette() {
                     <Bot className="h-3.5 w-3.5" /> Copilot
                   </div>
                   <div className="flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin text-cyan-600" /> Thinking...
+                    <Loader2 className="h-4 w-4 animate-spin text-cyan-600" /> {t('aiThinking')}
                   </div>
                 </div>
               )}
@@ -323,7 +325,7 @@ export function CommandPalette() {
                   onClick={toggleVoiceInput}
                   disabled={!speechSupported}
                   className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={speechSupported ? '语音输入' : '浏览器不支持语音输入'}
+                  title={speechSupported ? t('voiceInput') : t('voiceUnsupported')}
                 >
                   {listening ? <MicOff className="h-4 w-4 text-rose-600" /> : <Mic className="h-4 w-4" />}
                 </button>
@@ -332,7 +334,7 @@ export function CommandPalette() {
                   disabled={loading}
                   className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-700 disabled:opacity-60"
                 >
-                  发送
+                  {t('commonSend')}
                 </button>
               </div>
             </div>

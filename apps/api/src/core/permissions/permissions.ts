@@ -1,4 +1,5 @@
 export const PERMISSIONS_KEY = 'oneerp:permissions';
+export const PERMISSIONS_ANY_KEY = 'oneerp:permissions:any';
 
 export const Permission = {
   UserRead: 'user:read',
@@ -7,6 +8,14 @@ export const Permission = {
   UserInvite: 'user:invite',
   UserResetPassword: 'user:reset-password',
   RoleRead: 'role:read',
+  WorkflowTransition: 'workflow:transition',
+  WorkflowTransitionAuto: 'workflow:transition:auto',
+  DepartmentRead: 'department:read',
+  DepartmentCreate: 'department:create',
+  DepartmentUpdate: 'department:update',
+  DepartmentDelete: 'department:delete',
+  FileRecordRead: 'fileRecord:read',
+  FileRecordCreate: 'fileRecord:create',
   InventoryRead: 'inventory:read',
   InventoryPost: 'inventory:post',
   FinanceRead: 'finance:read',
@@ -41,6 +50,7 @@ export const ROLE_TEMPLATES: Array<{
       'department:*',
       'customFieldDefinition:*',
       'fileRecord:*',
+      'workflow:transition',
       'ai:read',
     ],
   },
