@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma, User } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes } from 'crypto';
+import { assertStrongPassword } from '../auth/password-policy';
 import {
   CreateInvitationDto,
   CreateUserDto,
@@ -44,6 +45,19 @@ export class UsersService {
 
   async findById(id: string): Promise<User | null> {
     return this.prisma.user.findUnique({ where: { id } });
+  }
+
+  async findByIdWithCompanies(
+    id: string,
+  ): Promise<UserWithCompanyMemberships | null> {
+    return this.prisma.user.findUnique({
+      where: { id },
+      include: {
+        companies: {
+          include: { company: true, role: true },
+        },
+      },
+    });
   }
 
   async getCompanyUsers(companyId: string) {
@@ -194,6 +208,7 @@ export class UsersService {
     });
     if (!membership) throw new NotFoundException('用户不存在或不属于该公司');
 
+    assertStrongPassword(dto.password);
     const passwordHash = await bcrypt.hash(dto.password, 10);
     await this.prisma.user.update({
       where: { id: userId },
@@ -336,6 +351,7 @@ export class UsersService {
       throw new ConflictException('该邮箱已注册，不能通过邀请链接重置已有账号');
     }
 
+    assertStrongPassword(password);
     const passwordHash = await bcrypt.hash(password, 10);
     const displayName =
       name?.trim() || invitation.name?.trim() || invitation.email.split('@')[0];
@@ -382,6 +398,7 @@ export class UsersService {
     passwordPlain: string,
     name: string,
   ): Promise<User> {
+    assertStrongPassword(passwordPlain);
     const saltOrRounds = 10;
     const passwordHash = await bcrypt.hash(passwordPlain, saltOrRounds);
 

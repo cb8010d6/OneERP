@@ -6,6 +6,7 @@ import api from '../../../../lib/api';
 import { useAuthStore } from '../../../../store/authStore';
 import { ArrowLeft, Loader2, FileText, Package } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { formatCurrency, formatDateTime } from '../../../../lib/format';
 
 interface OrderDetail {
   id: string;
@@ -187,8 +188,8 @@ export default function OrderDetailPage() {
                   </span>
                 </div>
                 <div className="flex justify-between text-xs text-gray-500">
-                  <span>总额: ¥{inv.amount.toLocaleString()}</span>
-                  <span className="text-blue-600">已收: ¥{inv.paidAmount.toLocaleString()}</span>
+                  <span>总额: {formatCurrency(inv.amount)}</span>
+                  <span className="text-blue-600">已收: {formatCurrency(inv.paidAmount)}</span>
                 </div>
               </div>
             ))}
@@ -222,7 +223,7 @@ export default function OrderDetailPage() {
                 {currentStatusInfo.label}
               </span>
             </div>
-            <p className="text-sm text-gray-500 mt-1">创建时间: {new Date(order.createdAt).toLocaleString()}</p>
+            <p className="text-sm text-gray-500 mt-1">创建时间: {formatDateTime(order.createdAt)}</p>
           </div>
         </div>
 
@@ -249,7 +250,7 @@ export default function OrderDetailPage() {
               onClick={() => handleStatusChange('SHIPPED')}
               className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
             >
-              标记发货
+              完工并入库
             </button>
           )}
           {order.status === 'SHIPPED' && (
@@ -332,9 +333,9 @@ export default function OrderDetailPage() {
                   {order.items.map((item) => (
                     <tr key={item.id} className="border-b last:border-0 border-gray-100">
                       <td className="px-4 py-3 font-medium text-gray-900">{item.productId}</td>
-                      <td className="px-4 py-3 text-right">{item.unitPrice.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right">{formatCurrency(item.unitPrice)}</td>
                       <td className="px-4 py-3 text-right text-blue-600 font-medium">{item.quantity}</td>
-                      <td className="px-4 py-3 text-right font-medium">{item.totalPrice.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right font-medium">{formatCurrency(item.totalPrice)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -342,7 +343,7 @@ export default function OrderDetailPage() {
                   <tr>
                     <td colSpan={3} className="px-4 py-4 text-right font-medium text-gray-500">总计金额:</td>
                     <td className="px-4 py-4 text-right font-bold text-lg text-blue-600">
-                      ¥{order.totalAmount.toLocaleString()}
+                      {formatCurrency(order.totalAmount)}
                     </td>
                   </tr>
                 </tfoot>
@@ -370,7 +371,7 @@ export default function OrderDetailPage() {
                   <div key={event.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs font-medium text-gray-800">{event.action}</p>
-                      <span className="text-[11px] text-gray-500">{new Date(event.createdAt).toLocaleString()}</span>
+                      <span className="text-[11px] text-gray-500">{formatDateTime(event.createdAt)}</span>
                     </div>
                     <p className="mt-1 text-xs text-gray-600">{event.user?.name || event.user?.email || '系统'}</p>
                     {event.details && (

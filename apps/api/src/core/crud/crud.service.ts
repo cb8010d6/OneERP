@@ -133,6 +133,7 @@ export class CrudService {
     companyId?: string,
   ): Promise<unknown> {
     const normalizedModelName = this.normalizeModelName(modelName);
+    this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
     const payload = this.applyCompanyIdToData(
       normalizedModelName,
@@ -180,6 +181,7 @@ export class CrudService {
     companyId?: string,
   ): Promise<unknown> {
     const normalizedModelName = this.normalizeModelName(modelName);
+    this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
     const where = this.applyCompanyScope(
       normalizedModelName,
@@ -237,6 +239,7 @@ export class CrudService {
     companyId?: string,
   ): Promise<unknown> {
     const normalizedModelName = this.normalizeModelName(modelName);
+    this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
     const where = this.applyCompanyScope(
       normalizedModelName,
@@ -418,6 +421,15 @@ export class CrudService {
       throw new BadRequestException(
         `当前单据状态为 ${status}，仅 DRAFT 状态允许删除`,
       );
+    }
+  }
+
+  private assertSpecializedModelWriteAllowed(modelName: string) {
+    if (modelName === 'order') {
+      throw new ForbiddenException('订单请通过订单专用接口维护');
+    }
+    if (modelName === 'orderItem') {
+      throw new ForbiddenException('订单明细请通过订单专用接口维护');
     }
   }
 

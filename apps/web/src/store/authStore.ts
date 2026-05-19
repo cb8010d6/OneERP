@@ -17,10 +17,16 @@ export interface Company {
 
 interface AuthState {
   token: string | null;
+  refreshToken: string | null;
   user: User | null;
   companies: Company[];
   currentCompanyId: string | null;
-  setAuth: (token: string, user: User, companies: Company[]) => void;
+  setAuth: (
+    token: string,
+    user: User,
+    companies: Company[],
+    refreshToken?: string | null,
+  ) => void;
   setCurrentCompany: (companyId: string) => void;
   refreshPermissions: () => Promise<void>;
   logout: () => void;
@@ -69,6 +75,7 @@ function getInitialAuthState() {
   if (typeof window === 'undefined') {
     return {
       token: null,
+      refreshToken: null,
       user: null,
       companies: [] as Company[],
       currentCompanyId: null,
@@ -76,6 +83,7 @@ function getInitialAuthState() {
   }
 
   const token = localStorage.getItem('token');
+  const refreshToken = localStorage.getItem('refreshToken');
   const user = safeParse<User | null>(localStorage.getItem('user'), null);
   const companies = safeParse<Company[]>(localStorage.getItem('companies'), []);
   const currentCompanyId = localStorage.getItem('currentCompanyId');
@@ -85,14 +93,21 @@ function getInitialAuthState() {
     : (companies.length > 0 ? companies[0].id : null);
 
   // 防止本地脏缓存导致未登录用户进入面板后触发无意义 403 请求
-  if (!isJwtTokenLikelyValid(token) || !user || companies.length === 0 || !resolvedCompanyId) {
+  if (
+    (!isJwtTokenLikelyValid(token) && !refreshToken) ||
+    !user ||
+    companies.length === 0 ||
+    !resolvedCompanyId
+  ) {
     localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
     localStorage.removeItem('companies');
     localStorage.removeItem('currentCompanyId');
 
     return {
       token: null,
+      refreshToken: null,
       user: null,
       companies: [],
       currentCompanyId: null,
@@ -105,6 +120,7 @@ function getInitialAuthState() {
 
   return {
     token,
+    refreshToken,
     user,
     companies,
     currentCompanyId: resolvedCompanyId,
@@ -115,22 +131,41 @@ const initialState = getInitialAuthState();
 
 export const useAuthStore = create<AuthState>((set) => ({
   token: initialState.token,
+  refreshToken: initialState.refreshToken,
   user: initialState.user,
   companies: initialState.companies,
   currentCompanyId: initialState.currentCompanyId,
 
-  setAuth: (token, user, companies) => {
+  setAuth: (token, user, companies, refreshToken) => {
+    const previousCompanyId = useAuthStore.getState().currentCompanyId;
     localStorage.setItem('token', token);
+    if (refreshToken !== undefined) {
+      if (refreshToken) {
+        localStorage.setItem('refreshToken', refreshToken);
+      } else {
+        localStorage.removeItem('refreshToken');
+      }
+    }
     localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('companies', JSON.stringify(companies));
     
-    // 默认选中第一个公司
-    const defaultCompanyId = companies.length > 0 ? companies[0].id : null;
+    const defaultCompanyId =
+      previousCompanyId && companies.some((company) => company.id === previousCompanyId)
+        ? previousCompanyId
+        : (companies.length > 0 ? companies[0].id : null);
     if (defaultCompanyId) {
       localStorage.setItem('currentCompanyId', defaultCompanyId);
     }
 
-    set({ token, user, companies, currentCompanyId: defaultCompanyId });
+    set({
+      token,
+      refreshToken: refreshToken === undefined
+        ? useAuthStore.getState().refreshToken
+        : refreshToken,
+      user,
+      companies,
+      currentCompanyId: defaultCompanyId,
+    });
   },
 
   setCurrentCompany: (companyId) => {
@@ -175,9 +210,16 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   logout: () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
     localStorage.removeItem('companies');
     localStorage.removeItem('currentCompanyId');
-    set({ token: null, user: null, companies: [], currentCompanyId: null });
+    set({
+      token: null,
+      refreshToken: null,
+      user: null,
+      companies: [],
+      currentCompanyId: null,
+    });
   },
 }));

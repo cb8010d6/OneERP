@@ -44,6 +44,7 @@ try {
     $env:NEXT_PUBLIC_API_BASE_URL = "http://127.0.0.1:$ApiPort/api"
     $env:API_BASE_URL = "http://127.0.0.1:$ApiPort/api"
     npm --prefix apps/api run prisma:generate
+    npm --prefix apps/api exec -- prisma migrate deploy --schema=apps/api/prisma/schema.prisma
     npm run build
   }
 
@@ -80,6 +81,7 @@ try {
 `$env:MINIO_ACCESS_KEY='minio_admin'
 `$env:MINIO_SECRET_KEY='minio_password'
 `$env:AI_WRITE_ENABLED='false'
+`$env:NODE_OPTIONS='--max-old-space-size=1024'
 node apps/api/dist/src/main *> scratch/api-prod.log
 "@
 

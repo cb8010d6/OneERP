@@ -7,9 +7,9 @@ export class AcceptInviteDto {
   @IsNotEmpty()
   token!: string;
 
-  @ApiProperty({ description: '新密码（至少6位）' })
+  @ApiProperty({ description: '新密码（至少8位，包含大小写字母和数字）' })
   @IsString()
-  @MinLength(6)
+  @MinLength(8, { message: '密码长度不能少于8位' })
   password!: string;
 
   @ApiPropertyOptional({

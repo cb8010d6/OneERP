@@ -1,7 +1,9 @@
 {
   "name": "web",
   "version": "0.1.0",
+  "description": "OneERP Web 前端：面向制造企业的订单、库存、财务、权限和 AI 工作台。",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

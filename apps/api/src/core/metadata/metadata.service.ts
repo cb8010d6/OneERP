@@ -81,9 +81,18 @@ export class MetadataService {
             statusField: 'status',
             columns: [
               { value: 'DRAFT', label: '草稿', color: 'bg-slate-50' },
+              {
+                value: 'PENDING_APPROVAL',
+                label: '待审批',
+                color: 'bg-amber-50',
+              },
               { value: 'PENDING', label: '待处理', color: 'bg-amber-50' },
               { value: 'IN_PRODUCTION', label: '生产中', color: 'bg-sky-50' },
-              { value: 'PARTIAL_SHIPPED', label: '部分发货', color: 'bg-violet-50' },
+              {
+                value: 'PARTIAL_SHIPPED',
+                label: '部分发货',
+                color: 'bg-violet-50',
+              },
               { value: 'SHIPPED', label: '已发货', color: 'bg-indigo-50' },
               { value: 'COMPLETED', label: '已完成', color: 'bg-emerald-50' },
               { value: 'CANCELLED', label: '已取消', color: 'bg-rose-50' },
@@ -545,6 +554,7 @@ export class MetadataService {
             ],
           },
           { name: 'uom', label: '计量单位', type: 'string' },
+          { name: 'listPrice', label: '参考售价', type: 'number' },
           {
             name: 'materialId',
             label: '关联主物料',
@@ -576,6 +586,7 @@ export class MetadataService {
               'sku',
               'name',
               'type',
+              'listPrice',
               'uom',
               'categoryId',
               'materialId',
@@ -588,6 +599,7 @@ export class MetadataService {
               'sku',
               'name',
               'type',
+              'listPrice',
               'uom',
               'categoryId',
               'materialId',

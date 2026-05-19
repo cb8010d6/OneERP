@@ -6,9 +6,11 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
+import { sql } from 'kysely';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { roundDecimal } from '../core/utils/decimal';
 import {
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
@@ -47,6 +49,20 @@ interface StockLedgerQueryRow {
   batchCount: number | string | null;
 }
 
+export interface InventoryTransactionRecord {
+  id: string;
+  type: string;
+  materialId: string;
+  quantity: number;
+  referenceNo?: string | null;
+  batchNo?: string | null;
+  sourceLocationId?: string | null;
+  destLocationId?: string | null;
+  companyId?: string;
+  operatorId?: string;
+  note?: string | null;
+}
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -54,6 +70,60 @@ export class InventoryService {
     private readonly kyselyService: KyselyService,
     private readonly eventEmitter: EventEmitter2,
   ) {}
+
+  async getCompanyStocks(companyId: string, pagination: PaginationDto) {
+    const { page = 1, limit = 20 } = pagination;
+    const where = { location: { companyId } };
+
+    const [data, total] = await Promise.all([
+      this.prisma.stockQuant.findMany({
+        where,
+        include: {
+          material: true,
+          location: { include: { warehouse: true } },
+        },
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: [{ updatedAt: 'desc' }],
+      }),
+      this.prisma.stockQuant.count({ where }),
+    ]);
+
+    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getWarehouses(companyId: string) {
+    return this.prisma.warehouse.findMany({ where: { companyId } });
+  }
+
+  async getLocations(companyId: string, warehouseId?: string) {
+    return this.prisma.stockLocation.findMany({
+      where: {
+        companyId,
+        ...(warehouseId ? { warehouseId } : {}),
+      },
+      orderBy: [{ usage: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async getMaterials(companyId: string) {
+    return this.prisma.material.findMany({
+      where: { OR: [{ companyId }, { companyId: null }] },
+    });
+  }
+
+  async getTransactions(companyId: string) {
+    return this.prisma.inventoryTransaction.findMany({
+      where: { companyId },
+      include: {
+        material: true,
+        sourceLocation: { include: { warehouse: true } },
+        destLocation: { include: { warehouse: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
 
   async postSaleOrderShipment(
     companyId: string,
@@ -82,12 +152,16 @@ export class InventoryService {
       throw new BadRequestException('销售订单发货明细不能为空');
     }
 
-    const orderProductIds = [...new Set(order.items.map((item) => item.productId))];
+    const orderProductIds = [
+      ...new Set(order.items.map((item) => item.productId)),
+    ];
     const products = await this.prisma.product.findMany({
       where: { companyId, id: { in: orderProductIds } },
       select: { id: true, materialId: true, name: true, sku: true },
     });
-    const productById = new Map(products.map((product) => [product.id, product]));
+    const productById = new Map(
+      products.map((product) => [product.id, product]),
+    );
     const productByMaterialId = new Map(
       products
         .filter((product) => product.materialId)
@@ -137,9 +211,16 @@ export class InventoryService {
       materialId: string;
       requestedQuantity: number;
       quantity: number;
+      remainingQuantity: number;
       sourceLocationId: string;
       batchNo: string;
       transactionId: string;
+      allocations: Array<{
+        sourceLocationId: string;
+        batchNo: string;
+        quantity: number;
+        transactionId: string;
+      }>;
     }> = [];
     const skippedLines: Array<{
       productId: string;
@@ -194,32 +275,19 @@ export class InventoryService {
         continue;
       }
 
-      const stockCandidate = await this.resolveShipmentStockCandidate(
+      const quantityRequestedThisRound = this.round2(
+        Math.min(requestedQuantity, remainingQuantity),
+      );
+
+      const stockPlan = await this.resolveShipmentAllocations(
         companyId,
         product.materialId,
-        requestedQuantity,
+        quantityRequestedThisRound,
         payload.sourceLocationId,
         payload.batchNo,
       );
 
-      if (!stockCandidate) {
-        skippedLines.push({
-          productId: product.id,
-          requestedQuantity,
-          reason: '当前库存不足，最大可发货量为 0',
-        });
-        continue;
-      }
-
-      const quantityToShip = this.round2(
-        Math.min(
-          requestedQuantity,
-          remainingQuantity,
-          stockCandidate.availableQuantity,
-        ),
-      );
-
-      if (quantityToShip <= 0) {
+      if (!stockPlan.allocations.length || stockPlan.allocatedQuantity <= 0) {
         skippedLines.push({
           productId: product.id,
           requestedQuantity,
@@ -229,27 +297,73 @@ export class InventoryService {
       }
 
       try {
-        const transaction = await this.prisma.$transaction(async (tx) =>
-          this.executeStockMove(tx, {
-            companyId,
-            sourceLocationId: stockCandidate.sourceLocationId,
-            materialId: product.materialId as string,
-            quantity: quantityToShip,
-            batchNo: stockCandidate.batchNo,
-            referenceNo,
-            note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
-            operatorId: operatorId || 'SYSTEM',
-          }),
+        const lineTransactions = await this.prisma.$transaction(async (tx) => {
+          const nextTransactions: Array<{
+            sourceLocationId: string;
+            batchNo: string;
+            quantity: number;
+            transactionId: string;
+            referenceNo: string;
+          }> = [];
+
+          for (const allocation of stockPlan.allocations) {
+            const transaction = await this.executeStockMove(tx, {
+              companyId,
+              sourceLocationId: allocation.sourceLocationId,
+              materialId: product.materialId as string,
+              quantity: allocation.quantity,
+              batchNo: allocation.batchNo,
+              referenceNo,
+              note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
+              operatorId: operatorId || 'SYSTEM',
+            });
+
+            nextTransactions.push({
+              sourceLocationId: allocation.sourceLocationId,
+              batchNo: transaction.batchNo ?? allocation.batchNo,
+              quantity: allocation.quantity,
+              transactionId: transaction.id,
+              referenceNo: transaction.referenceNo ?? referenceNo,
+            });
+          }
+
+          return nextTransactions;
+        });
+
+        const quantityToShip = this.round2(
+          lineTransactions.reduce(
+            (sum, allocation) => sum + Number(allocation.quantity ?? 0),
+            0,
+          ),
         );
+
+        for (const allocation of lineTransactions) {
+          this.eventEmitter.emit('inventory.stock_depleted', {
+            companyId,
+            idempotencyKey: `stock_depleted:${allocation.transactionId}`,
+            transactionId: allocation.transactionId,
+            referenceNo: allocation.referenceNo,
+            materialId: product.materialId,
+            quantity: allocation.quantity,
+            operatorId: operatorId || 'SYSTEM',
+          });
+        }
 
         postedLines.push({
           productId: product.id,
           materialId: product.materialId,
           requestedQuantity,
           quantity: quantityToShip,
-          sourceLocationId: stockCandidate.sourceLocationId,
-          batchNo: transaction.batchNo,
-          transactionId: transaction.id,
+          remainingQuantity: this.round2(
+            Math.max(0, quantityRequestedThisRound - quantityToShip),
+          ),
+          sourceLocationId:
+            lineTransactions[0]?.sourceLocationId ??
+            payload.sourceLocationId ??
+            '',
+          batchNo: lineTransactions[0]?.batchNo ?? payload.batchNo ?? '',
+          transactionId: lineTransactions[0]?.transactionId ?? '',
+          allocations: lineTransactions,
         });
 
         const currentShipped = shippedQuantityByProductId.get(product.id) ?? 0;
@@ -257,16 +371,6 @@ export class InventoryService {
           product.id,
           this.round2(currentShipped + quantityToShip),
         );
-
-        this.eventEmitter.emit('inventory.stock_depleted', {
-          companyId,
-          idempotencyKey: `stock_depleted:${transaction.id}`,
-          transactionId: transaction.id,
-          referenceNo: transaction.referenceNo,
-          materialId: product.materialId,
-          quantity: quantityToShip,
-          operatorId: operatorId || 'SYSTEM',
-        });
       } catch (error) {
         skippedLines.push({
           productId: product.id,
@@ -282,7 +386,23 @@ export class InventoryService {
         0,
       ),
     );
-    const nextStatus = totalShipped >= totalOrdered ? 'SHIPPED' : 'PARTIAL_SHIPPED';
+
+    if (!postedLines.length) {
+      return {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        totalOrdered,
+        totalShipped,
+        status: order.status,
+        postingStatus: 'NO_STOCK_POSTED',
+        postedLines,
+        skippedLines,
+        message: '本次未找到可发货库存，订单状态保持不变',
+      };
+    }
+
+    const nextStatus =
+      totalShipped >= totalOrdered ? 'SHIPPED' : 'PARTIAL_SHIPPED';
 
     await this.prisma.order.update({
       where: { id: order.id },
@@ -295,6 +415,7 @@ export class InventoryService {
       totalOrdered,
       totalShipped,
       status: nextStatus,
+      postingStatus: 'POSTED',
       postedLines,
       skippedLines,
       message:
@@ -304,50 +425,106 @@ export class InventoryService {
     };
   }
 
-  async getRealtimeLedger(companyId: string): Promise<StockLedgerRow[]> {
-    const rows = await this.kyselyService.withTenant<StockLedgerQueryRow[]>(
-      async (trx) => {
-        const queryRows = await trx
-          .selectFrom('StockQuant as sq')
-          .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
-          .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
-          .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
-          .select([
-            'loc.id as locationId',
-            'loc.name as locationName',
-            'loc.warehouseId as warehouseId',
-            'wh.name as warehouseName',
-            'mat.id as materialId',
-            'mat.sku as materialSku',
-            'mat.name as materialName',
-            'mat.unit as materialUnit',
-            'mat.minStock as minStock',
-          ])
-          .select((eb) => [
-            eb.fn.sum<number>('sq.quantity').as('netQty'),
-            eb.fn.count<number>('sq.id').as('batchCount'),
-          ])
-          .where('loc.companyId', '=', companyId)
-          .groupBy([
-            'loc.id',
-            'loc.name',
-            'loc.warehouseId',
-            'wh.name',
-            'mat.id',
-            'mat.sku',
-            'mat.name',
-            'mat.unit',
-            'mat.minStock',
-          ])
-          .orderBy('wh.name', 'asc')
-          .orderBy('loc.name', 'asc')
-          .orderBy('mat.name', 'asc')
-          .execute();
-        return queryRows as unknown as StockLedgerQueryRow[];
-      },
-    );
+  async getRealtimeLedger(
+    companyId: string,
+    pagination: PaginationDto & {
+      search?: string;
+      warehouseId?: string;
+      lowOnly?: string | boolean;
+    } = {},
+  ): Promise<{
+    data: StockLedgerRow[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
+    const page = Math.max(1, Number(pagination.page ?? 1));
+    const requestedLimit = Math.max(1, Number(pagination.limit ?? 50));
+    const limit = Math.min(requestedLimit, 200);
+    const offset = (page - 1) * limit;
+    const search = String(pagination.search ?? '').trim();
+    const warehouseId = String(pagination.warehouseId ?? '').trim();
+    const lowOnly =
+      pagination.lowOnly === true ||
+      pagination.lowOnly === 'true' ||
+      pagination.lowOnly === '1';
 
-    return rows.map((row): StockLedgerRow => {
+    const { rows, total } = await this.kyselyService.withTenant(async (trx) => {
+      const groupByColumns = [
+        'loc.id',
+        'loc.name',
+        'loc.warehouseId',
+        'wh.name',
+        'mat.id',
+        'mat.sku',
+        'mat.name',
+        'mat.unit',
+        'mat.minStock',
+      ] as const;
+
+      let baseQuery = trx
+        .selectFrom('StockQuant as sq')
+        .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
+        .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
+        .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
+        .select([
+          'loc.id as locationId',
+          'loc.name as locationName',
+          'loc.warehouseId as warehouseId',
+          'wh.name as warehouseName',
+          'mat.id as materialId',
+          'mat.sku as materialSku',
+          'mat.name as materialName',
+          'mat.unit as materialUnit',
+          'mat.minStock as minStock',
+        ])
+        .select((eb) => [
+          eb.fn.sum<number>('sq.quantity').as('netQty'),
+          eb.fn.count<number>('sq.id').as('batchCount'),
+        ])
+        .where('loc.companyId', '=', companyId)
+        .groupBy(groupByColumns)
+        .orderBy('wh.name', 'asc')
+        .orderBy('loc.name', 'asc')
+        .orderBy('mat.name', 'asc');
+
+      if (warehouseId) {
+        baseQuery = baseQuery.where('loc.warehouseId', '=', warehouseId);
+      }
+
+      if (search) {
+        const like = `%${search}%`;
+        baseQuery = baseQuery.where((eb) =>
+          eb.or([
+            eb('mat.name', 'ilike', like),
+            eb('mat.sku', 'ilike', like),
+            eb('loc.name', 'ilike', like),
+            eb('wh.name', 'ilike', like),
+          ]),
+        );
+      }
+
+      if (lowOnly) {
+        baseQuery = baseQuery
+          .having(sql`"mat"."minStock"`, '>', 0)
+          .having(sql`sum("sq"."quantity")`, '<=', sql`"mat"."minStock"`);
+      }
+
+      // Count total grouped rows via subquery
+      const countResult = await trx
+        .selectFrom(baseQuery.as('sub'))
+        .select((eb) => eb.fn.countAll<number>().as('total'))
+        .executeTakeFirst();
+      const total = Number(countResult?.total ?? 0);
+
+      // Fetch paginated data
+      const rows = await baseQuery.limit(limit).offset(offset).execute();
+
+      return { rows: rows as unknown as StockLedgerQueryRow[], total };
+    });
+
+    const data = rows.map((row): StockLedgerRow => {
       const netQty = Number(row.netQty ?? 0);
       const minStock = Number(row.minStock ?? 0);
       return {
@@ -365,6 +542,14 @@ export class InventoryService {
         isLow: minStock > 0 && netQty <= minStock,
       };
     });
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async createStockMove(
@@ -480,8 +665,9 @@ export class InventoryService {
       include: { location: true },
     });
     if (!quant) throw new BadRequestException('该公司无此物料库存');
-    if (quant.quantity < data.quantity) {
-      throw new BadRequestException(`库存不足，当前余量：${quant.quantity}`);
+    const availableQuantity = Number(quant.quantity ?? 0);
+    if (availableQuantity < data.quantity) {
+      throw new BadRequestException(`库存不足，当前余量：${availableQuantity}`);
     }
 
     const referenceNo = `SCAN-${Date.now()}`;
@@ -626,7 +812,7 @@ export class InventoryService {
         companyId,
         {
           materialId: move.materialId,
-          quantity: move.quantity,
+          quantity: Number(move.quantity),
           destLocationId:
             payload.destLocationId ?? move.sourceLocationId ?? undefined,
           batchNo: payload.batchNo,
@@ -640,7 +826,7 @@ export class InventoryService {
 
       reversedLines.push({
         materialId: move.materialId,
-        quantity: move.quantity,
+        quantity: Number(move.quantity),
         transactionId: transaction.id,
       });
     }
@@ -712,7 +898,7 @@ export class InventoryService {
         companyId,
         {
           materialId: move.materialId,
-          quantity: move.quantity,
+          quantity: Number(move.quantity),
           sourceLocationId:
             payload.sourceLocationId ?? move.destLocationId ?? undefined,
           batchNo: payload.batchNo,
@@ -726,7 +912,7 @@ export class InventoryService {
 
       reversedLines.push({
         materialId: move.materialId,
-        quantity: move.quantity,
+        quantity: Number(move.quantity),
         transactionId: transaction.id,
       });
     }
@@ -774,6 +960,80 @@ export class InventoryService {
     return `自动过账：${documentType}#${documentId}`;
   }
 
+  private async resolveShipmentAllocations(
+    companyId: string,
+    materialId: string,
+    requestedQuantity: number,
+    sourceLocationId?: string,
+    batchNo?: string,
+  ) {
+    const candidates = await this.prisma.stockQuant.findMany({
+      where: {
+        materialId,
+        quantity: { gt: 0 },
+        location: { companyId },
+        ...(sourceLocationId ? { locationId: sourceLocationId } : {}),
+        ...(batchNo ? { batchNo } : {}),
+      },
+      orderBy: [
+        { updatedAt: 'asc' },
+        { batchNo: 'asc' },
+        { locationId: 'asc' },
+      ],
+      select: {
+        locationId: true,
+        batchNo: true,
+        quantity: true,
+        location: { select: { name: true } },
+      },
+    });
+
+    const allocations: Array<{
+      sourceLocationId: string;
+      batchNo: string;
+      quantity: number;
+      locationName: string | null;
+    }> = [];
+
+    let remaining = this.round2(requestedQuantity);
+    for (const candidate of candidates) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const availableQuantity = this.round2(Number(candidate.quantity ?? 0));
+      if (availableQuantity <= 0) {
+        continue;
+      }
+
+      const quantity = this.round2(Math.min(remaining, availableQuantity));
+      if (quantity <= 0) {
+        continue;
+      }
+
+      allocations.push({
+        sourceLocationId: candidate.locationId,
+        batchNo: candidate.batchNo,
+        quantity,
+        locationName: candidate.location?.name ?? null,
+      });
+      remaining = this.round2(remaining - quantity);
+    }
+
+    const allocatedQuantity = this.round2(
+      allocations.reduce((sum, item) => sum + item.quantity, 0),
+    );
+
+    return {
+      allocations,
+      requestedQuantity: this.round2(requestedQuantity),
+      allocatedQuantity,
+      remainingQuantity: this.round2(
+        Math.max(0, requestedQuantity - allocatedQuantity),
+      ),
+    };
+  }
+
   private async resolveShipmentStockCandidate(
     companyId: string,
     materialId: string,
@@ -812,7 +1072,7 @@ export class InventoryService {
   }
 
   private round2(value: number) {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return roundDecimal(value);
   }
 
   private generateBatchNo() {
@@ -877,7 +1137,7 @@ export class InventoryService {
           ? 'OUTBOUND'
           : 'INBOUND';
 
-    return tx.inventoryTransaction.create({
+    const transaction = await tx.inventoryTransaction.create({
       data: {
         type: moveType,
         materialId: input.materialId,
@@ -891,6 +1151,11 @@ export class InventoryService {
         note: input.note,
       },
     });
+
+    return {
+      ...transaction,
+      quantity: Number(transaction.quantity),
+    };
   }
 
   private async reserveSourceStock(

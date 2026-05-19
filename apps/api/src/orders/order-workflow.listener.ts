@@ -94,9 +94,8 @@ export class OrderWorkflowListener {
 
         return { productId, shipQuantity };
       })
-      .filter(
-        (item): item is { productId: string; shipQuantity: number } =>
-          Boolean(item),
+      .filter((item): item is { productId: string; shipQuantity: number } =>
+        Boolean(item),
       );
   }
 

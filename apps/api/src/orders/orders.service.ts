@@ -8,6 +8,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { EventQueueService } from '../core/events/event-queue.service';
+import { roundDecimal } from '../core/utils/decimal';
 
 interface CreateOrderItemInput {
   productId: string;
@@ -25,6 +26,30 @@ interface CreateOrderInput {
   notes?: string | null;
 }
 
+interface UpdateOrderHeaderInput {
+  partnerId?: string;
+  expectedDate?: string | Date | null;
+  notes?: string | null;
+}
+
+interface PreparedOrderItemsResult {
+  orderItems: Array<{
+    productId: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+    subTotal: number;
+    taxAmount: number;
+    taxRate: number;
+    taxCodeId: string | null;
+    customAttributes?: Prisma.InputJsonValue;
+  }>;
+  totalAmount: number;
+  subTotal: number;
+  taxTotal: number;
+  approvalRequired: boolean;
+}
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -35,7 +60,7 @@ export class OrdersService {
   ) {}
 
   private round2(value: number) {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return roundDecimal(value);
   }
 
   private normalizeDiscountRate(requestedDiscount?: number) {
@@ -62,12 +87,7 @@ export class OrdersService {
         id: true,
         name: true,
         sku: true,
-        material: {
-          select: {
-            id: true,
-            unitPrice: true,
-          },
-        },
+        listPrice: true,
       },
     });
 
@@ -75,13 +95,94 @@ export class OrdersService {
       throw new BadRequestException(`产品不存在或无权访问：${productId}`);
     }
 
-    if (!product.material) {
-      throw new BadRequestException(`产品 ${product.name} 未绑定物料单价，无法创建订单`);
+    const salePrice = this.round2(Number(product.listPrice ?? 0));
+    if (salePrice <= 0) {
+      throw new BadRequestException(
+        `产品 ${product.name} 未配置销售价，无法创建订单`,
+      );
     }
 
     return {
       product,
-      baseUnitPrice: this.round2(Number(product.material.unitPrice ?? 0)),
+      baseUnitPrice: salePrice,
+    };
+  }
+
+  private assertOrderEditable(status: string) {
+    if (!['DRAFT', 'PENDING_APPROVAL', 'SUBMITTED'].includes(status)) {
+      throw new BadRequestException(
+        `当前单据状态为 ${status}，仅 DRAFT/PENDING_APPROVAL/SUBMITTED 状态允许修改`,
+      );
+    }
+  }
+
+  private async buildOrderItems(
+    companyId: string,
+    items: CreateOrderItemInput[],
+    taxCodeId?: string | null,
+  ): Promise<PreparedOrderItemsResult> {
+    let totalAmount = 0;
+    let subTotal = 0;
+    let taxTotal = 0;
+    let approvalRequired = false;
+
+    const baseTaxCode = await this.resolveTaxCode(companyId, taxCodeId);
+    const orderItems = await Promise.all(
+      items.map(async (item) => {
+        const { baseUnitPrice } = await this.resolveProductPrice(
+          companyId,
+          item.productId,
+        );
+
+        const resolvedTaxCode = item.taxCodeId
+          ? await this.resolveTaxCode(companyId, item.taxCodeId)
+          : baseTaxCode;
+
+        const discountRate = this.normalizeDiscountRate(item.requestedDiscount);
+        if (discountRate > 0.1) {
+          approvalRequired = true;
+        }
+
+        const lineBase = this.round2(item.quantity * baseUnitPrice);
+        const discountAmount = this.round2(lineBase * discountRate);
+        const discountedBase = this.round2(lineBase - discountAmount);
+        const breakdown = this.calcTaxBreakdown(
+          discountedBase,
+          Number(resolvedTaxCode.rate ?? 0),
+          resolvedTaxCode.isTaxInclusive,
+        );
+
+        totalAmount += breakdown.total;
+        subTotal += breakdown.subTotal;
+        taxTotal += breakdown.taxAmount;
+
+        return {
+          productId: item.productId,
+          quantity: item.quantity,
+          unitPrice: baseUnitPrice,
+          totalPrice: breakdown.total,
+          subTotal: breakdown.subTotal,
+          taxAmount: breakdown.taxAmount,
+          taxRate: Number(resolvedTaxCode.rate ?? 0),
+          taxCodeId: resolvedTaxCode.id ?? null,
+          customAttributes:
+            discountRate > 0
+              ? {
+                  requestedDiscount: item.requestedDiscount,
+                  discountRate,
+                  discountAmount,
+                }
+              : undefined,
+        };
+      }),
+    );
+
+    return {
+      orderItems,
+      totalAmount: this.round2(totalAmount),
+      subTotal: this.round2(subTotal),
+      taxTotal: this.round2(taxTotal),
+      approvalRequired,
     };
   }
 
@@ -144,61 +245,13 @@ export class OrdersService {
     // 自动生成订单号
     const orderNo = `ORD-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    let totalAmount = 0;
-    let subTotal = 0;
-    let taxTotal = 0;
-    let approvalRequired = false;
+    if (!items?.length) {
+      throw new BadRequestException('订单明细不能为空');
+    }
 
     const baseTaxCode = await this.resolveTaxCode(companyId, taxCodeId);
-    const orderItems = await Promise.all(
-      (items ?? []).map(async (item) => {
-        const { baseUnitPrice } = await this.resolveProductPrice(
-          companyId,
-          item.productId,
-        );
-
-        const resolvedTaxCode = item.taxCodeId
-          ? await this.resolveTaxCode(companyId, item.taxCodeId)
-          : baseTaxCode;
-
-        const discountRate = this.normalizeDiscountRate(item.requestedDiscount);
-        if (discountRate > 0.1) {
-          approvalRequired = true;
-        }
-
-        const lineBase = this.round2(item.quantity * baseUnitPrice);
-        const discountAmount = this.round2(lineBase * discountRate);
-        const discountedBase = this.round2(lineBase - discountAmount);
-        const breakdown = this.calcTaxBreakdown(
-          discountedBase,
-          resolvedTaxCode.rate,
-          resolvedTaxCode.isTaxInclusive,
-        );
-
-        totalAmount += breakdown.total;
-        subTotal += breakdown.subTotal;
-        taxTotal += breakdown.taxAmount;
-
-        return {
-          productId: item.productId,
-          quantity: item.quantity,
-          unitPrice: baseUnitPrice,
-          totalPrice: breakdown.total,
-          subTotal: breakdown.subTotal,
-          taxAmount: breakdown.taxAmount,
-          taxRate: Number(resolvedTaxCode.rate ?? 0),
-          taxCodeId: resolvedTaxCode.id ?? null,
-          customAttributes:
-            discountRate > 0
-              ? {
-                  requestedDiscount: item.requestedDiscount,
-                  discountRate,
-                  discountAmount,
-                }
-              : undefined,
-        };
-      }),
-    );
+    const { orderItems, totalAmount, subTotal, taxTotal, approvalRequired } =
+      await this.buildOrderItems(companyId, items, taxCodeId);
 
     const created = await this.prisma.order.create({
       data: {
@@ -232,6 +285,7 @@ export class OrdersService {
         orderId: created.id,
         companyId,
         operatorId: userId,
+        status: created.status,
         items: created.items,
         partnerId: created.partnerId,
       },
@@ -239,6 +293,128 @@ export class OrdersService {
     });
 
     return created;
+  }
+
+  async updateOrder(
+    companyId: string,
+    orderId: string,
+    data: UpdateOrderHeaderInput,
+  ) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      select: {
+        id: true,
+        status: true,
+        partnerId: true,
+        expectedDate: true,
+        notes: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('该订单不存在或您无权修改');
+    }
+
+    this.assertOrderEditable(order.status);
+
+    const hasChanges =
+      data.partnerId !== undefined ||
+      data.expectedDate !== undefined ||
+      data.notes !== undefined;
+
+    if (!hasChanges) {
+      throw new BadRequestException('没有可更新的订单字段');
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        ...(data.partnerId !== undefined ? { partnerId: data.partnerId } : {}),
+        ...(data.expectedDate !== undefined
+          ? {
+              expectedDate: data.expectedDate
+                ? new Date(data.expectedDate)
+                : null,
+            }
+          : {}),
+        ...(data.notes !== undefined ? { notes: data.notes } : {}),
+      },
+      include: {
+        items: true,
+        partner: true,
+      },
+    });
+
+    return updated;
+  }
+
+  async updateOrderItems(
+    companyId: string,
+    orderId: string,
+    data: { items?: CreateOrderItemInput[] },
+  ) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      select: {
+        id: true,
+        status: true,
+        taxCodeId: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('该订单不存在或您无权修改');
+    }
+
+    this.assertOrderEditable(order.status);
+
+    if (!data.items?.length) {
+      throw new BadRequestException('订单明细不能为空');
+    }
+
+    const { orderItems, totalAmount, subTotal, taxTotal, approvalRequired } =
+      await this.buildOrderItems(companyId, data.items, order.taxCodeId);
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.deleteMany({ where: { orderId } });
+
+      for (const orderItem of orderItems) {
+        await tx.orderItem.create({
+          data: {
+            ...orderItem,
+            orderId,
+          },
+        });
+      }
+
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          totalAmount,
+          subTotal,
+          taxTotal,
+          status:
+            approvalRequired || order.status === 'PENDING_APPROVAL'
+              ? 'PENDING_APPROVAL'
+              : order.status,
+        },
+      });
+
+      return tx.order.findFirst({
+        where: { id: orderId, companyId },
+        include: {
+          items: true,
+          partner: true,
+          salesPerson: { select: { id: true, name: true } },
+        },
+      });
+    });
+
+    if (!updated) {
+      throw new NotFoundException('该订单不存在或您无权修改');
+    }
+
+    return updated;
   }
 
   async getOrdersByCompany(

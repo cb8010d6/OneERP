@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { BadRequestException } from '@nestjs/common';
 import { OrdersService } from './orders.service';
 
@@ -36,7 +37,9 @@ describe('OrdersService', () => {
     jest.clearAllMocks();
     service = new OrdersService(
       prisma as unknown as ConstructorParameters<typeof OrdersService>[0],
-      eventQueueService as unknown as ConstructorParameters<typeof OrdersService>[1],
+      eventQueueService as unknown as ConstructorParameters<
+        typeof OrdersService
+      >[1],
     );
   });
 
@@ -50,10 +53,7 @@ describe('OrdersService', () => {
       id: 'prod-1',
       name: 'Apple Phone',
       sku: 'SKU-001',
-      material: {
-        id: 'mat-1',
-        unitPrice: 80,
-      },
+      listPrice: 80,
     });
     prisma.order.create.mockResolvedValue({
       id: 'order-1',
@@ -63,7 +63,7 @@ describe('OrdersService', () => {
     });
     eventQueueService.publish.mockResolvedValue(undefined);
 
-    const result = await service.createOrder('company-1', 'user-1', {
+    const result = (await service.createOrder('company-1', 'user-1', {
       partnerId: 'partner-1',
       taxCodeId: 'tax-1',
       items: [
@@ -72,9 +72,13 @@ describe('OrdersService', () => {
           quantity: 2,
           unitPrice: 999,
           requestedDiscount: 15,
-        } as any,
+        } as unknown as {
+          productId: string;
+          quantity: number;
+          requestedDiscount: number;
+        },
       ],
-    });
+    })) as { status: string };
 
     expect(prisma.product.findFirst).toHaveBeenCalledWith({
       where: { id: 'prod-1', companyId: 'company-1' },
@@ -82,12 +86,7 @@ describe('OrdersService', () => {
         id: true,
         name: true,
         sku: true,
-        material: {
-          select: {
-            id: true,
-            unitPrice: true,
-          },
-        },
+        listPrice: true,
       },
     });
     expect(prisma.order.create).toHaveBeenCalledWith(
@@ -135,10 +134,7 @@ describe('OrdersService', () => {
       id: 'prod-2',
       name: 'Standard Widget',
       sku: 'SKU-002',
-      material: {
-        id: 'mat-2',
-        unitPrice: 100,
-      },
+      listPrice: 100,
     });
     prisma.order.create.mockResolvedValue({
       id: 'order-2',
@@ -148,7 +144,7 @@ describe('OrdersService', () => {
     });
     eventQueueService.publish.mockResolvedValue(undefined);
 
-    const result = await service.createOrder('company-1', 'user-1', {
+    const result = (await service.createOrder('company-1', 'user-1', {
       partnerId: 'partner-1',
       taxCodeId: 'tax-1',
       items: [
@@ -158,7 +154,7 @@ describe('OrdersService', () => {
           requestedDiscount: 10,
         },
       ],
-    });
+    })) as { status: string };
 
     expect(result.status).toBe('DRAFT');
     expect(prisma.order.create).toHaveBeenCalledWith(
@@ -180,7 +176,7 @@ describe('OrdersService', () => {
       id: 'prod-3',
       name: 'Broken Product',
       sku: 'SKU-003',
-      material: null,
+      listPrice: 0,
     });
 
     await expect(

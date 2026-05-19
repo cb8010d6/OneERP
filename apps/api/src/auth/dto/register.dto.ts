@@ -8,7 +8,7 @@ export class RegisterDto {
 
   @ApiProperty({ description: '密码' })
   @IsString()
-  @MinLength(5)
+  @MinLength(8, { message: '密码长度不能少于8位' })
   password!: string;
 
   @ApiProperty({ description: '姓名' })

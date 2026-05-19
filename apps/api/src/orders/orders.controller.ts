@@ -7,6 +7,7 @@ import {
   UseGuards,
   Delete,
   Query,
+  Put,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,7 +22,11 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
 import { RequirePermissions } from '../core/decorators/permissions.decorator';
-import { CreateOrderDto } from './dto/create-order.dto';
+import {
+  CreateOrderDto,
+  UpdateOrderDto,
+  UpdateOrderItemsDto,
+} from './dto/create-order.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 
 interface CurrentUserPayload {
@@ -86,6 +91,28 @@ export class OrdersController {
     @CurrentCompany() companyId: string,
   ) {
     return this.ordersService.getOrderTimeline(orderId, companyId);
+  }
+
+  @Put(':id')
+  @RequirePermissions('order:update')
+  @ApiOperation({ summary: '更新订单头信息' })
+  async updateOrder(
+    @Param('id') orderId: string,
+    @CurrentCompany() companyId: string,
+    @Body() body: UpdateOrderDto,
+  ) {
+    return this.ordersService.updateOrder(companyId, orderId, body);
+  }
+
+  @Put(':id/items')
+  @RequirePermissions('order:update')
+  @ApiOperation({ summary: '更新订单明细并重新计算金额' })
+  async updateOrderItems(
+    @Param('id') orderId: string,
+    @CurrentCompany() companyId: string,
+    @Body() body: UpdateOrderItemsDto,
+  ) {
+    return this.ordersService.updateOrderItems(companyId, orderId, body);
   }
 
   @Delete(':id')

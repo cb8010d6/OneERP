@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SaleOrderDrawer } from '@/components/sales/SaleOrderDrawer';
 import api from '@/lib/api';
+import { formatCurrency } from '@/lib/format';
 import { ShoppingCart, Plus, Search, Filter, Loader2 } from 'lucide-react';
 
 interface SalesOrderListItem {
@@ -173,7 +174,7 @@ export default function SalesModulePage() {
                 <div className="text-slate-500 text-sm font-mono">
                   {order.expectedDate ? new Date(order.expectedDate).toISOString().slice(0, 10) : '-'}
                 </div>
-                <div className="text-slate-900 font-mono font-semibold">¥{order.totalAmount.toLocaleString()}</div>
+                <div className="text-slate-900 font-mono font-semibold">{formatCurrency(order.totalAmount)}</div>
                 <div>
                   <span className={`inline-block px-2.5 py-1 text-[11px] font-bold rounded-md tracking-wide ${statusClass(order.status)}`}>
                     {order.status}

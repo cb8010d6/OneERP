@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { EntryPostingStatus, JournalType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { roundDecimal } from '../core/utils/decimal';
 
 interface JournalLineInput {
   accountCode: string;
@@ -349,6 +350,6 @@ export class AccountingService {
   }
 
   private round2(value: number) {
-    return Number((value + Number.EPSILON).toFixed(2));
+    return roundDecimal(value);
   }
 }

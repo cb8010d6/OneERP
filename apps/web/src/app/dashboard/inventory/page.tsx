@@ -15,6 +15,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { formatNumber } from '@/lib/format';
 
 interface LedgerRow {
   locationId: string;
@@ -86,13 +87,13 @@ function QtyCell({ row }: { row: LedgerRow }) {
     return (
       <span className="erp-badge erp-badge--danger flex items-center gap-1">
         <AlertTriangle className="h-3 w-3" />
-        {row.netQty.toLocaleString()} {row.materialUnit}
+        {formatNumber(row.netQty)} {row.materialUnit}
       </span>
     );
   }
   return (
     <span className="font-mono tabular-nums text-gray-800">
-      {row.netQty.toLocaleString()} {row.materialUnit}
+      {formatNumber(row.netQty)} {row.materialUnit}
     </span>
   );
 }
@@ -110,37 +111,35 @@ export default function InventoryPage() {
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchLedger = useCallback(async () => {
+  const fetchLedger = useCallback(async (keyword = search) => {
     setLoading(true);
     try {
-      const res = await api.get<LedgerRow[]>('/inventory/realtime-ledger');
-      setRows(res.data ?? []);
+      const params = new URLSearchParams({ page: '1', limit: '50' });
+      if (keyword.trim()) {
+        params.set('search', keyword.trim());
+      }
+
+      const res = await api.get<{ data: LedgerRow[] }>('/inventory/realtime-ledger?' + params.toString());
+      setRows(res.data?.data ?? []);
     } catch (error) {
       console.error('Failed to fetch realtime ledger', error);
       toast.error('加载库存台账失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [search]);
 
   useEffect(() => {
-    fetchLedger();
-  }, [fetchLedger]);
+    const timer = window.setTimeout(() => {
+      void fetchLedger(search);
+    }, 250);
 
-  // Filter rows by search
-  const filteredRows = useMemo(() => {
-    if (!search.trim()) return rows;
-    const kw = search.toLowerCase();
-    return rows.filter(
-      (r) =>
-        r.materialName.toLowerCase().includes(kw) ||
-        r.materialSku.toLowerCase().includes(kw) ||
-        r.locationName.toLowerCase().includes(kw) ||
-        (r.warehouseName ?? '').toLowerCase().includes(kw),
-    );
-  }, [rows, search]);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [fetchLedger, search]);
 
-  const tree = useMemo(() => buildTree(filteredRows), [filteredRows]);
+  const tree = useMemo(() => buildTree(rows), [rows]);
 
   // Auto-expand all warehouses and locations when data first arrives
   const hasData = rows.length > 0;
@@ -246,7 +245,7 @@ export default function InventoryPage() {
           </button>
           <button
             type="button"
-            onClick={fetchLedger}
+            onClick={() => void fetchLedger(search)}
             disabled={loading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
@@ -425,7 +424,7 @@ export default function InventoryPage() {
                                 <QtyCell row={row} />
                               </div>
                               <div className="text-right font-mono text-slate-500">
-                                {row.minStock.toLocaleString()} {row.materialUnit}
+                                {formatNumber(row.minStock)} {row.materialUnit}
                               </div>
                               <div className="text-right text-slate-500">{row.batchCount}</div>
                               <div className="text-right">
@@ -447,7 +446,7 @@ export default function InventoryPage() {
       </div>
 
       <div className="text-right text-xs text-slate-400">
-        共 {filteredRows.length} 条库存明细 · 单击仓库/库位行展开/折叠
+        当前页 {rows.length} 条库存明细 · 单击仓库/库位行展开/折叠
       </div>
     </div>
   );

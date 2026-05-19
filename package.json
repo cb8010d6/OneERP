@@ -1,8 +1,19 @@
 {
   "name": "one-erp",
-  "description": "一套面向制造与供应链场景的 AI Native ERP，主打元数据驱动、事件驱动和多端协同",
+  "description": "OneERP 是面向制造与供应链企业的 AI Native ERP，聚焦真实库存、财务可靠性、权限治理和单机可恢复生产部署。",
   "author": "OneERP Team",
   "private": true,
+  "license": "MIT",
+  "keywords": [
+    "erp",
+    "manufacturing",
+    "inventory",
+    "finance",
+    "ai-native",
+    "nestjs",
+    "nextjs",
+    "prisma"
+  ],
   "scripts": {
     "seed": "npm --prefix apps/api run seed",
     "prepare": "husky",

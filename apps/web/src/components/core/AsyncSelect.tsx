@@ -3,13 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { UiFieldReference } from '@/lib/ui-schema';
 import { fetchResourceList } from '@/lib/dynamic-resource';
+import { useI18n } from '@/lib/i18n';
 
-type ResourceRecord = Record<string, unknown>;
+export type AsyncSelectRecord = Record<string, unknown>;
 
 interface AsyncSelectOption {
   value: string;
   label: string;
   meta?: string;
+  record?: AsyncSelectRecord;
 }
 
 interface AsyncSelectProps {
@@ -17,6 +19,7 @@ interface AsyncSelectProps {
   value: string;
   reference: UiFieldReference;
   onChange: (nextValue: string) => void;
+  onSelectRecord?: (record: AsyncSelectRecord) => void;
   onSubmit?: () => void;
   placeholder?: string;
   className?: string;
@@ -31,8 +34,9 @@ export function AsyncSelect({
   value,
   reference,
   onChange,
+  onSelectRecord,
   onSubmit,
-  placeholder = '请选择',
+  placeholder = '',
   className = '',
   disabled,
 }: AsyncSelectProps) {
@@ -42,23 +46,26 @@ export function AsyncSelect({
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [isDirty, setIsDirty] = useState(false);
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const blurTimerRef = useRef<number | null>(null);
   const requestSeqRef = useRef(0);
+  const { language, t } = useI18n();
 
   const modelName = reference.model;
   const labelField = reference.labelField ?? 'name';
   const valueField = reference.valueField ?? 'id';
 
   const inputPlaceholder = useMemo(() => {
-    return placeholder || `搜索${labelField}`;
-  }, [labelField, placeholder]);
+    return placeholder || t('selectPlaceholder');
+  }, [language, placeholder]);
 
   useEffect(() => {
     if (!value) {
       setSelectedOption(null);
       setQuery('');
+      setIsDirty(false);
       return;
     }
 
@@ -71,18 +78,24 @@ export function AsyncSelect({
           filter: { [valueField]: value },
         });
 
-        const record = (response.data?.[0] as ResourceRecord | undefined) ?? undefined;
+        const record = (response.data?.[0] as AsyncSelectRecord | undefined) ?? undefined;
         if (!record || cancelled) {
           return;
         }
 
-        const option = formatResourceOption(record, labelField, valueField);
+        const option = formatResourceOption(record, labelField, valueField, {
+          stock: t('selectStock'),
+          contact: t('selectContact'),
+          unnamed: t('selectUnnamed'),
+        });
         setSelectedOption(option);
         setQuery(option.label);
+        setIsDirty(false);
       } catch {
         if (!cancelled) {
           setSelectedOption({ value, label: value });
           setQuery(value);
+          setIsDirty(false);
         }
       }
     };
@@ -92,7 +105,7 @@ export function AsyncSelect({
     return () => {
       cancelled = true;
     };
-  }, [labelField, modelName, value, valueField]);
+  }, [labelField, language, modelName, value, valueField]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -115,8 +128,12 @@ export function AsyncSelect({
           return;
         }
 
-        const mapped = (response.data as ResourceRecord[]).map((record) =>
-          formatResourceOption(record, labelField, valueField),
+        const mapped = (response.data as AsyncSelectRecord[]).map((record) =>
+          formatResourceOption(record, labelField, valueField, {
+            stock: t('selectStock'),
+            contact: t('selectContact'),
+            unnamed: t('selectUnnamed'),
+          }),
         );
         setOptions(mapped);
         setActiveIndex(0);
@@ -134,7 +151,7 @@ export function AsyncSelect({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isOpen, labelField, modelName, query, valueField]);
+  }, [isOpen, labelField, language, modelName, query, valueField]);
 
   useEffect(() => {
     return () => {
@@ -150,7 +167,11 @@ export function AsyncSelect({
     setOptions([option]);
     setIsOpen(false);
     setActiveIndex(0);
+    setIsDirty(false);
     onChange(option.value);
+    if (option.record) {
+      onSelectRecord?.(option.record);
+    }
   };
 
   const handleFocus = () => {
@@ -167,13 +188,26 @@ export function AsyncSelect({
   const handleBlur = () => {
     blurTimerRef.current = window.setTimeout(() => {
       setIsOpen(false);
-      setQuery(selectedOption?.label ?? '');
+      const currentLabel = selectedOption?.label ?? '';
+      const currentQuery = query.trim();
+
+      if (isDirty && currentQuery && currentQuery !== currentLabel) {
+        setSelectedOption(null);
+        setQuery('');
+        setIsDirty(false);
+        onChange('');
+        return;
+      }
+
+      setQuery(currentLabel);
+      setIsDirty(false);
     }, 150);
   };
 
   const handleInputChange = (nextQuery: string) => {
     setQuery(nextQuery);
     setIsOpen(true);
+    setIsDirty(true);
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -206,6 +240,7 @@ export function AsyncSelect({
       event.preventDefault();
       setIsOpen(false);
       setQuery(selectedOption?.label ?? '');
+      setIsDirty(false);
     }
   };
 
@@ -230,7 +265,7 @@ export function AsyncSelect({
         <div className="absolute z-30 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg shadow-gray-200/60">
           <div className="max-h-72 overflow-auto p-1">
             {isLoading ? (
-              <div className="px-3 py-2 text-sm text-gray-500">加载中...</div>
+              <div className="px-3 py-2 text-sm text-gray-500">{t('selectLoading')}</div>
             ) : options.length ? (
               options.map((option, index) => (
                 <button
@@ -249,7 +284,7 @@ export function AsyncSelect({
               ))
             ) : (
               <div className="px-3 py-2 text-sm text-gray-500">
-                {query.trim() ? '未找到匹配项' : '请输入关键词搜索'}
+                {query.trim() ? t('selectNoResults') : t('selectSearchPrompt')}
               </div>
             )}
           </div>
@@ -260,9 +295,10 @@ export function AsyncSelect({
 }
 
 function formatResourceOption(
-  record: ResourceRecord,
+  record: AsyncSelectRecord,
   labelField: string,
   valueField: string,
+  labels: { stock: string; contact: string; unnamed: string },
 ): AsyncSelectOption {
   const value = safeString(record[valueField]) || safeString(record.id) || '';
   const rawLabel =
@@ -272,7 +308,7 @@ function formatResourceOption(
     safeString(record.sku) ||
     safeString(record.code) ||
     value ||
-    '未命名';
+    labels.unnamed;
 
   const code = safeString(record.sku) || safeString(record.code) || safeString(record.barcode);
   const label = code && !rawLabel.includes(code) ? `[${code}] ${rawLabel}` : rawLabel;
@@ -281,11 +317,11 @@ function formatResourceOption(
   const metaParts: string[] = [];
   if (stockValue !== null) {
     const unit = safeString(record.unit) || safeString(record.uom);
-    metaParts.push(`Stock: ${stockValue}${unit ? ` ${unit}` : ''}`);
+    metaParts.push(`${labels.stock}: ${stockValue}${unit ? ` ${unit}` : ''}`);
   } else {
     const contact = safeString(record.contact) || safeString(record.phone) || safeString(record.email);
     if (contact) {
-      metaParts.push(`Contact: ${contact}`);
+      metaParts.push(`${labels.contact}: ${contact}`);
     }
   }
 
@@ -293,10 +329,11 @@ function formatResourceOption(
     value,
     label,
     meta: metaParts.join(' · '),
+    record,
   };
 }
 
-function resolveStockValue(record: ResourceRecord): number | null {
+function resolveStockValue(record: AsyncSelectRecord): number | null {
   const candidates = ['stock', 'stockQty', 'availableStock', 'availableQty', 'quantity', 'qty', 'onHand', 'balance'];
   for (const key of candidates) {
     const value = record[key];

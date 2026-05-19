@@ -4,9 +4,10 @@ import React, { useEffect, useState } from 'react';
 import api from '../../lib/api';
 import { useAuthStore } from '../../store/authStore';
 import { Activity, Box, CreditCard, ShoppingBag, Sparkles, Truck } from 'lucide-react';
-import { Sheet } from '../../components/ui/Sheet';
+import { Badge, Button, EmptyState, Sheet, Skeleton, StatCard } from '../../components/ui';
 import { Chat2DashPanel } from '../../components/ai/Chat2DashPanel';
 import { useI18n } from '../../lib/i18n';
+import { formatCurrency } from '../../lib/format';
 
 export default function DashboardClient() {
   const { currentCompanyId, token } = useAuthStore();
@@ -20,9 +21,13 @@ export default function DashboardClient() {
   });
 
   const [recentOrders, setRecentOrders] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
+      setLoading(true);
+      setError(null);
       try {
         const [statsResponse, ordersResponse] = await Promise.all([
           api.get('/dashboard/stats'),
@@ -38,6 +43,9 @@ export default function DashboardClient() {
         setRecentOrders(orders.slice(0, 5));
       } catch (e) {
         console.error('Fetch stats or orders failed', e);
+        setError(e instanceof Error ? e.message : 'Dashboard data loading failed');
+      } finally {
+        setLoading(false);
       }
     };
     if (currentCompanyId && token) {
@@ -48,57 +56,28 @@ export default function DashboardClient() {
   return (
     <div className="space-y-6">
       <div className="flex justify-end">
-        <button
+        <Button
+          variant="secondary"
           onClick={() => setChat2DashOpen(true)}
-          className="inline-flex items-center gap-2 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-2 text-sm font-medium text-cyan-700 transition hover:bg-cyan-100"
+          icon={<Sparkles className="h-4 w-4" />}
+          className="border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
         >
-          <Sparkles className="h-4 w-4" />
           {t('dashboardOpenChat2Dash')}
-        </button>
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {/* Stat Cards */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center">
-          <div className="p-3 rounded-lg bg-blue-50 text-blue-600 mr-4">
-            <ShoppingBag className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">{t('dashboardTotalOrders')}</p>
-            <p className="text-2xl font-bold text-gray-900">{stats.totalOrders}</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center">
-          <div className="p-3 rounded-lg bg-indigo-50 text-indigo-600 mr-4">
-            <Activity className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">{t('dashboardInProduction')}</p>
-            <p className="text-2xl font-bold text-gray-900">{stats.activeOrders}</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center">
-          <div className="p-3 rounded-lg bg-green-50 text-green-600 mr-4">
-            <CreditCard className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">{t('dashboardInventoryValue')}</p>
-            <p className="text-2xl font-bold text-gray-900">¥{(stats.totalStockValue).toLocaleString(locale)}</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex items-center">
-          <div className="p-3 rounded-lg bg-red-50 text-red-600 mr-4">
-            <Box className="h-6 w-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">{t('dashboardLowStock')}</p>
-            <p className="text-2xl font-bold text-gray-900">{stats.lowStockItems}</p>
-          </div>
-        </div>
+        <StatCard icon={ShoppingBag} label={t('dashboardTotalOrders')} value={stats.totalOrders} tone="blue" loading={loading} />
+        <StatCard icon={Activity} label={t('dashboardInProduction')} value={stats.activeOrders} tone="indigo" loading={loading} />
+        <StatCard icon={CreditCard} label={t('dashboardInventoryValue')} value={formatCurrency(stats.totalStockValue, locale)} tone="green" loading={loading} />
+        <StatCard icon={Box} label={t('dashboardLowStock')} value={stats.lowStockItems} tone="red" loading={loading} />
       </div>
+
+      {error ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -106,24 +85,22 @@ export default function DashboardClient() {
              <Truck className="h-5 w-5 mr-2 text-gray-500" /> {t('dashboardRecentOrders')}
           </h3>
           <div className="space-y-4">
-             {recentOrders.length > 0 ? recentOrders.map(order => (
+             {loading ? (
+               <>
+                 <Skeleton className="h-20 w-full" />
+                 <Skeleton className="h-20 w-full" />
+                 <Skeleton className="h-20 w-full" />
+               </>
+             ) : recentOrders.length > 0 ? recentOrders.map(order => (
                <div key={order.id} className="p-4 rounded-lg bg-gray-50 border border-gray-100 flex justify-between items-center">
                   <div>
                      <p className="font-medium text-gray-900">{order.orderNo}</p>
                      <p className="text-sm text-gray-500">{t('dashboardCustomer')}: {order.partner?.name || t('dashboardUnknown')}</p>
                   </div>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
-                     order.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                     order.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
-                     'bg-blue-100 text-blue-800'
-                  }`}>
-                    {order.status === 'PENDING' ? '待处理' : 
-                     order.status === 'PROCESSING' ? '生产中' : 
-                     order.status === 'COMPLETED' ? '已完成' : order.status}
-                  </span>
+                  <Badge status={order.status}>{formatOrderStatus(order.status, locale)}</Badge>
                </div>
              )) : (
-               <div className="text-sm text-gray-500 text-center py-4">{t('dashboardNoRecentOrders')}</div>
+               <EmptyState title={t('dashboardNoRecentOrders')} className="py-8" />
              )}
           </div>
         </div>
@@ -147,4 +124,33 @@ export default function DashboardClient() {
       </Sheet>
     </div>
   );
+}
+
+function formatOrderStatus(status: string | undefined, locale: string) {
+  const labels: Record<string, Record<string, string>> = {
+    'zh-CN': {
+      DRAFT: '草稿',
+      PENDING: '待处理',
+      PENDING_APPROVAL: '待审批',
+      SUBMITTED: '已提交',
+      PROCESSING: '处理中',
+      IN_PRODUCTION: '生产中',
+      PARTIAL_SHIPPED: '部分发货',
+      SHIPPED: '已发货',
+      COMPLETED: '已完成',
+    },
+    'en-US': {
+      DRAFT: 'Draft',
+      PENDING: 'Pending',
+      PENDING_APPROVAL: 'Pending Approval',
+      SUBMITTED: 'Submitted',
+      PROCESSING: 'Processing',
+      IN_PRODUCTION: 'In Production',
+      PARTIAL_SHIPPED: 'Partially Shipped',
+      SHIPPED: 'Shipped',
+      COMPLETED: 'Completed',
+    },
+  };
+
+  return labels[locale]?.[String(status ?? '')] ?? status ?? '-';
 }

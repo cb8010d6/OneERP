@@ -159,15 +159,28 @@ const DEFAULT_WORKFLOW_DEFINITIONS: Record<string, DefaultWorkflowDefinition> =
       statusField: 'status',
       states: [
         { value: 'DRAFT', label: '草稿', sort: 10, isInitial: true },
-        { value: 'PENDING', label: '待处理', sort: 20 },
-        { value: 'IN_PRODUCTION', label: '生产中', sort: 30 },
-        { value: 'PARTIAL_SHIPPED', label: '部分发货', sort: 40 },
-        { value: 'SHIPPED', label: '已发货', sort: 50 },
-        { value: 'COMPLETED', label: '已完成', sort: 60, isFinal: true },
+        { value: 'PENDING_APPROVAL', label: '待审批', sort: 20 },
+        { value: 'PENDING', label: '待处理', sort: 30 },
+        { value: 'IN_PRODUCTION', label: '生产中', sort: 40 },
+        { value: 'PARTIAL_SHIPPED', label: '部分发货', sort: 50 },
+        { value: 'SHIPPED', label: '已发货', sort: 60 },
+        { value: 'COMPLETED', label: '已完成', sort: 70, isFinal: true },
         { value: 'CANCELLED', label: '已取消', sort: 99, isFinal: true },
       ],
       transitions: [
         { from: 'DRAFT', to: 'PENDING', action: 'submit', label: '提交订单' },
+        {
+          from: 'DRAFT',
+          to: 'PENDING_APPROVAL',
+          action: 'submit_for_approval',
+          label: '提交审批',
+        },
+        {
+          from: 'PENDING_APPROVAL',
+          to: 'PENDING',
+          action: 'approve',
+          label: '审批通过',
+        },
         {
           from: 'PENDING',
           to: 'IN_PRODUCTION',
@@ -197,6 +210,12 @@ const DEFAULT_WORKFLOW_DEFINITIONS: Record<string, DefaultWorkflowDefinition> =
         },
         {
           from: 'PARTIAL_SHIPPED',
+          to: 'CANCELLED',
+          action: 'cancel',
+          label: '取消',
+        },
+        {
+          from: 'PENDING_APPROVAL',
           to: 'CANCELLED',
           action: 'cancel',
           label: '取消',

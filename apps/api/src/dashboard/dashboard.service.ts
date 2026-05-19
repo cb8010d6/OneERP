@@ -43,11 +43,12 @@ export class DashboardService {
 
     allStocks.forEach((stock) => {
       // 使用物料真实单价，未设置则为 0
-      const unitPrice = stock.material?.unitPrice ?? 0;
-      totalStockValue += stock.quantity * unitPrice;
+      const unitPrice = Number(stock.material?.unitPrice ?? 0);
+      const quantity = Number(stock.quantity ?? 0);
+      totalStockValue += quantity * unitPrice;
       // 低库存预警：库存量低于物料设定的最低库存
-      const minStock = stock.material?.minStock ?? 10;
-      if (stock.quantity < minStock) {
+      const minStock = Number(stock.material?.minStock ?? 10);
+      if (quantity < minStock) {
         lowStockItems++;
       }
     });

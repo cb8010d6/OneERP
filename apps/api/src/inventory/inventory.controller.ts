@@ -92,8 +92,21 @@ export class InventoryController {
   @ApiOperation({
     summary: '实时库存台账 – Kysely 聚合，支持树形钻取与低库存预警',
   })
-  async getRealtimeLedger(@CurrentCompany() companyId: string) {
-    return this.inventoryService.getRealtimeLedger(companyId);
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'warehouseId', required: false, type: String })
+  @ApiQuery({ name: 'lowOnly', required: false, type: Boolean })
+  async getRealtimeLedger(
+    @CurrentCompany() companyId: string,
+    @Query()
+    pagination: PaginationDto & {
+      search?: string;
+      warehouseId?: string;
+      lowOnly?: string;
+    },
+  ) {
+    return this.inventoryService.getRealtimeLedger(companyId, pagination);
   }
 
   @Post('inbound')

@@ -1,5 +1,11 @@
-﻿import axios, { AxiosHeaders, AxiosError } from 'axios';
+import axios, { AxiosError, AxiosHeaders } from 'axios';
 import { useAuthStore } from '../store/authStore';
+
+declare module 'axios' {
+  export interface InternalAxiosRequestConfig {
+    _retry?: boolean;
+  }
+}
 
 function sanitizePaginationInUrl(url?: string): string | undefined {
   if (!url) return url;
@@ -29,16 +35,34 @@ function sanitizePaginationInUrl(url?: string): string | undefined {
   }
 }
 
-// API 基础地址：优先读取环境变量，未配置时回退到本地开发默认值
 const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
 
-// 创建可以复用的 axios 实例
 const api = axios.create({
   baseURL,
   timeout: 10000,
 });
 
-// 请求拦截器：自动附加身份令牌和当前公司上下文。
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken() {
+  const state = useAuthStore.getState();
+  if (!state.refreshToken) {
+    return null;
+  }
+
+  const response = await axios.post(`${baseURL.replace(/\/$/, '')}/auth/refresh`, {
+    refreshToken: state.refreshToken,
+  });
+  const { accessToken, refreshToken, user, companies } = response.data as {
+    accessToken: string;
+    refreshToken: string;
+    user: Parameters<typeof state.setAuth>[1];
+    companies: Parameters<typeof state.setAuth>[2];
+  };
+  state.setAuth(accessToken, user, companies, refreshToken);
+  return accessToken;
+}
+
 api.interceptors.request.use(
   (config) => {
     config.url = sanitizePaginationInUrl(config.url);
@@ -58,8 +82,7 @@ api.interceptors.request.use(
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     }
-    
-    // 业务请求必须带上当前公司 ID。
+
     if (!isAuthRequest && companyId) {
       headers.set('x-company-id', companyId);
     }
@@ -69,24 +92,49 @@ api.interceptors.request.use(
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }
-      return Promise.reject(new AxiosError('缺少有效登录态或公司上下文，已阻止请求。', 'ERR_AUTH_CONTEXT_INVALID', config));
+      return Promise.reject(
+        new AxiosError(
+          '缺少有效登录态或公司上下文，已阻止请求。',
+          'ERR_AUTH_CONTEXT_INVALID',
+          config,
+        ),
+      );
     }
 
     config.headers = headers;
-
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 );
 
-// 响应拦截器：当 Token 过期或租户上下文失效时返回登录页。
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalConfig = error.config;
     if (error.response?.status === 401) {
-      // 401 未授权
+      const isRefreshRequest = String(originalConfig?.url ?? '').includes('/auth/refresh');
+      const hasRefreshToken = !!useAuthStore.getState().refreshToken;
+      if (originalConfig && !originalConfig._retry && hasRefreshToken && !isRefreshRequest) {
+        originalConfig._retry = true;
+        try {
+          refreshPromise = refreshPromise ?? refreshAccessToken();
+          const nextToken = await refreshPromise;
+          refreshPromise = null;
+          if (nextToken) {
+            const headers = AxiosHeaders.from(originalConfig.headers);
+            headers.set('Authorization', `Bearer ${nextToken}`);
+            originalConfig.headers = headers;
+            return api.request(originalConfig);
+          }
+        } catch {
+          refreshPromise = null;
+        }
+      }
+
       useAuthStore.getState().logout();
-      window.location.href = '/login';
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
     }
 
     if (error.response?.status === 403) {
@@ -99,12 +147,14 @@ api.interceptors.response.use(
 
       if (isTenantOrAuthContextError) {
         useAuthStore.getState().logout();
-        window.location.href = '/login';
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        }
       }
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 export default api;

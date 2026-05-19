@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import {
   BadRequestException,
   ConflictException,
@@ -14,6 +15,7 @@ type MockPrisma = {
     findFirst: jest.Mock;
   };
   stockQuant: {
+    findMany: jest.Mock;
     findFirst: jest.Mock;
   };
   stockLocation: {
@@ -33,6 +35,7 @@ type MockPrisma = {
 type MockTx = {
   stockQuant: {
     updateMany: jest.Mock;
+    findMany: jest.Mock;
     findFirst: jest.Mock;
     upsert: jest.Mock;
   };
@@ -51,6 +54,7 @@ describe('InventoryService', () => {
       findFirst: jest.fn(),
     },
     stockQuant: {
+      findMany: jest.fn(),
       findFirst: jest.fn(),
     },
     stockLocation: {
@@ -70,6 +74,7 @@ describe('InventoryService', () => {
   const tx: MockTx = {
     stockQuant: {
       updateMany: jest.fn(),
+      findMany: jest.fn(),
       findFirst: jest.fn(),
       upsert: jest.fn(),
     },
@@ -148,41 +153,59 @@ describe('InventoryService', () => {
     prisma.inventoryTransaction.findMany.mockResolvedValue([
       { materialId: 'm1', quantity: 2 },
     ]);
-    prisma.stockQuant.findFirst.mockImplementation(
-      async ({ where }: { where: { materialId: string } }) => {
+    prisma.stockQuant.findMany.mockImplementation(
+      ({ where }: { where: { materialId: string } }) => {
         if (where.materialId === 'm1') {
-          return {
-            locationId: 'loc-1',
-            batchNo: 'B1',
-            quantity: 2,
-            location: { name: '主仓' },
-          };
+          return [
+            {
+              locationId: 'loc-1',
+              batchNo: 'B1-A',
+              quantity: 1,
+              location: { name: '主仓' },
+            },
+            {
+              locationId: 'loc-1',
+              batchNo: 'B1-B',
+              quantity: 1,
+              location: { name: '主仓' },
+            },
+          ];
         }
 
         if (where.materialId === 'm2') {
-          return {
-            locationId: 'loc-1',
-            batchNo: 'B2',
-            quantity: 3,
-            location: { name: '主仓' },
-          };
+          return [
+            {
+              locationId: 'loc-1',
+              batchNo: 'B2',
+              quantity: 3,
+              location: { name: '主仓' },
+            },
+          ];
         }
 
-        return null;
+        return [];
       },
     );
     tx.stockQuant.updateMany.mockResolvedValue({ count: 1 });
     tx.inventoryTransaction.create
       .mockResolvedValueOnce({
         id: 't1',
-        batchNo: 'B1',
+        batchNo: 'B1-A',
         referenceNo: 'SALE-SHIP-ORD-001',
         type: 'OUTBOUND',
         materialId: 'm1',
-        quantity: 2,
+        quantity: 1,
       })
       .mockResolvedValueOnce({
         id: 't2',
+        batchNo: 'B1-B',
+        referenceNo: 'SALE-SHIP-ORD-001',
+        type: 'OUTBOUND',
+        materialId: 'm1',
+        quantity: 1,
+      })
+      .mockResolvedValueOnce({
+        id: 't3',
         batchNo: 'B2',
         referenceNo: 'SALE-SHIP-ORD-001',
         type: 'OUTBOUND',
@@ -191,13 +214,23 @@ describe('InventoryService', () => {
       });
     prisma.order.update.mockResolvedValue({});
 
-    const result = await service.postSaleOrderShipment('c1', 'o1', {
-      sourceLocationId: 'loc-1',
-      items: [
-        { productId: 'p1', shipQuantity: 5 },
-        { productId: 'p2', shipQuantity: 3 },
-      ],
-    }, 'u1');
+    const result = (await service.postSaleOrderShipment(
+      'c1',
+      'o1',
+      {
+        sourceLocationId: 'loc-1',
+        items: [
+          { productId: 'p1', shipQuantity: 5 },
+          { productId: 'p2', shipQuantity: 3 },
+        ],
+      },
+      'u1',
+    )) as {
+      status: string;
+      totalOrdered: number;
+      totalShipped: number;
+      postedLines: Array<Record<string, unknown>>;
+    };
 
     expect(result.status).toBe('PARTIAL_SHIPPED');
     expect(result.totalOrdered).toBe(8);
@@ -209,6 +242,10 @@ describe('InventoryService', () => {
         materialId: 'm1',
         requestedQuantity: 5,
         quantity: 2,
+        allocations: expect.arrayContaining([
+          expect.objectContaining({ batchNo: 'B1-A', quantity: 1 }),
+          expect.objectContaining({ batchNo: 'B1-B', quantity: 1 }),
+        ]),
       }),
     );
     expect(result.postedLines[1]).toEqual(
@@ -225,12 +262,44 @@ describe('InventoryService', () => {
     });
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       'inventory.stock_depleted',
-      expect.objectContaining({ materialId: 'm1', quantity: 2 }),
+      expect.objectContaining({ materialId: 'm1', quantity: 1 }),
+    );
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      'inventory.stock_depleted',
+      expect.objectContaining({ materialId: 'm1', quantity: 1 }),
     );
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       'inventory.stock_depleted',
       expect.objectContaining({ materialId: 'm2', quantity: 3 }),
     );
+  });
+
+  it('keeps order status unchanged when no stock is posted', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'o1',
+      orderNo: 'ORD-002',
+      status: 'DRAFT',
+      items: [{ productId: 'p1', quantity: 2 }],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
+    ]);
+    prisma.inventoryTransaction.findMany.mockResolvedValue([]);
+    prisma.stockQuant.findMany.mockResolvedValue([]);
+
+    const result = await service.postSaleOrderShipment(
+      'c1',
+      'o1',
+      {
+        sourceLocationId: 'loc-1',
+        items: [{ productId: 'p1', shipQuantity: 2 }],
+      },
+      'u1',
+    );
+
+    expect(result.postingStatus).toBe('NO_STOCK_POSTED');
+    expect(result.status).toBe('DRAFT');
+    expect(prisma.order.update).not.toHaveBeenCalled();
   });
 
   it('skips purchase reverse when reverse moves already exist', async () => {

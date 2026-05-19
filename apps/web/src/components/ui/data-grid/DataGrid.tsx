@@ -10,6 +10,21 @@ import {
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSelect';
+import type { UiFieldReference } from '@/lib/ui-schema';
+
+type DataGridColumnMeta<TData> = {
+  editable?: boolean;
+  options?: Array<{ label: string; value: string }>;
+  reference?: UiFieldReference;
+  onReferenceSelect?: (
+    rowId: string,
+    columnId: string,
+    value: string,
+    record: AsyncSelectRecord,
+    row: TData,
+  ) => void;
+};
 
 interface DataGridProps<TData extends { id: string }> {
   columns: ColumnDef<TData, any>[];
@@ -159,23 +174,48 @@ export function DataGrid<TData extends { id: string }>({
                     </div>
                   ) : null}
                   {row.getVisibleCells().map((cell) => {
+                    const columnMeta =
+                      ((cell.column.columnDef as { meta?: DataGridColumnMeta<TData> }).meta ?? {});
                     const isEditing =
                       editingCell?.rowId === row.original.id && editingCell?.columnId === cell.column.id;
-                    const options = (cell.column.columnDef as any).meta?.options as
-                      | Array<{ label: string; value: string }>
-                      | undefined;
+                    const options = columnMeta.options;
+                    const reference = columnMeta.reference;
+                    const isEditable = columnMeta.editable !== false;
                     return (
                       <div
                         key={cell.id}
                         className="border-r border-gray-100 px-3 py-2 last:border-r-0"
                         onDoubleClick={() => {
+                          if (!isEditable) return;
                           const value = String(cell.getValue() ?? '');
                           setEditingCell({ rowId: row.original.id, columnId: cell.column.id });
                           setEditingValue(value);
                         }}
                       >
                         {isEditing ? (
-                          options?.length ? (
+                          reference ? (
+                            <AsyncSelect
+                              id={`${row.original.id}-${cell.column.id}`}
+                              value={editingValue}
+                              reference={reference}
+                              className="w-full rounded border border-blue-300 px-2 py-1 text-xs"
+                              onChange={(value) => {
+                                setEditingValue(value);
+                                onCellUpdate?.(row.original.id, cell.column.id, value);
+                                setEditingCell(null);
+                                setEditingValue('');
+                              }}
+                              onSelectRecord={(record) =>
+                                columnMeta.onReferenceSelect?.(
+                                  row.original.id,
+                                  cell.column.id,
+                                  String(record[reference.valueField ?? 'id'] ?? ''),
+                                  record,
+                                  row.original,
+                                )
+                              }
+                            />
+                          ) : options?.length ? (
                             <select
                               autoFocus
                               value={editingValue}

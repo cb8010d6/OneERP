@@ -5,6 +5,7 @@ import api from '@/lib/api';
 import { Loader2, AlertCircle, CheckCircle2, Calculator, ArrowRightLeft } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useI18n } from '@/lib/i18n';
+import { formatCurrency } from '@/lib/format';
 
 interface TrialBalanceRow {
   accountId: string;
@@ -112,7 +113,7 @@ export function TrialBalanceView() {
             <Calculator className="h-4 w-4" />
             <span className="text-xs font-medium uppercase tracking-wider">{t('trialDebitTotal')} (Debit)</span>
           </div>
-          <p className="mt-1 text-2xl font-bold text-slate-900">¥{data.totalDebit.toLocaleString(locale)}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(data.totalDebit, locale)}</p>
         </div>
 
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -120,7 +121,7 @@ export function TrialBalanceView() {
             <Calculator className="h-4 w-4" />
             <span className="text-xs font-medium uppercase tracking-wider">{t('trialCreditTotal')} (Credit)</span>
           </div>
-          <p className="mt-1 text-2xl font-bold text-slate-900">¥{data.totalCredit.toLocaleString(locale)}</p>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{formatCurrency(data.totalCredit, locale)}</p>
         </div>
 
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -130,9 +131,9 @@ export function TrialBalanceView() {
           </div>
           <p className={clsx(
             "mt-1 text-2xl font-bold",
-            data.difference === 0 ? "text-slate-400" : "text-red-600"
+            Number(data.difference ?? 0) === 0 ? "text-slate-400" : "text-red-600"
           )}>
-            ¥{Math.abs(data.difference).toLocaleString(locale)}
+            {formatCurrency(Math.abs(Number(data.difference ?? 0)), locale)}
           </p>
         </div>
       </div>
@@ -171,16 +172,16 @@ export function TrialBalanceView() {
                   </span>
                 </td>
                 <td className="px-6 py-4 text-right font-mono text-slate-600">
-                  {row.debit > 0 ? `¥${row.debit.toLocaleString(locale)}` : '-'}
+                  {Number(row.debit ?? 0) > 0 ? formatCurrency(row.debit, locale) : '-'}
                 </td>
                 <td className="px-6 py-4 text-right font-mono text-slate-600">
-                  {row.credit > 0 ? `¥${row.credit.toLocaleString(locale)}` : '-'}
+                  {Number(row.credit ?? 0) > 0 ? formatCurrency(row.credit, locale) : '-'}
                 </td>
                 <td className={clsx(
                   "px-6 py-4 text-right font-mono font-bold",
-                  row.balance >= 0 ? "text-slate-900" : "text-red-600"
+                  Number(row.balance ?? 0) >= 0 ? "text-slate-900" : "text-red-600"
                 )}>
-                  ¥{row.balance.toLocaleString(locale)}
+                  {formatCurrency(row.balance, locale)}
                 </td>
               </tr>
             ))}
@@ -188,13 +189,13 @@ export function TrialBalanceView() {
           <tfoot className="bg-slate-50 font-bold border-t border-slate-200">
             <tr>
               <td colSpan={3} className="px-6 py-4 text-slate-900">{t('trialTotal')} (Total)</td>
-              <td className="px-6 py-4 text-right font-mono text-slate-900">¥{data.totalDebit.toLocaleString(locale)}</td>
-              <td className="px-6 py-4 text-right font-mono text-slate-900">¥{data.totalCredit.toLocaleString(locale)}</td>
+              <td className="px-6 py-4 text-right font-mono text-slate-900">{formatCurrency(data.totalDebit, locale)}</td>
+              <td className="px-6 py-4 text-right font-mono text-slate-900">{formatCurrency(data.totalCredit, locale)}</td>
               <td className={clsx(
                 "px-6 py-4 text-right font-mono",
                 data.balanced ? "text-slate-900" : "text-red-600"
               )}>
-                ¥{Math.abs(data.difference).toLocaleString(locale)}
+                {formatCurrency(Math.abs(Number(data.difference ?? 0)), locale)}
               </td>
             </tr>
           </tfoot>

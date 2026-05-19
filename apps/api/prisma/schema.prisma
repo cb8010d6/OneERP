@@ -181,7 +181,7 @@ model TaxCode {
   id             String   @id @default(uuid())
   code           String
   name           String
-  rate           Float    @default(0)
+  rate           Decimal  @default(0) @db.Decimal(18,4)
   isTaxInclusive Boolean  @default(true)
   isDefault      Boolean  @default(false)
   active         Boolean  @default(true)
@@ -212,9 +212,9 @@ model Order {
   salesId      String // 挂单销售员
   companyId    String
   status       String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
-  totalAmount  Float     @default(0)
-  subTotal     Float     @default(0)
-  taxTotal     Float     @default(0)
+  totalAmount  Decimal   @default(0) @db.Decimal(18,4)
+  subTotal     Decimal   @default(0) @db.Decimal(18,4)
+  taxTotal     Decimal   @default(0) @db.Decimal(18,4)
   taxCodeId    String?
   aiSummary    Json? // 存放 AI 抓取的客户需求 JSON 结构
   customAttributes Json?
@@ -238,11 +238,11 @@ model OrderItem {
   orderId    String
   productId  String // 关联的产品/模型名称
   quantity   Int
-  unitPrice  Float
-  totalPrice Float
-  subTotal   Float   @default(0)
-  taxAmount  Float   @default(0)
-  taxRate    Float   @default(0)
+  unitPrice  Decimal @db.Decimal(18,4)
+  totalPrice Decimal @db.Decimal(18,4)
+  subTotal   Decimal @default(0) @db.Decimal(18,4)
+  taxAmount  Decimal @default(0) @db.Decimal(18,4)
+  taxRate    Decimal @default(0) @db.Decimal(18,4)
   taxCodeId  String?
   customAttributes Json?
 
@@ -296,8 +296,8 @@ model Material {
   category    String // 例如：管材，板材，标准件
   description String?
   unit        String  @default("pcs")
-  minStock    Float   @default(0)
-  unitPrice   Float   @default(0)
+  minStock    Decimal @default(0) @db.Decimal(18,4)
+  unitPrice   Decimal @default(0) @db.Decimal(18,4)
   companyId   String? // 可选，如果为null则为系统预设物料
 
   company               Company?               @relation(fields: [companyId], references: [id])
@@ -332,6 +332,7 @@ model Product {
   type        ProductType @default(STOCKABLE)
   categoryId  String?
   materialId  String?
+  listPrice   Decimal     @default(0) @db.Decimal(18,4)
   uom         String      @default("pcs")
   description String?
   customAttributes Json?
@@ -392,8 +393,8 @@ model BomLine {
   id         String  @id @default(uuid())
   bomId      String
   materialId String
-  quantity   Float
-  scrapRate  Float   @default(0)
+  quantity   Decimal @db.Decimal(18,4)
+  scrapRate  Decimal @default(0) @db.Decimal(18,4)
   note       String?
 
   bom      Bom      @relation(fields: [bomId], references: [id])
@@ -408,7 +409,7 @@ model StockQuant {
   locationId  String
   materialId  String
   batchNo     String
-  quantity    Float
+  quantity    Decimal @db.Decimal(18,4)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -444,7 +445,7 @@ model InventoryTransaction {
   materialId        String
   sourceLocationId  String?
   destLocationId    String?
-  quantity          Float
+  quantity          Decimal  @db.Decimal(18,4)
   batchNo           String?
   operatorId        String
   companyId         String
@@ -548,9 +549,9 @@ model Invoice {
   id         String    @id @default(uuid())
   invoiceNo  String    @unique
   orderId    String
-  amount     Float
-  subTotal   Float    @default(0)
-  taxAmount  Float    @default(0)
+  amount     Decimal  @db.Decimal(18,4)
+  subTotal   Decimal  @default(0) @db.Decimal(18,4)
+  taxAmount  Decimal  @default(0) @db.Decimal(18,4)
   taxCodeId  String?
   status     String // "UNPAID", "PARTIAL", "PAID"
   postingStatus EntryPostingStatus @default(DRAFT)
@@ -568,7 +569,7 @@ model Invoice {
 model Payment {
   id          String   @id @default(uuid())
   invoiceId   String
-  amount      Float
+  amount      Decimal  @db.Decimal(18,4)
   paymentDate DateTime @default(now())
   method      String // "BANK_TRANSFER", "CASH", "WECHAT", "ALIPAY"
 
@@ -641,8 +642,8 @@ model JournalEntryLine {
   lineNo         Int
   accountId      String
   partnerId      String?
-  debit          Float    @default(0)
-  credit         Float    @default(0)
+  debit          Decimal  @default(0) @db.Decimal(18,4)
+  credit         Decimal  @default(0) @db.Decimal(18,4)
   memo           String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt

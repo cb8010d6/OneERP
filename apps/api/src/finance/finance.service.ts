@@ -9,6 +9,7 @@ import { EntryPostingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateInvoiceDto, CreatePaymentDto } from './dto/finance.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { roundDecimal } from '../core/utils/decimal';
 
 export interface TrialBalanceRow {
   accountId: string;
@@ -40,7 +41,7 @@ export class FinanceService {
   ) {}
 
   private round2(value: number) {
-    return Math.round((value + Number.EPSILON) * 100) / 100;
+    return roundDecimal(value);
   }
 
   private calcTaxFromTotal(total: number, taxRate: number) {
@@ -107,7 +108,10 @@ export class FinanceService {
     );
 
     const amount = this.round2(Number(dto.amount));
-    const breakdown = this.calcTaxFromTotal(amount, resolvedTaxCode.rate);
+    const breakdown = this.calcTaxFromTotal(
+      amount,
+      Number(resolvedTaxCode.rate ?? 0),
+    );
 
     const invoice = await this.prisma.invoice.create({
       data: {
@@ -184,10 +188,14 @@ export class FinanceService {
       });
 
       const totalPaid =
-        inv.payments.reduce((sum, p) => sum + p.amount, 0) + dto.amount;
+        inv.payments.reduce(
+          (sum, p) => this.round2(sum + Number(p.amount)),
+          0,
+        ) + this.round2(Number(dto.amount));
 
+      const invoiceAmount = this.round2(Number(inv.amount));
       let newStatus = inv.status;
-      if (totalPaid >= inv.amount) newStatus = 'PAID';
+      if (totalPaid >= invoiceAmount) newStatus = 'PAID';
       else if (totalPaid > 0) newStatus = 'PARTIAL';
 
       await tx.invoice.update({
@@ -234,7 +242,7 @@ export class FinanceService {
 
     if (shouldRecalc) {
       const fallbackRate = taxRate ?? resolvedTaxCode.rate ?? 0.13;
-      const breakdown = this.calcTaxFromTotal(amount, fallbackRate);
+      const breakdown = this.calcTaxFromTotal(amount, Number(fallbackRate));
       subTotal = breakdown.subTotal;
       taxAmount = breakdown.taxAmount;
     }

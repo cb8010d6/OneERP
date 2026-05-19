@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from '@/components/ui/Sheet';
 import { DataGrid } from '@/components/ui/data-grid/DataGrid';
 import api from '@/lib/api';
+import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSelect';
 import { CheckCircle2, Save, Activity, Layers, Info, Loader2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import toast from 'react-hot-toast';
@@ -18,16 +19,11 @@ interface OrderLine {
   unitPrice: number;
 }
 
-interface PartnerOption {
-  id: string;
-  name: string;
-  code?: string | null;
-}
-
 interface ProductOption {
   id: string;
-  sku: string;
-  name: string;
+  sku?: string;
+  name?: string;
+  listPrice: number;
 }
 
 interface TimelineEvent {
@@ -61,8 +57,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
 
-  const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [partnerName, setPartnerName] = useState('');
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
 
   const [lines, setLines] = useState<OrderLine[]>([]);
@@ -72,17 +68,49 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
   const productMap = useMemo(() => {
     return new Map(products.map((p) => [p.id, p]));
   }, [products]);
-  const partnerName = useMemo(() => partners.find((p) => p.id === partnerId)?.name || '', [partners, partnerId]);
-  const isEditable = status === 'DRAFT' || status === 'SUBMITTED';
+  const isEditable = status === 'DRAFT' || status === 'SUBMITTED' || status === 'PENDING_APPROVAL';
+  const readString = (record: AsyncSelectRecord, key: string) => {
+    const value = record[key];
+    return value === undefined || value === null ? '' : String(value);
+  };
+  const readNumber = (record: AsyncSelectRecord, key: string) => {
+    const value = Number(record[key] ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  };
+  const mergeProductRecord = (record: AsyncSelectRecord) => {
+    const id = readString(record, 'id');
+    if (!id) return;
+
+    const product: ProductOption = {
+      id,
+      sku: readString(record, 'sku'),
+      name: readString(record, 'name'),
+      listPrice: readNumber(record, 'listPrice'),
+    };
+
+    setProducts((prev) => {
+      const next = new Map(prev.map((item) => [item.id, item]));
+      next.set(product.id, product);
+      return Array.from(next.values());
+    });
+  };
+  const resolveLinePrice = (line: OrderLine) => {
+    const product = productMap.get(line.productId);
+    const productPrice = Number(product?.listPrice ?? 0);
+    if (Number.isFinite(productPrice) && productPrice > 0) {
+      return productPrice;
+    }
+
+    const fallbackPrice = Number(line.unitPrice ?? 0);
+    return Number.isFinite(fallbackPrice) ? fallbackPrice : 0;
+  };
   const validLines = useMemo(
     () =>
       lines.filter(
         (line) =>
           Boolean(line.productId) &&
           Number.isFinite(line.quantity) &&
-          Number.isFinite(line.unitPrice) &&
-          line.quantity > 0 &&
-          line.unitPrice >= 0,
+          line.quantity > 0,
       ),
     [lines],
   );
@@ -91,37 +119,30 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       lines.filter(
         (line) =>
           Boolean(line.productId) &&
-          (!Number.isFinite(line.quantity) || !Number.isFinite(line.unitPrice) || line.quantity <= 0 || line.unitPrice < 0),
+          (!Number.isFinite(line.quantity) || line.quantity <= 0 || resolveLinePrice(line) <= 0),
       ),
-    [lines],
+    [lines, productMap],
   );
+  const subtotal = useMemo(
+    () => lines.reduce((acc, row) => acc + (row.quantity * resolveLinePrice(row)), 0),
+    [lines, productMap],
+  );
+  const tax = useMemo(() => subtotal * 0.13, [subtotal]);
+  const total = useMemo(() => subtotal + tax, [subtotal, tax]);
   const canSaveDraft =
     isEditable &&
     !saving &&
     Boolean(partnerId) &&
     Boolean(orderDate) &&
     validLines.length > 0 &&
-    invalidConfiguredLines.length === 0;
-
-  const loadBaseOptions = async () => {
-    const [partnerRes, productRes] = await Promise.all([
-      api.get<{ data: PartnerOption[] }>('/v1/resource/partner?page=1&limit=200&orderBy={"createdAt":"desc"}'),
-      api.get<{ data: ProductOption[] }>('/v1/resource/product?page=1&limit=200&orderBy={"createdAt":"desc"}'),
-    ]);
-
-    const partnerData = partnerRes.data?.data ?? [];
-    const productData = productRes.data?.data ?? [];
-
-    setPartners(partnerData);
-    setProducts(productData);
-
-    return { partnerData, productData };
-  };
+    invalidConfiguredLines.length === 0 &&
+    total > 0;
 
   const resetNewForm = () => {
     setStatus('DRAFT');
     setOrderNo('SO-NEW-DRAFT');
     setPartnerId('');
+    setPartnerName('');
     setOrderDate(new Date().toISOString().slice(0, 10));
     setNotes('');
     setTimeline([]);
@@ -138,18 +159,47 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     ]);
   };
 
-  const loadOrderDetail = async (id: string, productData?: ProductOption[]) => {
-    const productLookup = new Map((productData ?? products).map((item) => [item.id, item]));
+  const loadOrderProducts = async (productIds: string[]) => {
+    const uniqueIds = Array.from(new Set(productIds.filter(Boolean)));
+    const productEntries = await Promise.all(
+      uniqueIds.map(async (productId) => {
+        try {
+          const res = await api.get<ProductOption>(`/v1/resource/product/${productId}`);
+          return res.data;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const loadedProducts = productEntries.filter((item): item is ProductOption => Boolean(item?.id));
+    if (loadedProducts.length) {
+      setProducts((prev) => {
+        const next = new Map(prev.map((item) => [item.id, item]));
+        for (const product of loadedProducts) {
+          next.set(product.id, product);
+        }
+        return Array.from(next.values());
+      });
+    }
+
+    return new Map(loadedProducts.map((item) => [item.id, item]));
+  };
+
+  const loadOrderDetail = async (id: string) => {
     const detail = await api.get<any>(`/orders/${id}`);
     const order = detail.data;
+    const orderItems = order.items ?? [];
+    const productLookup = await loadOrderProducts(orderItems.map((item: any) => String(item.productId ?? '')));
     setOrderNo(order.orderNo || id);
     setStatus(order.status || 'DRAFT');
     setPartnerId(order.partnerId || '');
+    setPartnerName(order.partner?.name || '');
     setOrderDate(order.expectedDate ? new Date(order.expectedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
     setNotes(order.notes || '');
     setSelectedLineIds([]);
     setLines(
-      (order.items || []).map((item: any) => {
+      orderItems.map((item: any) => {
         const product = productLookup.get(item.productId);
         return {
           id: item.id,
@@ -158,7 +208,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           productCode: product?.sku || '',
           description: product?.name || item.productId,
           quantity: Number(item.quantity || 0),
-          unitPrice: Number(item.unitPrice || 0),
+          unitPrice: Number(product?.listPrice ?? item.unitPrice ?? 0),
         };
       }),
     );
@@ -176,10 +226,9 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     const run = async () => {
       setLoading(true);
       try {
-        const base = await loadBaseOptions();
         if (!active) return;
         if (orderId) {
-          await loadOrderDetail(orderId, base.productData);
+          await loadOrderDetail(orderId);
         } else {
           resetNewForm();
         }
@@ -206,12 +255,13 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       const updated = { ...line };
 
       if (columnId === 'quantity') updated.quantity = Math.max(1, Number(value) || 1);
-      if (columnId === 'unitPrice') updated.unitPrice = Math.max(0, Number(value) || 0);
+      if (columnId === 'unitPrice') return line;
       if (columnId === 'productId') {
         const product = productMap.get(value);
         updated.productId = value;
         updated.productCode = product?.sku || '';
         updated.description = product?.name || '';
+        updated.unitPrice = Number(product?.listPrice ?? 0);
       }
 
       return updated;
@@ -231,10 +281,27 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
         return <span className="font-medium text-slate-800">{product ? `${product.sku} · ${product.name}` : value}</span>;
       },
       meta: {
-        options: products.map((product) => ({
-          label: `${product.sku} · ${product.name}`,
-          value: product.id,
-        })),
+        reference: { model: 'product', labelField: 'name', valueField: 'id' },
+        onReferenceSelect: (
+          rowId: string,
+          _columnId: string,
+          value: string,
+          record: AsyncSelectRecord,
+        ) => {
+          mergeProductRecord(record);
+          setLines((prev) =>
+            prev.map((line) => {
+              if (line.id !== rowId) return line;
+              return {
+                ...line,
+                productId: value,
+                productCode: readString(record, 'sku'),
+                description: readString(record, 'name'),
+                unitPrice: readNumber(record, 'listPrice'),
+              };
+            }),
+          );
+        },
       },
     },
     { accessorKey: 'description', header: '描述', cell: (info) => <span className="text-slate-600">{String(info.getValue() ?? '')}</span> },
@@ -245,25 +312,23 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     },
     { 
       accessorKey: 'unitPrice', 
-      header: '单价',
-      cell: (info) => <span className="font-mono text-gray-700">{formatMoney(info.getValue() as number)}</span>,
+      header: '参考售价',
+      cell: (info) => {
+        const row = info.row.original;
+        return <span className="font-mono text-gray-700">{formatMoney(resolveLinePrice(row))}</span>;
+      },
+      meta: { editable: false },
     },
     { 
       id: 'subtotal',
       header: '小计',
       cell: (info) => {
         const row = info.row.original;
-        const sub = row.quantity * row.unitPrice;
+        const sub = row.quantity * resolveLinePrice(row);
         return <span className="font-mono text-gray-900 font-semibold">{formatMoney(sub)}</span>;
       },
     },
-  ], [products, productMap]);
-
-  const { subtotal, tax, total } = useMemo(() => {
-    const sub = lines.reduce((acc, row) => acc + (row.quantity * row.unitPrice), 0);
-    const taxAmt = sub * 0.13;
-    return { subtotal: sub, tax: taxAmt, total: sub + taxAmt };
-  }, [lines]);
+  ], [productMap]);
 
   const handleAddLine = () => {
     if (!isEditable) return;
@@ -330,10 +395,6 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       setSaving(true);
       const payload = buildOrderPayload();
 
-      if (total <= 0) {
-        throw new Error('订单总金额必须大于 0');
-      }
-
       if (!orderId) {
         const created = await api.post('/orders', payload);
         toast.success('订单创建成功');
@@ -343,42 +404,15 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
         return;
       }
 
-      await api.put(`/v1/resource/order/${orderId}`, {
+      await api.put(`/orders/${orderId}`, {
         partnerId: payload.partnerId,
         expectedDate: payload.expectedDate,
         notes: payload.notes,
-        totalAmount: total,
       });
 
-      const detail = await api.get<any>(`/orders/${orderId}`);
-      const existingItems = detail.data?.items ?? [];
-
-      const existingItemIds = new Set<string>(existingItems.map((item: any) => String(item.id)));
-      const keepItemIds = new Set<string>(
-        lines.filter((line) => line.orderItemId).map((line) => String(line.orderItemId)),
-      );
-
-      const toDelete = Array.from(existingItemIds).filter((id) => !keepItemIds.has(id));
-      await Promise.all(toDelete.map((id) => api.delete(`/v1/resource/orderItem/${id}`)));
-
-      const upserts = lines
-        .filter((line) => line.productId)
-        .map((line) => {
-          const rowPayload = {
-            orderId,
-            productId: line.productId,
-            quantity: Math.max(1, Number(line.quantity || 1)),
-            unitPrice: Math.max(0, Number(line.unitPrice || 0)),
-            totalPrice: Math.max(1, Number(line.quantity || 1)) * Math.max(0, Number(line.unitPrice || 0)),
-          };
-
-          if (line.orderItemId) {
-            return api.put(`/v1/resource/orderItem/${line.orderItemId}`, rowPayload);
-          }
-          return api.post('/v1/resource/orderItem', rowPayload);
-        });
-
-      await Promise.all(upserts);
+      await api.put(`/orders/${orderId}/items`, {
+        items: payload.items,
+      });
 
       toast.success('订单保存成功');
       await loadOrderDetail(orderId);
@@ -398,6 +432,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
 
     const actionMap: Record<string, string> = {
       DRAFT: 'submit',
+      PENDING_APPROVAL: 'approve',
       PENDING: 'start_production',
       IN_PRODUCTION: 'ship',
       SHIPPED: 'complete',
@@ -423,8 +458,9 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
 
   const nextActionLabel: Record<string, string> = {
     DRAFT: '提交订单',
+    PENDING_APPROVAL: '审批通过',
     PENDING: '开始生产',
-    IN_PRODUCTION: '发货',
+    IN_PRODUCTION: '完工并入库',
     SHIPPED: '完成订单',
   };
 
@@ -593,19 +629,21 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-2">客户与发票</h3>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">选中客户</label>
-                    <select
+                    <AsyncSelect
+                      id="partnerId"
                       value={partnerId}
-                      onChange={(e) => setPartnerId(e.target.value)}
+                      reference={{ model: 'partner', labelField: 'name', valueField: 'id' }}
+                      onChange={(val) => {
+                        setPartnerId(val);
+                        if (!val) {
+                          setPartnerName('');
+                        }
+                      }}
+                      onSelectRecord={(record) => setPartnerName(readString(record, 'name'))}
                       disabled={!isEditable}
+                      placeholder="搜索或选择客户..."
                       className="w-full text-sm p-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
-                    >
-                      <option value="">请选择客户</option>
-                      {partners.map((partner) => (
-                        <option key={partner.id} value={partner.id}>
-                          {(partner.code ? `${partner.code} · ` : '') + partner.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">付款条款 (Payment Terms)</label>
