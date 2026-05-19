@@ -46,6 +46,7 @@ model Company {
   eventDlqRecords EventDlq[]
   taxCodes    TaxCode[]
   userInvitations UserInvitation[]
+  inventoryTransactions InventoryTransaction[]
 }
 
 enum PartnerType {
@@ -454,6 +455,7 @@ model InventoryTransaction {
   createdAt         DateTime @default(now())
 
   material        Material       @relation(fields: [materialId], references: [id])
+  company         Company        @relation(fields: [companyId], references: [id])
   sourceLocation  StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
   destLocation    StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
 
