@@ -58,6 +58,7 @@ jest.mock('../ListEngine', () => ({
 }));
 jest.mock('../KanbanEngine', () => ({ KanbanEngine: () => <div data-testid="kanban-engine" /> }));
 jest.mock('../FormEngine', () => ({
+  ...jest.requireActual('../FormEngine'),
   FormEngine: ({ value, onChange, onSubmit }: any) => (
     <div data-testid="form-engine">
       <input data-testid="form-name" value={String(value?.name ?? '')} onChange={(e: any) => onChange?.({ ...value, name: e.target.value })} />
@@ -168,6 +169,7 @@ describe('DynamicView', () => {
     await waitFor(() => { expect(screen.getByTestId('list-engine')).toBeInTheDocument(); });
     await user.click(screen.getByText('新建 / 编辑'));
     await waitFor(() => { expect(screen.getByTestId('sheet')).toBeInTheDocument(); });
+    await user.type(screen.getByTestId('form-name'), '新产品');
     await user.click(screen.getByText(/保存/));
     await waitFor(() => { expect(mockCreateResource).toHaveBeenCalledWith('Product', expect.objectContaining({})); });
   });
@@ -191,6 +193,7 @@ describe('DynamicView', () => {
     const initCount = mockFetchResourceList.mock.calls.length;
     await user.click(screen.getByText('新建 / 编辑'));
     await waitFor(() => { expect(screen.getByTestId('sheet')).toBeInTheDocument(); });
+    await user.type(screen.getByTestId('form-name'), '新产品');
     await user.click(screen.getByText(/保存/));
     await waitFor(() => { expect(mockFetchResourceList.mock.calls.length).toBeGreaterThan(initCount); });
   });

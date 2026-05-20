@@ -30,6 +30,7 @@ interface DataGridProps<TData extends { id: string }> {
   columns: ColumnDef<TData, any>[];
   data: TData[];
   onCellUpdate?: (rowId: string, columnId: string, value: string) => void;
+  onRowClick?: (row: TData) => void;
   enableRowSelection?: boolean;
   onSelectionChange?: (rowIds: string[]) => void;
   height?: number;
@@ -39,6 +40,7 @@ export function DataGrid<TData extends { id: string }>({
   columns,
   data,
   onCellUpdate,
+  onRowClick,
   enableRowSelection = false,
   onSelectionChange,
   height = 460,
@@ -156,13 +158,16 @@ export function DataGrid<TData extends { id: string }>({
               return (
                 <div
                   key={row.id}
-                  className="grid border-b border-gray-100 text-sm text-gray-700"
+                  className={`grid border-b border-gray-100 text-sm text-gray-700 ${
+                    onRowClick ? 'cursor-pointer hover:bg-gray-50' : ''
+                  }`}
                   style={{
                     gridTemplateColumns: gridTemplate,
                     position: 'absolute',
                     transform: `translateY(${virtualRow.start}px)`,
                     width: '100%',
                   }}
+                  onClick={() => onRowClick?.(row.original)}
                 >
                   {enableRowSelection ? (
                     <div className="border-r border-gray-100 px-3 py-2 text-center">

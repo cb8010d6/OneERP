@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { LayoutGrid, Rows3, SquarePen } from 'lucide-react';
-import { FormEngine } from './FormEngine';
+import { FormEngine, validateFormValue } from './FormEngine';
 import { Sheet } from '../ui/Sheet';
+import { Button } from '../ui/Button';
 import { KanbanEngine } from './KanbanEngine';
 import { ListEngine } from './ListEngine';
 import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
@@ -49,6 +50,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const [commentInput, setCommentInput] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   const initialFormValue = useMemo(() => {
     if (!schema) return {};
@@ -67,6 +69,17 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     selected && typeof selected.id === 'string' && selected.id.trim()
       ? canUpdate
       : canCreate;
+  const validateSelectedForm = useCallback(
+    (next: Record<string, unknown>) =>
+      schema
+        ? validateFormValue(
+            schema,
+            next,
+            (label) => `${label}${t('dynamicRequiredFieldSuffix')}`,
+          )
+        : {},
+    [schema, t],
+  );
 
   const loadSchema = useCallback(async () => {
     try {
@@ -195,6 +208,12 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       return;
     }
 
+    const validationErrors = validateSelectedForm(selected);
+    setFormErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      return;
+    }
+
     setSaving(true);
     try {
       const recordId = selected.id;
@@ -208,6 +227,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       }
 
       setSelected(persisted);
+      setFormErrors({});
       await loadList();
     } finally {
       setSaving(false);
@@ -269,6 +289,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
             disabled={!canCreate}
             onClick={() => {
               setSelected(initialFormValue);
+              setFormErrors({});
               setIsFormOpen(true);
             }}
             label={t('dynamicNewEdit')}
@@ -296,6 +317,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
           onPageChange={(nextPage) => setPage(nextPage)}
           onRowClick={(row) => {
             setSelected(row);
+            setFormErrors({});
             setIsFormOpen(true);
           }}
           fieldMap={schema.fields.reduce<Record<string, UiSchema['fields'][number]>>((acc, field) => {
@@ -343,19 +365,26 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-10">
           <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-7">
             <div className="mb-3 flex justify-end">
-              <button
+              <Button
                 type="button"
                 onClick={() => void saveForm()}
                 disabled={saving || !selectedCanSave}
-                className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                loading={saving}
+                size="sm"
               >
                 {saving ? t('commonSaving') : selectedCanSave ? t('dynamicSaveShortcut') : t('dynamicNoSavePermission')}
-              </button>
+              </Button>
             </div>
             <FormEngine
               schema={schema}
               value={(selected ?? initialFormValue) as Record<string, unknown>}
-              onChange={(next) => setSelected(next)}
+              validationErrors={formErrors}
+              onChange={(next) => {
+                setSelected(next);
+                if (Object.keys(formErrors).length > 0) {
+                  setFormErrors(validateSelectedForm(next));
+                }
+              }}
               onSubmit={() => {
                 void saveForm();
               }}

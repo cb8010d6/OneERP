@@ -87,6 +87,8 @@ __pycache__/
 
 # Workspace temp files
 .tmp_*.txt
+run_fix*.js
+**/run_fix*.js
 
 # Nested git backups (should never be committed)
 **/.git.inner.backup/

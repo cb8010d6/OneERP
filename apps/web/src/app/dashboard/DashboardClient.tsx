@@ -6,21 +6,41 @@ import { useAuthStore } from '../../store/authStore';
 import { Activity, Box, CreditCard, ShoppingBag, Sparkles, Truck } from 'lucide-react';
 import { Badge, Button, EmptyState, Sheet, Skeleton, StatCard } from '../../components/ui';
 import { Chat2DashPanel } from '../../components/ai/Chat2DashPanel';
-import { useI18n } from '../../lib/i18n';
+import { useI18n, type TranslationKey } from '../../lib/i18n';
 import { formatCurrency } from '../../lib/format';
+
+interface DashboardStats {
+  totalOrders: number;
+  activeOrders: number;
+  totalStockValue: number;
+  lowStockItems: number;
+}
+
+interface DashboardOrderSummary {
+  id: string;
+  orderNo: string;
+  status?: string;
+  partner?: {
+    name?: string | null;
+  } | null;
+}
+
+interface PaginatedOrdersResponse {
+  data?: DashboardOrderSummary[];
+}
 
 export default function DashboardClient() {
   const { currentCompanyId, token } = useAuthStore();
   const { t, locale } = useI18n();
   const [chat2DashOpen, setChat2DashOpen] = useState(false);
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<DashboardStats>({
     totalOrders: 0,
     activeOrders: 0,
     totalStockValue: 0,
     lowStockItems: 0
   });
 
-  const [recentOrders, setRecentOrders] = useState<any[]>([]);
+  const [recentOrders, setRecentOrders] = useState<DashboardOrderSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,14 +50,14 @@ export default function DashboardClient() {
       setError(null);
       try {
         const [statsResponse, ordersResponse] = await Promise.all([
-          api.get('/dashboard/stats'),
-          api.get('/orders')
+          api.get<DashboardStats>('/dashboard/stats'),
+          api.get<DashboardOrderSummary[] | PaginatedOrdersResponse>('/orders')
         ]);
         setStats(statsResponse.data);
 
         // 兼容两种返回格式: 直接数组 或 分页对象 { data, total, ... }
         const ordersPayload = ordersResponse.data;
-        const orders = Array.isArray(ordersPayload)
+        const orders: DashboardOrderSummary[] = Array.isArray(ordersPayload)
           ? ordersPayload
           : (Array.isArray(ordersPayload?.data) ? ordersPayload.data : []);
         setRecentOrders(orders.slice(0, 5));
@@ -57,10 +77,9 @@ export default function DashboardClient() {
     <div className="space-y-6">
       <div className="flex justify-end">
         <Button
-          variant="secondary"
+          variant="info"
           onClick={() => setChat2DashOpen(true)}
           icon={<Sparkles className="h-4 w-4" />}
-          className="border-cyan-200 bg-cyan-50 text-cyan-700 hover:bg-cyan-100"
         >
           {t('dashboardOpenChat2Dash')}
         </Button>
@@ -97,7 +116,7 @@ export default function DashboardClient() {
                      <p className="font-medium text-gray-900">{order.orderNo}</p>
                      <p className="text-sm text-gray-500">{t('dashboardCustomer')}: {order.partner?.name || t('dashboardUnknown')}</p>
                   </div>
-                  <Badge status={order.status}>{formatOrderStatus(order.status, locale)}</Badge>
+                  <Badge status={order.status}>{t(orderStatusTranslationKey(order.status))}</Badge>
                </div>
              )) : (
                <EmptyState title={t('dashboardNoRecentOrders')} className="py-8" />
@@ -126,31 +145,19 @@ export default function DashboardClient() {
   );
 }
 
-function formatOrderStatus(status: string | undefined, locale: string) {
-  const labels: Record<string, Record<string, string>> = {
-    'zh-CN': {
-      DRAFT: '草稿',
-      PENDING: '待处理',
-      PENDING_APPROVAL: '待审批',
-      SUBMITTED: '已提交',
-      PROCESSING: '处理中',
-      IN_PRODUCTION: '生产中',
-      PARTIAL_SHIPPED: '部分发货',
-      SHIPPED: '已发货',
-      COMPLETED: '已完成',
-    },
-    'en-US': {
-      DRAFT: 'Draft',
-      PENDING: 'Pending',
-      PENDING_APPROVAL: 'Pending Approval',
-      SUBMITTED: 'Submitted',
-      PROCESSING: 'Processing',
-      IN_PRODUCTION: 'In Production',
-      PARTIAL_SHIPPED: 'Partially Shipped',
-      SHIPPED: 'Shipped',
-      COMPLETED: 'Completed',
-    },
+function orderStatusTranslationKey(status: string | undefined): TranslationKey {
+  const keyMap: Record<string, TranslationKey> = {
+    DRAFT: 'orderStatusDraft',
+    PENDING: 'orderStatusPending',
+    PENDING_APPROVAL: 'orderStatusPendingApproval',
+    SUBMITTED: 'orderStatusSubmitted',
+    PROCESSING: 'orderStatusProcessing',
+    IN_PRODUCTION: 'orderStatusInProduction',
+    PARTIAL_SHIPPED: 'orderStatusPartialShipped',
+    SHIPPED: 'orderStatusShipped',
+    COMPLETED: 'orderStatusCompleted',
+    CANCELLED: 'orderStatusCancelled',
   };
 
-  return labels[locale]?.[String(status ?? '')] ?? status ?? '-';
+  return keyMap[String(status ?? '')] ?? 'dashboardUnknown';
 }

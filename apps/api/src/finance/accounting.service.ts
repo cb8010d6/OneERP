@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { EntryPostingStatus, JournalType, Prisma } from '@prisma/client';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { roundDecimal } from '../core/utils/decimal';
 
@@ -7,8 +8,8 @@ interface JournalLineInput {
   accountCode: string;
   accountName: string;
   accountType: string;
-  debit?: number;
-  credit?: number;
+  debit?: Decimal.Value;
+  credit?: Decimal.Value;
   partnerId?: string;
   memo?: string;
 }
@@ -44,9 +45,9 @@ export class AccountingService {
       select: { name: true, unitPrice: true },
     });
 
-    const unitCost = Number(payload.unitCost ?? material?.unitPrice ?? 0);
-    const amount = this.round2(unitCost * Number(payload.quantity ?? 0));
-    if (amount <= 0) {
+    const unitCost = new Decimal(payload.unitCost ?? material?.unitPrice ?? 0);
+    const amount = this.money(unitCost.times(payload.quantity ?? 0));
+    if (amount.lte(0)) {
       this.logger.warn(
         `跳过零成本库存出库凭证: material=${payload.materialId}`,
       );
@@ -99,21 +100,24 @@ export class AccountingService {
       throw new BadRequestException('发票不存在，无法生成凭证');
     }
 
-    const amount = this.round2(Number(invoice.amount));
-    if (amount <= 0) {
+    const amount = this.money(invoice.amount);
+    if (amount.lte(0)) {
       throw new BadRequestException('发票金额必须大于0');
     }
 
-    let revenue = this.round2(Number(invoice.subTotal ?? 0));
-    let tax = this.round2(Number(invoice.taxAmount ?? 0));
+    let revenue = this.money(invoice.subTotal ?? 0);
+    let tax = this.money(invoice.taxAmount ?? 0);
 
-    if (revenue <= 0 && tax <= 0) {
-      const fallbackRate = Math.max(
-        0,
-        Math.min(1, Number(payload.taxRate ?? invoice.taxCode?.rate ?? 0.13)),
+    if (revenue.lte(0) && tax.lte(0)) {
+      const fallbackRate = Decimal.min(
+        Decimal.max(
+          new Decimal(payload.taxRate ?? invoice.taxCode?.rate ?? 0.13),
+          0,
+        ),
+        1,
       );
-      revenue = this.round2(amount / (1 + fallbackRate));
-      tax = this.round2(amount - revenue);
+      revenue = this.money(amount.div(new Decimal(1).plus(fallbackRate)));
+      tax = this.money(amount.minus(revenue));
       this.logger.warn(
         `发票未包含税额快照，使用兜底税率计算: invoice=${invoice.invoiceNo}`,
       );
@@ -186,21 +190,21 @@ export class AccountingService {
 
       const lines = input.lines.map((line) => ({
         ...line,
-        debit: this.round2(Number(line.debit ?? 0)),
-        credit: this.round2(Number(line.credit ?? 0)),
+        debit: this.money(line.debit ?? 0),
+        credit: this.money(line.credit ?? 0),
       }));
 
       this.validateLines(lines);
-      const totalDebit = this.round2(
-        lines.reduce((sum, line) => sum + line.debit, 0),
+      const totalDebit = this.money(
+        lines.reduce((sum, line) => sum.plus(line.debit), new Decimal(0)),
       );
-      const totalCredit = this.round2(
-        lines.reduce((sum, line) => sum + line.credit, 0),
+      const totalCredit = this.money(
+        lines.reduce((sum, line) => sum.plus(line.credit), new Decimal(0)),
       );
 
-      if (totalDebit !== totalCredit) {
+      if (!totalDebit.eq(totalCredit)) {
         throw new BadRequestException(
-          `借贷不平衡: debit=${totalDebit}, credit=${totalCredit}`,
+          `借贷不平衡: debit=${totalDebit.toFixed(2)}, credit=${totalCredit.toFixed(2)}`,
         );
       }
 
@@ -238,12 +242,10 @@ export class AccountingService {
           lines: {
             create: await Promise.all(
               lines.map(async (line, index) => {
-                const account = await this.ensureAccount(
+                const account = await this.getPostingAccount(
                   tx,
                   input.companyId,
                   line.accountCode,
-                  line.accountName,
-                  line.accountType,
                 );
 
                 return {
@@ -270,8 +272,8 @@ export class AccountingService {
       return {
         ...entry,
         totals: {
-          debit: totalDebit,
-          credit: totalCredit,
+          debit: totalDebit.toNumber(),
+          credit: totalCredit.toNumber(),
         },
       };
     });
@@ -292,48 +294,66 @@ export class AccountingService {
         type: JournalType.GENERAL,
       },
     });
+
+    const defaultAccounts = [
+      { code: '1122', name: '应收账款', type: 'ASSET' },
+      { code: '1405', name: '库存商品', type: 'ASSET' },
+      { code: '222101', name: '应交税费-销项税', type: 'LIABILITY' },
+      { code: '6001', name: '主营业务收入', type: 'REVENUE' },
+      { code: '6401', name: '主营业务成本', type: 'EXPENSE' },
+    ];
+
+    for (const account of defaultAccounts) {
+      await this.prisma.account.upsert({
+        where: { companyId_code: { companyId, code: account.code } },
+        update: {
+          name: account.name,
+          type: account.type,
+          isActive: true,
+        },
+        create: {
+          companyId,
+          code: account.code,
+          name: account.name,
+          type: account.type,
+          isActive: true,
+        },
+      });
+    }
   }
 
-  private async ensureAccount(
+  private async getPostingAccount(
     tx: Prisma.TransactionClient,
     companyId: string,
     code: string,
-    name: string,
-    type: string,
   ) {
-    return tx.account.upsert({
+    const account = await tx.account.findFirst({
       where: {
-        companyId_code: {
-          companyId,
-          code,
-        },
-      },
-      update: {
-        name,
-        type,
-        isActive: true,
-      },
-      create: {
         companyId,
         code,
-        name,
-        type,
+        isActive: true,
       },
     });
+
+    if (!account) {
+      throw new BadRequestException(`会计科目不存在或已停用: ${code}`);
+    }
+
+    return account;
   }
 
-  private validateLines(lines: Array<{ debit: number; credit: number }>) {
+  private validateLines(lines: Array<{ debit: Decimal; credit: Decimal }>) {
     if (!lines.length) {
       throw new BadRequestException('凭证分录不能为空');
     }
 
     for (const line of lines) {
-      if (line.debit < 0 || line.credit < 0) {
+      if (line.debit.lt(0) || line.credit.lt(0)) {
         throw new BadRequestException('分录金额不能为负数');
       }
       if (
-        (line.debit === 0 && line.credit === 0) ||
-        (line.debit > 0 && line.credit > 0)
+        (line.debit.eq(0) && line.credit.eq(0)) ||
+        (line.debit.gt(0) && line.credit.gt(0))
       ) {
         throw new BadRequestException('每行分录必须仅填写借方或贷方');
       }
@@ -349,7 +369,7 @@ export class AccountingService {
     return `JE-${datePart}-${suffix}`;
   }
 
-  private round2(value: number) {
-    return roundDecimal(value);
+  private money(value: Decimal.Value) {
+    return new Decimal(roundDecimal(value));
   }
 }

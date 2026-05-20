@@ -294,6 +294,16 @@ body {
   background: var(--surface-subtle);
 }
 
+.erp-btn--info {
+  background: #ecfeff;
+  border-color: #a5f3fc;
+  color: #0e7490;
+}
+
+.erp-btn--info:hover {
+  background: #cffafe;
+}
+
 .erp-btn--danger {
   background: var(--danger);
   color: #fff;
