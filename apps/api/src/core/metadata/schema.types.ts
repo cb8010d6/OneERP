@@ -56,6 +56,34 @@ export interface UiKanbanView {
   columns: UiKanbanColumn[];
 }
 
+export type UiActionTone = 'primary' | 'secondary' | 'info' | 'danger';
+export type UiActionKind = 'api' | 'correction';
+export type UiActionMethod = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+export interface UiActionField {
+  name: string;
+  label: string;
+  type: 'string' | 'text' | 'reference';
+  required?: boolean;
+  placeholder?: string;
+  reference?: UiFieldReference;
+}
+
+export interface UiActionSchema {
+  name: string;
+  label: string;
+  kind: UiActionKind;
+  tone?: UiActionTone;
+  method: UiActionMethod;
+  endpoint: string;
+  permission?: string;
+  visibleWhen?: string;
+  confirmText?: string;
+  description?: string;
+  successMessage?: string;
+  fields?: UiActionField[];
+}
+
 export interface UiSchema {
   model: string;
   label: string;
@@ -67,4 +95,5 @@ export interface UiSchema {
     list: UiListView;
     kanban?: UiKanbanView;
   };
+  actions?: UiActionSchema[];
 }

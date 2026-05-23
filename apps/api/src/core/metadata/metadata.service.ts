@@ -99,6 +99,43 @@ export class MetadataService {
             ],
           },
         },
+        actions: [
+          {
+            name: 'reverseSaleShipment',
+            label: '修正已发货库存',
+            kind: 'correction',
+            tone: 'danger',
+            method: 'POST',
+            endpoint: '/inventory/posting/sale-order/{id}/reverse',
+            permission: 'inventory:post',
+            visibleWhen:
+              "eval:doc.status === 'PARTIAL_SHIPPED' || doc.status === 'SHIPPED' || doc.status === 'COMPLETED'",
+            confirmText: '确认生成冲销流水',
+            description:
+              '用于修正已发货订单的库存影响。系统会保留原出库流水，并生成反向入库流水，不会删除历史记录。',
+            successMessage: '库存修正已提交',
+            fields: [
+              {
+                name: 'destLocationId',
+                label: '回库库位',
+                type: 'reference',
+                reference: {
+                  model: 'stockLocation',
+                  labelField: 'name',
+                  valueField: 'id',
+                },
+              },
+              { name: 'batchNo', label: '批次号', type: 'string' },
+              {
+                name: 'note',
+                label: '修正原因',
+                type: 'text',
+                required: true,
+                placeholder: '例如：客户退货、发货数量录入错误',
+              },
+            ],
+          },
+        ],
       },
     ],
     [

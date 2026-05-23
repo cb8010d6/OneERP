@@ -6,13 +6,16 @@ import { LayoutGrid, Rows3, SquarePen } from 'lucide-react';
 import { FormEngine, validateFormValue } from './FormEngine';
 import { Sheet } from '../ui/Sheet';
 import { Button } from '../ui/Button';
+import { BusinessCorrectionWizard } from './BusinessCorrectionWizard';
 import { KanbanEngine } from './KanbanEngine';
 import { ListEngine } from './ListEngine';
 import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
+import type { UiActionSchema } from '@/lib/ui-schema';
 import { useAuthStore } from '@/store/authStore';
 import { useI18n } from '@/lib/i18n';
+import { evaluateFormCondition } from './FormEngine';
 
 type ViewMode = 'list' | 'kanban';
 
@@ -20,6 +23,24 @@ interface DynamicViewProps {
   modelName: string;
   title?: string;
   externalDraft?: Record<string, unknown> | null;
+  slots?: DynamicViewSlots;
+}
+
+interface DynamicViewSlotContext {
+  schema: UiSchema;
+  selected: Record<string, unknown> | null;
+  data: Record<string, unknown>[];
+  reload: () => Promise<void>;
+  openCreate: () => void;
+}
+
+interface DynamicViewSlots {
+  headerActions?: (context: DynamicViewSlotContext) => ReactNode;
+  beforeList?: (context: DynamicViewSlotContext) => ReactNode;
+  formTop?: (context: DynamicViewSlotContext) => ReactNode;
+  formBottom?: (context: DynamicViewSlotContext) => ReactNode;
+  detailAsideTop?: (context: DynamicViewSlotContext) => ReactNode;
+  detailAsideBottom?: (context: DynamicViewSlotContext) => ReactNode;
 }
 
 function hasPermission(permissions: readonly string[], required: string) {
@@ -30,7 +51,7 @@ function hasPermission(permissions: readonly string[], required: string) {
   return permissions.includes(`${resource}:*`) || permissions.includes(`*:${action}`);
 }
 
-export function DynamicView({ modelName, title, externalDraft }: DynamicViewProps) {
+export function DynamicView({ modelName, title, externalDraft, slots }: DynamicViewProps) {
   const { companies, currentCompanyId } = useAuthStore();
   const { t } = useI18n();
   const [schema, setSchema] = useState<UiSchema | null>(null);
@@ -51,6 +72,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const [commentSaving, setCommentSaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [correctionAction, setCorrectionAction] = useState<UiActionSchema | null>(null);
 
   const initialFormValue = useMemo(() => {
     if (!schema) return {};
@@ -60,8 +82,10 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   }, [schema]);
 
   const activeTitle = title ?? schema?.label ?? modelName;
-  const currentPermissions =
-    companies.find((company) => company.id === currentCompanyId)?.permissions ?? [];
+  const currentPermissions = useMemo(
+    () => companies.find((company) => company.id === currentCompanyId)?.permissions ?? [],
+    [companies, currentCompanyId],
+  );
   const permissionResource = modelName.charAt(0).toLowerCase() + modelName.slice(1);
   const canCreate = hasPermission(currentPermissions, `${permissionResource}:create`);
   const canUpdate = hasPermission(currentPermissions, `${permissionResource}:update`);
@@ -69,6 +93,11 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     selected && typeof selected.id === 'string' && selected.id.trim()
       ? canUpdate
       : canCreate;
+  const openCreate = useCallback(() => {
+    setSelected(initialFormValue);
+    setFormErrors({});
+    setIsFormOpen(true);
+  }, [initialFormValue]);
   const validateSelectedForm = useCallback(
     (next: Record<string, unknown>) =>
       schema
@@ -80,6 +109,16 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
         : {},
     [schema, t],
   );
+  const selectedActions = useMemo(() => {
+    if (!schema || !selected) return [];
+    return (schema.actions ?? []).filter((action) => {
+      if (action.permission && !hasPermission(currentPermissions, action.permission)) {
+        return false;
+      }
+      if (!action.visibleWhen) return true;
+      return evaluateFormCondition(action.visibleWhen, selected);
+    });
+  }, [currentPermissions, schema, selected]);
 
   const loadSchema = useCallback(async () => {
     try {
@@ -131,6 +170,17 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       setLoading(false);
     }
   }, [limit, modelName, orderBy, page, schema, search]);
+
+  const slotContext = useMemo<DynamicViewSlotContext | null>(() => {
+    if (!schema) return null;
+    return {
+      schema,
+      selected,
+      data,
+      reload: loadList,
+      openCreate,
+    };
+  }, [data, loadList, openCreate, schema, selected]);
 
   useEffect(() => {
     void loadSchema();
@@ -287,15 +337,14 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
             icon={<SquarePen className="h-4 w-4" />}
             active={isFormOpen}
             disabled={!canCreate}
-            onClick={() => {
-              setSelected(initialFormValue);
-              setFormErrors({});
-              setIsFormOpen(true);
-            }}
+            onClick={openCreate}
             label={t('dynamicNewEdit')}
           />
         </div>
+        {slotContext ? slots?.headerActions?.(slotContext) : null}
       </div>
+
+      {slotContext ? slots?.beforeList?.(slotContext) : null}
 
       {mode === 'list' ? (
         <ListEngine
@@ -364,7 +413,22 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-10">
           <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-7">
-            <div className="mb-3 flex justify-end">
+            <div className="mb-3 flex flex-wrap justify-end gap-2">
+              {selectedActions.map((action) => (
+                <Button
+                  key={action.name}
+                  type="button"
+                  variant={action.tone ?? 'secondary'}
+                  size="sm"
+                  onClick={() => {
+                    if (action.kind === 'correction') {
+                      setCorrectionAction(action);
+                    }
+                  }}
+                >
+                  {action.label}
+                </Button>
+              ))}
               <Button
                 type="button"
                 onClick={() => void saveForm()}
@@ -375,6 +439,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                 {saving ? t('commonSaving') : selectedCanSave ? t('dynamicSaveShortcut') : t('dynamicNoSavePermission')}
               </Button>
             </div>
+            {slotContext ? slots?.formTop?.(slotContext) : null}
             <FormEngine
               schema={schema}
               value={(selected ?? initialFormValue) as Record<string, unknown>}
@@ -389,9 +454,11 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                 void saveForm();
               }}
             />
+            {slotContext ? slots?.formBottom?.(slotContext) : null}
           </div>
 
           <aside className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-3">
+            {slotContext ? slots?.detailAsideTop?.(slotContext) : null}
             <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">{t('dynamicTimeline')}</h3>
             <p className="mt-1 text-xs text-gray-500">{t('dynamicTimelineHint')}</p>
 
@@ -435,9 +502,17 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                 </button>
               </div>
             </div>
+            {slotContext ? slots?.detailAsideBottom?.(slotContext) : null}
           </aside>
         </div>
       </Sheet>
+      <BusinessCorrectionWizard
+        open={Boolean(correctionAction)}
+        action={correctionAction}
+        record={selected}
+        onClose={() => setCorrectionAction(null)}
+        onCompleted={loadList}
+      />
     </div>
   );
 }

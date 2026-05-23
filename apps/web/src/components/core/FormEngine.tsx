@@ -184,7 +184,7 @@ export function validateFormValue(
   }, {});
 }
 
-function evaluateFormCondition(condition: string | undefined, doc: Record<string, unknown>) {
+export function evaluateFormCondition(condition: string | undefined, doc: Record<string, unknown>) {
   if (!condition) return false;
 
   const expression = condition.startsWith('eval:')

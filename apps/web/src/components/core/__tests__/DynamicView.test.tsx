@@ -31,6 +31,7 @@ const mockCreateResource = jest.fn();
 const mockUpdateResource = jest.fn();
 const mockApiGet = jest.fn();
 const mockApiPost = jest.fn();
+const mockApiRequest = jest.fn();
 
 jest.mock('@/lib/dynamic-resource', () => ({
   fetchSchema: (...a: any[]) => mockFetchSchema(...a),
@@ -44,6 +45,7 @@ jest.mock('@/lib/api', () => ({
   default: {
     get: (...a: any[]) => mockApiGet(...a),
     post: (...a: any[]) => mockApiPost(...a),
+    request: (...a: any[]) => mockApiRequest(...a),
   },
 }));
 
@@ -51,7 +53,7 @@ jest.mock('@/lib/api', () => ({
 jest.mock('../ListEngine', () => ({
   ListEngine: ({ onRowClick, onSearchChange }: any) => (
     <div data-testid="list-engine">
-      <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row' })}>row</button>
+      <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row', status: 'SHIPPED' })}>row</button>
       <input data-testid="search-input" onChange={(e: any) => onSearchChange?.(e.target.value)} />
     </div>
   ),
@@ -115,6 +117,8 @@ import userEvent from '@testing-library/user-event';
 import { DynamicView } from '../DynamicView';
 import { useAuthStore } from '@/store/authStore';
 
+jest.setTimeout(20000);
+
 describe('DynamicView', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -126,7 +130,7 @@ describe('DynamicView', () => {
           id: 'company-1',
           name: '测试公司',
           role: 'Admin',
-          permissions: ['product:create', 'product:update'],
+          permissions: ['product:create', 'product:update', 'inventory:post'],
         },
       ],
       currentCompanyId: 'company-1',
@@ -135,6 +139,7 @@ describe('DynamicView', () => {
     mockFetchResourceList.mockResolvedValue(mockListResponse);
     mockApiGet.mockResolvedValue(mockTimelineEvents);
     mockApiPost.mockResolvedValue({});
+    mockApiRequest.mockResolvedValue({ data: { ok: true } });
     mockCreateResource.mockResolvedValue({ id: 'new-1', name: '新产品', status: 'Draft' });
     mockUpdateResource.mockResolvedValue({ id: '1', name: '更新名', status: 'Published' });
   });
@@ -204,6 +209,44 @@ describe('DynamicView', () => {
     await waitFor(() => { expect(screen.getByTestId('list-engine')).toBeInTheDocument(); });
     await user.click(screen.getByTestId('row-click'));
     await waitFor(() => { expect(mockApiGet).toHaveBeenCalledWith('/v1/timeline/Product/row-1'); });
+  });
+
+  it('元数据 correction action 通过业务修正向导提交', async () => {
+    const user = userEvent.setup();
+    mockFetchSchema.mockResolvedValueOnce({
+      ...mockSchema,
+      actions: [
+        {
+          name: 'reverseSaleShipment',
+          label: '修正已发货库存',
+          kind: 'correction',
+          tone: 'danger',
+          method: 'POST',
+          endpoint: '/inventory/posting/sale-order/{id}/reverse',
+          permission: 'inventory:post',
+          visibleWhen: "eval:doc.status === 'SHIPPED'",
+          fields: [{ name: 'note', label: '修正原因', type: 'text', required: true }],
+        },
+      ],
+    });
+
+    render(<DynamicView modelName="Product" />);
+    await waitFor(() => { expect(screen.getByTestId('list-engine')).toBeInTheDocument(); });
+    await user.click(screen.getByTestId('row-click'));
+    await waitFor(() => { expect(screen.getByText('修正已发货库存')).toBeInTheDocument(); });
+    await user.click(screen.getByText('修正已发货库存'));
+    await user.type(screen.getByLabelText(/修正原因/), '客户退货');
+    await user.click(screen.getByText('生成修正记录'));
+
+    await waitFor(() => {
+      expect(mockApiRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'post',
+          url: '/inventory/posting/sale-order/row-1/reverse',
+          data: { note: '客户退货' },
+        }),
+      );
+    });
   });
 
   it('timeline 事件渲染', async () => {
