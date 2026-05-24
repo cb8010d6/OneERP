@@ -99,14 +99,20 @@ export class FinanceController {
   @Get('dlq')
   @RequirePermissions(Permission.FinanceRead)
   @ApiOperation({ summary: '查看财务事件补偿队列' })
-  async getDlq(@Query('limit') limit?: string) {
-    return this.financeDlqService.list(Number(limit ?? 50));
+  async getDlq(
+    @CurrentCompany() companyId: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.financeDlqService.list(Number(limit ?? 50), companyId);
   }
 
   @Post('dlq/retry')
   @RequirePermissions(Permission.FinancePost)
   @ApiOperation({ summary: '重试财务事件补偿队列' })
-  async retryDlq(@Body() body?: { limit?: number }) {
-    return this.financeDlqService.retryPending(body?.limit ?? 20);
+  async retryDlq(
+    @CurrentCompany() companyId: string,
+    @Body() body?: { limit?: number },
+  ) {
+    return this.financeDlqService.retryPending(body?.limit ?? 20, companyId);
   }
 }

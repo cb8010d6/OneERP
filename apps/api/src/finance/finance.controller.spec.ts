@@ -120,10 +120,10 @@ describe('FinanceController', () => {
       const expected = [{ id: 'dlq1' }];
       mockFinanceDlqService.list.mockResolvedValue(expected);
 
-      const result = await controller.getDlq('10');
+      const result = await controller.getDlq('c1', '10');
 
       expect(result).toEqual(expected);
-      expect(mockFinanceDlqService.list).toHaveBeenCalledWith(10);
+      expect(mockFinanceDlqService.list).toHaveBeenCalledWith(10, 'c1');
     });
   });
 
@@ -132,10 +132,10 @@ describe('FinanceController', () => {
       const expected = { retried: 5 };
       mockFinanceDlqService.retryPending.mockResolvedValue(expected);
 
-      const result = await controller.retryDlq({ limit: 10 });
+      const result = await controller.retryDlq('c1', { limit: 10 });
 
       expect(result).toEqual(expected);
-      expect(mockFinanceDlqService.retryPending).toHaveBeenCalledWith(10);
+      expect(mockFinanceDlqService.retryPending).toHaveBeenCalledWith(10, 'c1');
     });
   });
 });

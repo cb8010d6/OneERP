@@ -4,14 +4,17 @@ import { useMemo, useState } from 'react';
 import { DynamicView } from '@/components/core';
 import { DocumentDraftUploader } from '@/components/ai/DocumentDraftUploader';
 import { TrialBalanceView } from './TrialBalanceView';
-import { FileText, BarChart3 } from 'lucide-react';
+import { FinanceDlqCenter } from './FinanceDlqCenter';
+import { FileText, BarChart3, AlertTriangle } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useI18n } from '@/lib/i18n';
 
 export default function FinancePageClient() {
   const { t } = useI18n();
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
-  const [activeTab, setActiveTab] = useState<'invoices' | 'trial-balance'>('invoices');
+  const [activeTab, setActiveTab] = useState<
+    'invoices' | 'trial-balance' | 'dlq'
+  >('invoices');
 
   const preview = useMemo(() => {
     if (!draft) return [] as Array<{ key: string; value: string }>;
@@ -52,6 +55,18 @@ export default function FinancePageClient() {
             <BarChart3 className="h-4 w-4" />
             {t('financeTrialBalance')}
           </button>
+          <button
+            onClick={() => setActiveTab('dlq')}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === 'dlq'
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700"
+            )}
+          >
+            <AlertTriangle className="h-4 w-4" />
+            {t('financeDlqTab')}
+          </button>
         </div>
       </div>
 
@@ -74,10 +89,12 @@ export default function FinancePageClient() {
 
           <DynamicView modelName="invoice" title={t('financeInvoiceManagement')} externalDraft={draft} />
         </div>
-      ) : (
+      ) : activeTab === 'trial-balance' ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <TrialBalanceView />
         </div>
+      ) : (
+        <FinanceDlqCenter />
       )}
     </div>
   );

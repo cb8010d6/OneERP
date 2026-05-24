@@ -79,8 +79,9 @@ export class EventQueueService {
     return queued;
   }
 
-  async list(limit = 50) {
+  async list(limit = 50, companyId?: string) {
     return this.prisma.eventDlq.findMany({
+      where: companyId ? { companyId } : undefined,
       orderBy: [{ updatedAt: 'desc' }],
       take: limit,
     });
@@ -95,10 +96,14 @@ export class EventQueueService {
     return this.processItem(item);
   }
 
-  async retryPending(limit = 20): Promise<RetryPendingResult> {
+  async retryPending(
+    limit = 20,
+    companyId?: string,
+  ): Promise<RetryPendingResult> {
     const now = new Date();
     const items = await this.prisma.eventDlq.findMany({
       where: {
+        ...(companyId ? { companyId } : {}),
         status: { in: ['PENDING', 'RETRYING'] },
         OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
       },
