@@ -19,6 +19,12 @@ class AIToolOverrideDto {
   args!: Record<string, unknown>;
 }
 
+class AICommandConfirmationDto {
+  @ApiProperty({ description: '后端签发的沙盒预览确认 token' })
+  @IsString()
+  token!: string;
+}
+
 export class AICommandDto {
   @ApiProperty({
     description: '用户自然语言指令',
@@ -46,6 +52,16 @@ export class AICommandDto {
   @ValidateNested()
   @Type(() => AIToolOverrideDto)
   overrideTool?: AIToolOverrideDto;
+
+  @ApiProperty({
+    description: '确认执行沙盒预览草稿',
+    required: false,
+    type: AICommandConfirmationDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AICommandConfirmationDto)
+  confirmation?: AICommandConfirmationDto;
 }
 
 export class AIChat2DashDto {

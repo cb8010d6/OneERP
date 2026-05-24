@@ -14,6 +14,8 @@ type Message = {
     originalInput: string;
     toolName: string;
     args: Record<string, unknown>;
+    previewToken?: string;
+    expiresAt?: number;
     writeEnabled?: boolean;
   };
 };
@@ -242,6 +244,9 @@ export function CommandPalette() {
                     {msg.draft ? (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                         <p className="text-xs text-amber-800">{t('aiDraftAction')}: {msg.draft.toolName}</p>
+                        <p className="mt-1 text-xs text-amber-700">
+                          {t('aiSandboxPreview')}
+                        </p>
                         {msg.draft.writeEnabled === false ? (
                           <p className="mt-1 text-xs text-amber-700">
                             {t('aiWriteDisabled')}
@@ -261,9 +266,8 @@ export function CommandPalette() {
                                 const confirmResp = await api.post('/v1/ai/command', {
                                   input: msg.draft?.originalInput,
                                   dryRun: false,
-                                  overrideTool: {
-                                    toolName: msg.draft?.toolName,
-                                    args: msg.draft?.args,
+                                  confirmation: {
+                                    token: msg.draft?.previewToken,
                                   },
                                 });
                                 const confirmed: Message = {
@@ -285,7 +289,7 @@ export function CommandPalette() {
                               }
                             }}
                           >
-                            Confirm
+                            {t('aiConfirmExecute')}
                           </button>
                         </div>
                       </div>

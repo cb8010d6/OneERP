@@ -73,6 +73,7 @@ export class AIController {
     return this.aiService.command(dto.input, companyId, user.id, {
       dryRun: dto.dryRun !== false,
       overrideTool: dto.overrideTool,
+      confirmation: dto.confirmation,
     });
   }
 

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CrudService } from '../crud/crud.service';
 import { MetadataService } from '../metadata/metadata.service';
@@ -17,6 +18,9 @@ interface AICommandOptions {
     toolName: string;
     args: Record<string, unknown>;
   };
+  confirmation?: {
+    token: string;
+  };
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -29,6 +33,15 @@ interface ReceivableInvoiceRow {
       name?: unknown;
     } | null;
   } | null;
+}
+
+interface CommandPreviewPayload {
+  input: string;
+  companyId: string;
+  userId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  expiresAt: number;
 }
 
 @Injectable()
@@ -179,12 +192,38 @@ export class AIService {
     }
 
     const dryRun = options?.dryRun !== false;
+    if (options?.confirmation?.token) {
+      if (dryRun) {
+        throw new BadRequestException('确认执行必须使用 dryRun=false');
+      }
+      const confirmed = this.verifyPreviewToken(options.confirmation.token);
+      if (
+        confirmed.input !== text ||
+        confirmed.companyId !== companyId ||
+        confirmed.userId !== userId
+      ) {
+        throw new BadRequestException('AI 草稿确认信息与当前上下文不一致');
+      }
+
+      const executed = await this.executeToolCall(
+        confirmed.toolName,
+        confirmed.args,
+        companyId,
+        userId,
+      );
+      if (executed) {
+        return executed;
+      }
+    }
+
     if (options?.overrideTool?.toolName) {
-      if (dryRun && this.isWriteTool(options.overrideTool.toolName)) {
+      if (this.isWriteTool(options.overrideTool.toolName)) {
         return this.buildDraftResponse(
           text,
           options.overrideTool.toolName,
           options.overrideTool.args,
+          companyId,
+          userId,
         );
       }
 
@@ -206,7 +245,13 @@ export class AIService {
     );
     if (llmCall) {
       if (dryRun && this.isWriteTool(llmCall.toolName)) {
-        return this.buildDraftResponse(text, llmCall.toolName, llmCall.args);
+        return this.buildDraftResponse(
+          text,
+          llmCall.toolName,
+          llmCall.args,
+          companyId,
+          userId,
+        );
       }
 
       const executed = await this.executeToolCall(
@@ -233,20 +278,35 @@ export class AIService {
       (text.includes('客户') || text.includes('伙伴'))
     ) {
       if (dryRun) {
-        return this.buildDraftResponse(text, 'create_resource', {
-          modelName: 'partner',
-          data: { name: this.extractName(text) ?? 'AI客户', type: 'CUSTOMER' },
-        });
+        return this.buildDraftResponse(
+          text,
+          'create_resource',
+          {
+            modelName: 'partner',
+            data: {
+              name: this.extractName(text) ?? 'AI客户',
+              type: 'CUSTOMER',
+            },
+          },
+          companyId,
+          userId,
+        );
       }
       return this.createPartnerByPrompt(text, companyId);
     }
 
     if (text.includes('创建') && text.includes('订单')) {
       if (dryRun) {
-        return this.buildDraftResponse(text, 'create_resource', {
-          modelName: 'order',
-          data: { status: 'DRAFT' },
-        });
+        return this.buildDraftResponse(
+          text,
+          'create_resource',
+          {
+            modelName: 'order',
+            data: { status: 'DRAFT' },
+          },
+          companyId,
+          userId,
+        );
       }
       return this.createOrderByPrompt(text, companyId, userId);
     }
@@ -260,11 +320,17 @@ export class AIService {
         text.includes('生产'))
     ) {
       if (dryRun) {
-        return this.buildDraftResponse(text, 'transition_workflow', {
-          modelName: 'order',
-          action: this.extractOrderAction(text),
-          recordId: this.extractOrderNo(text),
-        });
+        return this.buildDraftResponse(
+          text,
+          'transition_workflow',
+          {
+            modelName: 'order',
+            action: this.extractOrderAction(text),
+            recordId: this.extractOrderNo(text),
+          },
+          companyId,
+          userId,
+        );
       }
       return this.transitionOrderByPrompt(text, companyId, userId);
     }
@@ -325,13 +391,20 @@ export class AIService {
       await this.prisma.$queryRawUnsafe(checkedSql, companyId);
 
     const chartSuggestion = this.suggestChart(rows);
+    const explanation = this.explainReadSql(checkedSql, rows.length);
     return {
       type: 'table',
       title: 'Chat2SQL 查询结果',
       sql: checkedSql,
+      explanation,
       rows,
       chartSuggestion,
       rowCount: rows.length,
+      export: {
+        format: 'csv',
+        fileName: `chat2sql-${Date.now()}.csv`,
+        content: this.toCsv(rows),
+      },
     };
   }
 
@@ -706,17 +779,70 @@ export class AIService {
     originalInput: string,
     toolName: string,
     args: Record<string, unknown>,
+    companyId: string,
+    userId: string,
   ) {
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    const token = this.signPreviewToken({
+      input: originalInput,
+      companyId,
+      userId,
+      toolName,
+      args,
+      expiresAt,
+    });
+
     return {
       type: 'draft',
-      message: '已生成执行草稿，请确认后执行。',
+      message: '已生成沙盒预览，请核对参数后确认执行。',
       draft: {
         originalInput,
         toolName,
         args,
+        previewToken: token,
+        expiresAt,
         writeEnabled: process.env.AI_WRITE_ENABLED === 'true',
       },
     };
+  }
+
+  private signPreviewToken(payload: CommandPreviewPayload) {
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = this.sign(body);
+    return `${body}.${signature}`;
+  }
+
+  private verifyPreviewToken(token: string): CommandPreviewPayload {
+    const [body, signature] = token.split('.');
+    if (!body || !signature) {
+      throw new BadRequestException('AI 草稿确认 token 无效');
+    }
+
+    const expected = this.sign(body);
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expected);
+    if (
+      signatureBuffer.length !== expectedBuffer.length ||
+      !timingSafeEqual(signatureBuffer, expectedBuffer)
+    ) {
+      throw new BadRequestException('AI 草稿确认 token 无效');
+    }
+
+    const decoded = JSON.parse(
+      Buffer.from(body, 'base64url').toString('utf8'),
+    ) as CommandPreviewPayload;
+    if (!decoded.expiresAt || decoded.expiresAt < Date.now()) {
+      throw new BadRequestException('AI 草稿已过期，请重新生成预览');
+    }
+    return decoded;
+  }
+
+  private sign(body: string) {
+    const secret =
+      process.env.AI_PREVIEW_SECRET ||
+      process.env.JWT_SECRET ||
+      'oneerp-local-ai-preview-secret';
+    return createHmac('sha256', secret).update(body).digest('base64url');
   }
 
   private buildReadSchemaContext() {
@@ -799,6 +925,54 @@ Rules:
       xKey: categoryKey,
       yKey: numericKey,
     };
+  }
+
+  private explainReadSql(sql: string, rowCount: number) {
+    const lowered = sql.toLowerCase();
+    const filters: string[] = ['已按当前公司 companyId 过滤'];
+    if (lowered.includes('status')) filters.push('查询包含状态字段筛选或分组');
+    if (lowered.includes('createdat') || lowered.includes('date')) {
+      filters.push('查询包含日期范围或日期字段');
+    }
+    if (lowered.includes('join')) {
+      filters.push('查询使用关联表 JOIN 获取业务维度');
+    }
+    if (lowered.includes('limit')) filters.push('查询包含返回行数限制');
+
+    return {
+      summary: `本次只读查询返回 ${rowCount} 行明细。`,
+      filters,
+      safety: [
+        '仅允许单条 SELECT 语句',
+        '禁止 DDL/DML、CTE、系统表和多语句',
+        '必须包含 companyId 参数过滤',
+      ],
+    };
+  }
+
+  private toCsv(rows: Array<Record<string, unknown>>) {
+    if (!rows.length) return '';
+    const headers = Object.keys(rows[0]);
+    const escape = (value: unknown) => {
+      const text =
+        value === null || value === undefined
+          ? ''
+          : value instanceof Date
+            ? value.toISOString()
+            : typeof value === 'object'
+              ? JSON.stringify(value)
+              : typeof value === 'string' ||
+                  typeof value === 'number' ||
+                  typeof value === 'boolean'
+                ? String(value)
+                : '';
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+
+    return [
+      headers.map(escape).join(','),
+      ...rows.map((row) => headers.map((key) => escape(row[key])).join(',')),
+    ].join('\n');
   }
 
   private extractLikelySupplierFromFileName(fileName: string) {
