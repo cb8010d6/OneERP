@@ -47,6 +47,7 @@ model Company {
   taxCodes    TaxCode[]
   userInvitations UserInvitation[]
   inventoryTransactions InventoryTransaction[]
+  inventoryLedgerSnapshots InventoryLedgerSnapshot[]
   purchaseOrders PurchaseOrder[]
   purchaseReceipts PurchaseReceipt[]
   purchaseInvoices PurchaseInvoice[]
@@ -401,6 +402,7 @@ model StockLocation {
   parent               StockLocation?         @relation("LocationTree", fields: [parentId], references: [id])
   children             StockLocation[]        @relation("LocationTree")
   quants               StockQuant[]
+  ledgerSnapshots      InventoryLedgerSnapshot[]
   outgoingTransactions InventoryTransaction[] @relation("StockMoveSourceLocation")
   incomingTransactions InventoryTransaction[] @relation("StockMoveDestinationLocation")
   purchaseReceiptLines PurchaseReceiptLine[]
@@ -423,6 +425,7 @@ model Material {
 
   company               Company?               @relation(fields: [companyId], references: [id])
   quants                StockQuant[]
+  ledgerSnapshots       InventoryLedgerSnapshot[]
   inventoryTransactions InventoryTransaction[]
   products              Product[]
   bomLines              BomLine[]
@@ -543,6 +546,26 @@ model StockQuant {
 
   @@unique([locationId, materialId, batchNo])
   @@index([materialId])
+}
+
+model InventoryLedgerSnapshot {
+  id          String   @id @default(uuid())
+  companyId   String
+  locationId  String
+  materialId  String
+  netQty      Decimal  @default(0) @db.Decimal(18,4)
+  batchCount  Int      @default(0)
+  refreshedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company  Company       @relation(fields: [companyId], references: [id])
+  location StockLocation @relation(fields: [locationId], references: [id])
+  material Material      @relation(fields: [materialId], references: [id])
+
+  @@unique([companyId, locationId, materialId])
+  @@index([companyId, materialId])
+  @@index([companyId, locationId])
 }
 
 // ==========================================

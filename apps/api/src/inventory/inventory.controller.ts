@@ -90,7 +90,7 @@ export class InventoryController {
   @Get('realtime-ledger')
   @RequirePermissions(Permission.InventoryRead)
   @ApiOperation({
-    summary: '实时库存台账 – Kysely 聚合，支持树形钻取与低库存预警',
+    summary: '实时库存台账 – 快照查询，支持树形钻取与低库存预警',
   })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })

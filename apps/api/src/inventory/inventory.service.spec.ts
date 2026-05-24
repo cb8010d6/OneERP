@@ -38,9 +38,15 @@ type MockTx = {
     findMany: jest.Mock;
     findFirst: jest.Mock;
     upsert: jest.Mock;
+    aggregate: jest.Mock;
+    count: jest.Mock;
   };
   inventoryTransaction: {
     create: jest.Mock;
+  };
+  inventoryLedgerSnapshot: {
+    upsert: jest.Mock;
+    deleteMany: jest.Mock;
   };
 };
 
@@ -77,9 +83,15 @@ describe('InventoryService', () => {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       upsert: jest.fn(),
+      aggregate: jest.fn(),
+      count: jest.fn(),
     },
     inventoryTransaction: {
       create: jest.fn(),
+    },
+    inventoryLedgerSnapshot: {
+      upsert: jest.fn(),
+      deleteMany: jest.fn(),
     },
   };
 
@@ -98,6 +110,8 @@ describe('InventoryService', () => {
     prisma.$transaction.mockImplementation(
       (callback: (trx: MockTx) => unknown) => callback(tx),
     );
+    tx.stockQuant.aggregate.mockResolvedValue({ _sum: { quantity: 10 } });
+    tx.stockQuant.count.mockResolvedValue(1);
     service = new InventoryService(
       prisma as unknown as ConstructorParameters<typeof InventoryService>[0],
       kyselyService as unknown as ConstructorParameters<
@@ -323,6 +337,50 @@ describe('InventoryService', () => {
     await expect(
       service.reversePurchaseInbound('c1', 'PO-001', {}, 'u1'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refreshes ledger snapshot after inbound stock move', async () => {
+    prisma.stockLocation.findFirst.mockResolvedValue({
+      id: 'loc-dest',
+      name: 'Finished Goods',
+      warehouseId: 'w1',
+    });
+    prisma.material.findFirst.mockResolvedValue({ id: 'm1', unitPrice: 10 });
+    tx.stockQuant.aggregate.mockResolvedValue({ _sum: { quantity: 12 } });
+    tx.stockQuant.count.mockResolvedValue(2);
+    tx.inventoryTransaction.create.mockResolvedValue({
+      id: 't-in',
+      type: 'INBOUND',
+      materialId: 'm1',
+      quantity: 5,
+      referenceNo: 'R-IN',
+    });
+
+    await service.createStockMove(
+      'c1',
+      {
+        destLocationId: 'loc-dest',
+        materialId: 'm1',
+        quantity: 5,
+        batchNo: 'B1',
+        referenceNo: 'R-IN',
+      },
+      'u1',
+    );
+
+    expect(tx.inventoryLedgerSnapshot.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyId_locationId_materialId: {
+            companyId: 'c1',
+            locationId: 'loc-dest',
+            materialId: 'm1',
+          },
+        },
+        create: expect.objectContaining({ netQty: 12, batchCount: 2 }),
+        update: expect.objectContaining({ netQty: 12, batchCount: 2 }),
+      }),
+    );
   });
 
   it('throws conflict when outbound conditional deduction fails', async () => {

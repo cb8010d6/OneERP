@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
-import { sql } from 'kysely';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
@@ -451,22 +450,10 @@ export class InventoryService {
       pagination.lowOnly === '1';
 
     const { rows, total } = await this.kyselyService.withTenant(async (trx) => {
-      const groupByColumns = [
-        'loc.id',
-        'loc.name',
-        'loc.warehouseId',
-        'wh.name',
-        'mat.id',
-        'mat.sku',
-        'mat.name',
-        'mat.unit',
-        'mat.minStock',
-      ] as const;
-
       let baseQuery = trx
-        .selectFrom('StockQuant as sq')
-        .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
-        .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
+        .selectFrom('InventoryLedgerSnapshot as snap')
+        .innerJoin('StockLocation as loc', 'loc.id', 'snap.locationId')
+        .innerJoin('Material as mat', 'mat.id', 'snap.materialId')
         .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
         .select([
           'loc.id as locationId',
@@ -478,13 +465,10 @@ export class InventoryService {
           'mat.name as materialName',
           'mat.unit as materialUnit',
           'mat.minStock as minStock',
+          'snap.netQty as netQty',
+          'snap.batchCount as batchCount',
         ])
-        .select((eb) => [
-          eb.fn.sum<number>('sq.quantity').as('netQty'),
-          eb.fn.count<number>('sq.id').as('batchCount'),
-        ])
-        .where('loc.companyId', '=', companyId)
-        .groupBy(groupByColumns)
+        .where('snap.companyId', '=', companyId)
         .orderBy('wh.name', 'asc')
         .orderBy('loc.name', 'asc')
         .orderBy('mat.name', 'asc');
@@ -507,8 +491,8 @@ export class InventoryService {
 
       if (lowOnly) {
         baseQuery = baseQuery
-          .having(sql`"mat"."minStock"`, '>', 0)
-          .having(sql`sum("sq"."quantity")`, '<=', sql`"mat"."minStock"`);
+          .where('mat.minStock', '>', 0)
+          .whereRef('snap.netQty', '<=', 'mat.minStock');
       }
 
       // Count total grouped rows via subquery
@@ -1133,6 +1117,22 @@ export class InventoryService {
       finalBatchNo = destinationBatch;
     }
 
+    if (input.sourceLocationId) {
+      await this.refreshLedgerSnapshot(tx, {
+        companyId: input.companyId,
+        locationId: input.sourceLocationId,
+        materialId: input.materialId,
+      });
+    }
+
+    if (input.destLocationId) {
+      await this.refreshLedgerSnapshot(tx, {
+        companyId: input.companyId,
+        locationId: input.destLocationId,
+        materialId: input.materialId,
+      });
+    }
+
     const moveType =
       input.sourceLocationId && input.destLocationId
         ? 'TRANSFER'
@@ -1159,6 +1159,68 @@ export class InventoryService {
       ...transaction,
       quantity: Number(transaction.quantity),
     };
+  }
+
+  private async refreshLedgerSnapshot(
+    tx: Prisma.TransactionClient,
+    input: {
+      companyId: string;
+      locationId: string;
+      materialId: string;
+    },
+  ) {
+    const [quantityAgg, batchCount] = await Promise.all([
+      tx.stockQuant.aggregate({
+        where: {
+          locationId: input.locationId,
+          materialId: input.materialId,
+        },
+        _sum: { quantity: true },
+      }),
+      tx.stockQuant.count({
+        where: {
+          locationId: input.locationId,
+          materialId: input.materialId,
+          quantity: { not: 0 },
+        },
+      }),
+    ]);
+
+    const netQty = quantityAgg._sum.quantity ?? 0;
+
+    if (batchCount === 0 && Number(netQty) === 0) {
+      await tx.inventoryLedgerSnapshot.deleteMany({
+        where: {
+          companyId: input.companyId,
+          locationId: input.locationId,
+          materialId: input.materialId,
+        },
+      });
+      return;
+    }
+
+    await tx.inventoryLedgerSnapshot.upsert({
+      where: {
+        companyId_locationId_materialId: {
+          companyId: input.companyId,
+          locationId: input.locationId,
+          materialId: input.materialId,
+        },
+      },
+      create: {
+        companyId: input.companyId,
+        locationId: input.locationId,
+        materialId: input.materialId,
+        netQty,
+        batchCount,
+        refreshedAt: new Date(),
+      },
+      update: {
+        netQty,
+        batchCount,
+        refreshedAt: new Date(),
+      },
+    });
   }
 
   private async reserveSourceStock(
