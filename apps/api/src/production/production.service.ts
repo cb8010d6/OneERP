@@ -27,6 +27,11 @@ export interface WorkReportRecord {
   defectQty: number;
 }
 
+interface BomRequirement {
+  materialId: string;
+  quantity: Decimal;
+}
+
 @Injectable()
 export class ProductionService {
   constructor(
@@ -153,30 +158,20 @@ export class ProductionService {
     dto: CreateWorkReportDto,
     workerId: string,
   ) {
-    const bom = await this.prisma.bom.findFirst({
-      where: {
-        companyId,
-        productId: workOrder.productId,
-        isDefault: true,
-      },
-      include: { lines: true },
-      orderBy: { updatedAt: 'desc' },
-    });
+    const requirements = await this.resolveBomRequirements(
+      companyId,
+      workOrder.productId,
+      new Decimal(dto.goodQty),
+      new Set(),
+    );
 
-    if (!bom || bom.lines.length === 0) {
-      throw new BadRequestException('产品未配置默认 BOM，无法按报工扣减原料');
-    }
-
-    for (const line of bom.lines) {
-      const requiredQty = new Decimal(dto.goodQty)
-        .times(line.quantity)
-        .times(new Decimal(1).plus(line.scrapRate))
-        .toNumber();
+    for (const requirement of requirements) {
+      const requiredQty = requirement.quantity.toNumber();
 
       await this.inventoryService.createStockMove(
         companyId,
         {
-          materialId: line.materialId,
+          materialId: requirement.materialId,
           sourceLocationId: dto.sourceLocationId,
           quantity: requiredQty,
           referenceNo: `PRODUCTION-ISSUE-${workOrder.workOrderNo}`,
@@ -202,5 +197,86 @@ export class ProductionService {
       },
       workerId,
     );
+  }
+
+  private async resolveBomRequirements(
+    companyId: string,
+    productId: string,
+    quantity: Decimal,
+    visitedProductIds: Set<string>,
+  ): Promise<BomRequirement[]> {
+    if (visitedProductIds.has(productId)) {
+      throw new BadRequestException('检测到循环 BOM，无法展开生产领料');
+    }
+    visitedProductIds.add(productId);
+
+    const bom = await this.prisma.bom.findFirst({
+      where: {
+        companyId,
+        productId,
+        isDefault: true,
+      },
+      include: { lines: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!bom || bom.lines.length === 0) {
+      throw new BadRequestException('产品未配置默认 BOM，无法按报工扣减原料');
+    }
+
+    const merged = new Map<string, Decimal>();
+
+    for (const line of bom.lines) {
+      const lineQuantity = quantity
+        .times(line.quantity)
+        .times(new Decimal(1).plus(line.scrapRate));
+
+      const childProduct = await this.prisma.product.findFirst({
+        where: {
+          companyId,
+          materialId: line.materialId,
+        },
+        select: { id: true },
+      });
+
+      if (childProduct) {
+        const childBom = await this.prisma.bom.findFirst({
+          where: {
+            companyId,
+            productId: childProduct.id,
+            isDefault: true,
+          },
+          select: { id: true },
+        });
+
+        if (childBom) {
+          const childRequirements = await this.resolveBomRequirements(
+            companyId,
+            childProduct.id,
+            lineQuantity,
+            new Set(visitedProductIds),
+          );
+          for (const requirement of childRequirements) {
+            merged.set(
+              requirement.materialId,
+              (merged.get(requirement.materialId) ?? new Decimal(0)).plus(
+                requirement.quantity,
+              ),
+            );
+          }
+          continue;
+        }
+      }
+
+      merged.set(
+        line.materialId,
+        (merged.get(line.materialId) ?? new Decimal(0)).plus(lineQuantity),
+      );
+    }
+
+    return [...merged.entries()].map(([materialId, requiredQty]) => ({
+      materialId,
+      quantity: requiredQty,
+    }));
   }
 }

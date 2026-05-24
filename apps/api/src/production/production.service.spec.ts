@@ -15,6 +15,9 @@ type MockPrisma = {
   workReport: {
     create: jest.Mock;
   };
+  product: {
+    findFirst: jest.Mock;
+  };
   bom: {
     findFirst: jest.Mock;
   };
@@ -45,6 +48,9 @@ describe('ProductionService', () => {
     workReport: {
       create: jest.fn(),
     },
+    product: {
+      findFirst: jest.fn(),
+    },
     bom: {
       findFirst: jest.fn(),
     },
@@ -71,6 +77,7 @@ describe('ProductionService', () => {
     prisma.$transaction.mockImplementation(
       (callback: (trx: MockTx) => unknown) => callback(tx),
     );
+    prisma.product.findFirst.mockResolvedValue(null);
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
       inventoryService as unknown as ConstructorParameters<
@@ -271,6 +278,78 @@ describe('ProductionService', () => {
         where: { id: 'wo1' },
         data: { actualQty: 105, status: 'COMPLETED' },
       });
+    });
+
+    it('should explode nested BOM and issue raw materials only', async () => {
+      const workOrder = {
+        id: 'wo-nested',
+        workOrderNo: 'WO-003',
+        productId: 'parent-product',
+        companyId: 'c1',
+        actualQty: 0,
+        plannedQty: 10,
+        status: 'PENDING',
+        product: { materialId: 'fg-parent' },
+      };
+      prisma.workOrder.findFirst.mockResolvedValue(workOrder);
+      prisma.bom.findFirst
+        .mockResolvedValueOnce({
+          id: 'bom-parent',
+          lines: [
+            { materialId: 'semi-material', quantity: 2, scrapRate: 0 },
+            { materialId: 'raw-shared', quantity: 1, scrapRate: 0 },
+          ],
+        })
+        .mockResolvedValueOnce({ id: 'bom-semi' })
+        .mockResolvedValueOnce({
+          id: 'bom-semi',
+          lines: [
+            { materialId: 'raw-a', quantity: 3, scrapRate: 0 },
+            { materialId: 'raw-shared', quantity: 2, scrapRate: 0 },
+          ],
+        });
+      prisma.product.findFirst
+        .mockResolvedValueOnce({ id: 'semi-product' })
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null);
+      tx.workReport.create.mockResolvedValue({
+        id: 'wr3',
+        workOrderId: 'wo-nested',
+        goodQty: 5,
+        defectQty: 0,
+      });
+      tx.workOrder.update.mockResolvedValue({});
+
+      await service.submitWorkReport('c1', 'wo-nested', 'u1', {
+        goodQty: 5,
+        defectQty: 0,
+        sourceLocationId: 'raw-loc',
+        destLocationId: 'fg-loc',
+      });
+
+      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({
+          materialId: 'raw-a',
+          quantity: 30,
+          referenceNo: 'PRODUCTION-ISSUE-WO-003',
+        }),
+        'u1',
+      );
+      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({
+          materialId: 'raw-shared',
+          quantity: 25,
+          referenceNo: 'PRODUCTION-ISSUE-WO-003',
+        }),
+        'u1',
+      );
+      expect(inventoryService.createStockMove).not.toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({ materialId: 'semi-material' }),
+        'u1',
+      );
     });
 
     it('should throw NotFoundException when work order not found', async () => {
