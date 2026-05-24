@@ -1,5 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsNotEmpty, IsNumber, Min } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsOptional,
+  IsString,
+  IsNotEmpty,
+  IsNumber,
+  Min,
+} from 'class-validator';
 
 export class CreateWorkOrderDto {
   @ApiProperty({ description: '关联的销售订单ID' })
@@ -28,4 +34,19 @@ export class CreateWorkReportDto {
   @IsNumber()
   @Min(0)
   defectQty!: number;
+
+  @ApiPropertyOptional({ description: '原料领用库位ID' })
+  @IsOptional()
+  @IsString()
+  sourceLocationId?: string;
+
+  @ApiPropertyOptional({ description: '成品入库库位ID' })
+  @IsOptional()
+  @IsString()
+  destLocationId?: string;
+
+  @ApiPropertyOptional({ description: '成品批次号' })
+  @IsOptional()
+  @IsString()
+  batchNo?: string;
 }

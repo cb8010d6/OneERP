@@ -468,6 +468,7 @@ model Product {
   category ProductCategory? @relation(fields: [categoryId], references: [id])
   material Material?        @relation(fields: [materialId], references: [id])
   boms     Bom[]
+  workOrders WorkOrder[]
 
   @@unique([companyId, sku])
   @@index([companyId, categoryId])
@@ -654,6 +655,7 @@ model WorkOrder {
   updatedAt   DateTime @updatedAt
 
   order   Order        @relation(fields: [orderId], references: [id])
+  product Product      @relation(fields: [productId], references: [id])
   reports WorkReport[]
 }
 

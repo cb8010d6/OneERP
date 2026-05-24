@@ -15,6 +15,9 @@ type MockPrisma = {
   workReport: {
     create: jest.Mock;
   };
+  bom: {
+    findFirst: jest.Mock;
+  };
   $transaction: jest.Mock;
 };
 
@@ -42,7 +45,14 @@ describe('ProductionService', () => {
     workReport: {
       create: jest.fn(),
     },
+    bom: {
+      findFirst: jest.fn(),
+    },
     $transaction: jest.fn(),
+  };
+
+  const inventoryService = {
+    createStockMove: jest.fn(),
   };
 
   const tx: MockTx = {
@@ -63,6 +73,9 @@ describe('ProductionService', () => {
     );
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
+      inventoryService as unknown as ConstructorParameters<
+        typeof ProductionService
+      >[1],
     );
   });
 
@@ -165,12 +178,19 @@ describe('ProductionService', () => {
     it('should submit a work report and update work order', async () => {
       const workOrder = {
         id: 'wo1',
+        workOrderNo: 'WO-001',
+        productId: 'p1',
         companyId: 'c1',
         actualQty: 10,
         plannedQty: 100,
         status: 'PENDING',
+        product: { materialId: 'fg-1' },
       };
       prisma.workOrder.findFirst.mockResolvedValue(workOrder);
+      prisma.bom.findFirst.mockResolvedValue({
+        id: 'bom-1',
+        lines: [{ materialId: 'raw-1', quantity: 2, scrapRate: 0.1 }],
+      });
       tx.workReport.create.mockResolvedValue({
         id: 'wr1',
         workOrderId: 'wo1',
@@ -182,6 +202,9 @@ describe('ProductionService', () => {
       const result = (await service.submitWorkReport('c1', 'wo1', 'u1', {
         goodQty: 20,
         defectQty: 2,
+        sourceLocationId: 'raw-loc',
+        destLocationId: 'fg-loc',
+        batchNo: 'FG-B1',
       })) as { id: string };
 
       expect(result.id).toBe('wr1');
@@ -190,17 +213,45 @@ describe('ProductionService', () => {
         where: { id: 'wo1' },
         data: { actualQty: 30, status: 'IN_PROGRESS' },
       });
+      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({
+          materialId: 'raw-1',
+          sourceLocationId: 'raw-loc',
+          quantity: 44,
+          referenceNo: 'PRODUCTION-ISSUE-WO-001',
+        }),
+        'u1',
+      );
+      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+        'c1',
+        expect.objectContaining({
+          materialId: 'fg-1',
+          destLocationId: 'fg-loc',
+          quantity: 20,
+          batchNo: 'FG-B1',
+          referenceNo: 'PRODUCTION-RECEIPT-WO-001',
+        }),
+        'u1',
+      );
     });
 
     it('should mark work order as COMPLETED when actualQty meets plannedQty', async () => {
       const workOrder = {
         id: 'wo1',
+        workOrderNo: 'WO-002',
+        productId: 'p1',
         companyId: 'c1',
         actualQty: 80,
         plannedQty: 100,
         status: 'IN_PROGRESS',
+        product: { materialId: 'fg-1' },
       };
       prisma.workOrder.findFirst.mockResolvedValue(workOrder);
+      prisma.bom.findFirst.mockResolvedValue({
+        id: 'bom-1',
+        lines: [{ materialId: 'raw-1', quantity: 1, scrapRate: 0 }],
+      });
       tx.workReport.create.mockResolvedValue({
         id: 'wr2',
         workOrderId: 'wo1',
@@ -212,6 +263,8 @@ describe('ProductionService', () => {
       await service.submitWorkReport('c1', 'wo1', 'u1', {
         goodQty: 25,
         defectQty: 0,
+        sourceLocationId: 'raw-loc',
+        destLocationId: 'fg-loc',
       });
 
       expect(tx.workOrder.update).toHaveBeenCalledWith({

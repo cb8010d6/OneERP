@@ -1,7 +1,13 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateWorkOrderDto, CreateWorkReportDto } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { InventoryService } from '../inventory/inventory.service';
 
 export interface WorkOrderRecord {
   id: string;
@@ -23,7 +29,10 @@ export interface WorkReportRecord {
 
 @Injectable()
 export class ProductionService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly inventoryService: InventoryService,
+  ) {}
 
   async createWorkOrder(
     companyId: string,
@@ -77,10 +86,32 @@ export class ProductionService {
   ): Promise<WorkReportRecord> {
     const wo = await this.prisma.workOrder.findFirst({
       where: { id: workOrderId, companyId },
+      include: {
+        product: {
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            materialId: true,
+          },
+        },
+      },
     });
     if (!wo) throw new NotFoundException('无效的生产工单');
 
-    return this.prisma.$transaction(async (tx) => {
+    if (dto.goodQty > 0) {
+      if (!dto.sourceLocationId) {
+        throw new BadRequestException('提交良品报工时必须选择原料领用库位');
+      }
+      if (!dto.destLocationId) {
+        throw new BadRequestException('提交良品报工时必须选择成品入库库位');
+      }
+      if (!wo.product.materialId) {
+        throw new BadRequestException('产品未绑定成品物料，无法完工入库');
+      }
+    }
+
+    const report = await this.prisma.$transaction(async (tx) => {
       const report = await tx.workReport.create({
         data: {
           workOrderId,
@@ -103,5 +134,73 @@ export class ProductionService {
 
       return report;
     });
+
+    if (dto.goodQty > 0) {
+      await this.postManufacturingInventory(companyId, wo, dto, workerId);
+    }
+
+    return report;
+  }
+
+  private async postManufacturingInventory(
+    companyId: string,
+    workOrder: {
+      id: string;
+      workOrderNo: string;
+      productId: string;
+      product: { materialId: string | null };
+    },
+    dto: CreateWorkReportDto,
+    workerId: string,
+  ) {
+    const bom = await this.prisma.bom.findFirst({
+      where: {
+        companyId,
+        productId: workOrder.productId,
+        isDefault: true,
+      },
+      include: { lines: true },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    if (!bom || bom.lines.length === 0) {
+      throw new BadRequestException('产品未配置默认 BOM，无法按报工扣减原料');
+    }
+
+    for (const line of bom.lines) {
+      const requiredQty = new Decimal(dto.goodQty)
+        .times(line.quantity)
+        .times(new Decimal(1).plus(line.scrapRate))
+        .toNumber();
+
+      await this.inventoryService.createStockMove(
+        companyId,
+        {
+          materialId: line.materialId,
+          sourceLocationId: dto.sourceLocationId,
+          quantity: requiredQty,
+          referenceNo: `PRODUCTION-ISSUE-${workOrder.workOrderNo}`,
+          documentType: 'WORK_ORDER',
+          documentId: workOrder.id,
+          note: `生产领料：${workOrder.workOrderNo}`,
+        },
+        workerId,
+      );
+    }
+
+    await this.inventoryService.createStockMove(
+      companyId,
+      {
+        materialId: workOrder.product.materialId ?? '',
+        destLocationId: dto.destLocationId,
+        quantity: dto.goodQty,
+        batchNo: dto.batchNo,
+        referenceNo: `PRODUCTION-RECEIPT-${workOrder.workOrderNo}`,
+        documentType: 'WORK_ORDER',
+        documentId: workOrder.id,
+        note: `完工入库：${workOrder.workOrderNo}`,
+      },
+      workerId,
+    );
   }
 }
