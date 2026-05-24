@@ -431,6 +431,15 @@ export class CrudService {
     if (modelName === 'orderItem') {
       throw new ForbiddenException('订单明细请通过订单专用接口维护');
     }
+    if (
+      modelName === 'purchaseOrder' ||
+      modelName === 'purchaseOrderLine' ||
+      modelName === 'purchaseReceipt' ||
+      modelName === 'purchaseReceiptLine' ||
+      modelName === 'purchaseInvoice'
+    ) {
+      throw new ForbiddenException('采购单据请通过采购专用接口维护');
+    }
   }
 
   private readStatus(record: unknown): string | undefined {

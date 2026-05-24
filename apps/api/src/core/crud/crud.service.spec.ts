@@ -308,6 +308,26 @@ describe('CrudService – 专用模型写入拦截', () => {
       service.remove('orderItem', 'oi1', 'c1'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
+
+  it.each([
+    ['purchaseOrder', { supplierId: 's1' }],
+    ['purchaseOrderLine', { purchaseOrderId: 'po1' }],
+    ['purchaseReceipt', { purchaseOrderId: 'po1' }],
+    ['purchaseReceiptLine', { purchaseReceiptId: 'gr1' }],
+    ['purchaseInvoice', { purchaseOrderId: 'po1' }],
+  ])('%s 写入必须走采购专用接口', async (model, data) => {
+    const { service } = buildService();
+
+    await expect(service.create(model, data, 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(
+      service.update(model, 'id1', data, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.remove(model, 'id1', 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

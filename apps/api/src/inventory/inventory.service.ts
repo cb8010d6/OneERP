@@ -873,7 +873,10 @@ export class InventoryService {
     const inboundMoves = await this.prisma.inventoryTransaction.findMany({
       where: {
         companyId,
-        referenceNo: purchaseReferenceNo,
+        OR: [
+          { referenceNo: purchaseReferenceNo },
+          { referenceNo: { startsWith: `${purchaseReferenceNo}-` } },
+        ],
         type: 'INBOUND',
       },
       select: {

@@ -47,6 +47,9 @@ model Company {
   taxCodes    TaxCode[]
   userInvitations UserInvitation[]
   inventoryTransactions InventoryTransaction[]
+  purchaseOrders PurchaseOrder[]
+  purchaseReceipts PurchaseReceipt[]
+  purchaseInvoices PurchaseInvoice[]
 }
 
 enum PartnerType {
@@ -93,6 +96,8 @@ model User {
 
   companies  UserCompanyRole[]
   orders     Order[]           @relation("UserOrders")
+  purchaseOrders PurchaseOrder[] @relation("UserPurchaseOrders")
+  purchaseReceipts PurchaseReceipt[] @relation("UserPurchaseReceipts")
   FileRecord FileRecord[]
   WorkReport WorkReport[]
   auditLogs  AuditLog[]
@@ -172,6 +177,8 @@ model Partner {
 
   company Company @relation(fields: [companyId], references: [id])
   orders  Order[]
+  purchaseOrders PurchaseOrder[]
+  purchaseInvoices PurchaseInvoice[]
   journalEntryLines JournalEntryLine[]
 
   @@unique([companyId, code])
@@ -252,6 +259,118 @@ model OrderItem {
 }
 
 // ==========================================
+// 采购与应付链路
+// ==========================================
+
+model PurchaseOrder {
+  id           String   @id @default(uuid())
+  purchaseNo   String   @unique
+  supplierId   String
+  buyerId      String
+  companyId    String
+  status       String   @default("DRAFT") // DRAFT / ORDERED / PARTIAL_RECEIVED / RECEIVED / CANCELLED
+  totalAmount  Decimal  @default(0) @db.Decimal(18,4)
+  subTotal     Decimal  @default(0) @db.Decimal(18,4)
+  taxTotal     Decimal  @default(0) @db.Decimal(18,4)
+  expectedDate DateTime?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  supplier Partner @relation(fields: [supplierId], references: [id])
+  buyer    User    @relation("UserPurchaseOrders", fields: [buyerId], references: [id])
+  company  Company @relation(fields: [companyId], references: [id])
+  items    PurchaseOrderLine[]
+  receipts PurchaseReceipt[]
+  invoices PurchaseInvoice[]
+
+  @@index([companyId, status])
+  @@index([supplierId])
+}
+
+model PurchaseOrderLine {
+  id              String  @id @default(uuid())
+  purchaseOrderId String
+  materialId      String
+  quantity        Decimal @db.Decimal(18,4)
+  receivedQty     Decimal @default(0) @db.Decimal(18,4)
+  unitPrice       Decimal @db.Decimal(18,4)
+  subTotal        Decimal @default(0) @db.Decimal(18,4)
+  taxAmount       Decimal @default(0) @db.Decimal(18,4)
+  totalPrice      Decimal @default(0) @db.Decimal(18,4)
+  note            String?
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  material      Material      @relation(fields: [materialId], references: [id])
+  receiptLines  PurchaseReceiptLine[]
+
+  @@index([purchaseOrderId])
+  @@index([materialId])
+}
+
+model PurchaseReceipt {
+  id              String   @id @default(uuid())
+  receiptNo       String   @unique
+  purchaseOrderId String
+  companyId       String
+  status          String   @default("POSTED") // POSTED / REVERSED
+  receivedAt      DateTime @default(now())
+  operatorId      String
+  note            String?
+  createdAt       DateTime @default(now())
+
+  purchaseOrder PurchaseOrder        @relation(fields: [purchaseOrderId], references: [id])
+  company       Company              @relation(fields: [companyId], references: [id])
+  operator      User                 @relation("UserPurchaseReceipts", fields: [operatorId], references: [id])
+  lines         PurchaseReceiptLine[]
+
+  @@index([companyId, receivedAt])
+  @@index([purchaseOrderId])
+}
+
+model PurchaseReceiptLine {
+  id                  String  @id @default(uuid())
+  purchaseReceiptId   String
+  purchaseOrderLineId String
+  materialId          String
+  quantity            Decimal @db.Decimal(18,4)
+  destLocationId      String?
+  batchNo             String?
+
+  receipt           PurchaseReceipt   @relation(fields: [purchaseReceiptId], references: [id])
+  purchaseOrderLine PurchaseOrderLine @relation(fields: [purchaseOrderLineId], references: [id])
+  material          Material          @relation(fields: [materialId], references: [id])
+  destLocation      StockLocation?    @relation(fields: [destLocationId], references: [id])
+
+  @@index([purchaseReceiptId])
+  @@index([materialId])
+}
+
+model PurchaseInvoice {
+  id              String   @id @default(uuid())
+  invoiceNo       String   @unique
+  purchaseOrderId String
+  supplierId      String
+  companyId       String
+  amount          Decimal  @db.Decimal(18,4)
+  subTotal        Decimal  @default(0) @db.Decimal(18,4)
+  taxAmount       Decimal  @default(0) @db.Decimal(18,4)
+  status          String   @default("UNPAID") // UNPAID / PARTIAL / PAID
+  postingStatus   EntryPostingStatus @default(DRAFT)
+  issuedDate      DateTime @default(now())
+  dueDate         DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  supplier      Partner       @relation(fields: [supplierId], references: [id])
+  company       Company       @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, status])
+  @@index([supplierId])
+}
+
+// ==========================================
 // 智能仓储与物料管理
 // ==========================================
 
@@ -284,6 +403,7 @@ model StockLocation {
   quants               StockQuant[]
   outgoingTransactions InventoryTransaction[] @relation("StockMoveSourceLocation")
   incomingTransactions InventoryTransaction[] @relation("StockMoveDestinationLocation")
+  purchaseReceiptLines PurchaseReceiptLine[]
 
   @@unique([companyId, code])
   @@index([companyId, warehouseId])
@@ -306,6 +426,8 @@ model Material {
   inventoryTransactions InventoryTransaction[]
   products              Product[]
   bomLines              BomLine[]
+  purchaseOrderLines    PurchaseOrderLine[]
+  purchaseReceiptLines  PurchaseReceiptLine[]
 }
 
 model ProductCategory {

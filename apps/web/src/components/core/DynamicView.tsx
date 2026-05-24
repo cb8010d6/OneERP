@@ -87,8 +87,13 @@ export function DynamicView({ modelName, title, externalDraft, slots }: DynamicV
     [companies, currentCompanyId],
   );
   const permissionResource = modelName.charAt(0).toLowerCase() + modelName.slice(1);
-  const canCreate = hasPermission(currentPermissions, `${permissionResource}:create`);
-  const canUpdate = hasPermission(currentPermissions, `${permissionResource}:update`);
+  const allowGenericWrite = schema?.allowGenericWrite !== false;
+  const canCreate =
+    allowGenericWrite &&
+    hasPermission(currentPermissions, `${permissionResource}:create`);
+  const canUpdate =
+    allowGenericWrite &&
+    hasPermission(currentPermissions, `${permissionResource}:update`);
   const selectedCanSave =
     selected && typeof selected.id === 'string' && selected.id.trim()
       ? canUpdate

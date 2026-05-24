@@ -12,6 +12,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ProductionModule } from './production/production.module';
 import { FinanceModule } from './finance/finance.module';
+import { PurchaseModule } from './purchase/purchase.module';
 import { LoggerMiddleware } from './core/middlewares/logger.middleware';
 import { DepartmentsModule } from './departments/departments.module';
 import { AppCacheModule } from './core/cache/cache.module';
@@ -43,6 +44,7 @@ import { KyselyModule } from './core/prisma/kysely.module';
     DashboardModule,
     ProductionModule,
     FinanceModule,
+    PurchaseModule,
     DepartmentsModule,
   ],
   controllers: [AppController],

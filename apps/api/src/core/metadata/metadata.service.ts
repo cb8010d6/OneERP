@@ -139,6 +139,233 @@ export class MetadataService {
       },
     ],
     [
+      'purchaseOrder',
+      {
+        model: 'purchaseOrder',
+        label: '采购单',
+        description: '采购订单、收货状态与应付发票关联。',
+        companyScoped: true,
+        allowGenericWrite: false,
+        fields: [
+          { name: 'purchaseNo', label: '采购单号', type: 'string' },
+          {
+            name: 'supplierId',
+            label: '供应商',
+            type: 'reference',
+            required: true,
+            reference: {
+              model: 'partner',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'supplier',
+            },
+          },
+          { name: 'status', label: '状态', type: 'string' },
+          { name: 'subTotal', label: '未税金额', type: 'number' },
+          { name: 'taxTotal', label: '税额', type: 'number' },
+          { name: 'totalAmount', label: '金额', type: 'number' },
+          { name: 'expectedDate', label: '预计到货日', type: 'date' },
+          { name: 'notes', label: '备注', type: 'text' },
+        ],
+        views: {
+          form: {
+            fields: [
+              'purchaseNo',
+              'supplierId',
+              'status',
+              'totalAmount',
+              'expectedDate',
+              'notes',
+            ],
+          },
+          list: {
+            columns: [
+              'purchaseNo',
+              'supplierId',
+              'status',
+              'subTotal',
+              'taxTotal',
+              'totalAmount',
+              'expectedDate',
+            ],
+            defaultSort: { createdAt: 'desc' },
+            searchFields: ['purchaseNo', 'status'],
+          },
+          kanban: {
+            statusField: 'status',
+            columns: [
+              { value: 'DRAFT', label: '草稿', color: 'bg-slate-50' },
+              { value: 'ORDERED', label: '已下单', color: 'bg-blue-50' },
+              {
+                value: 'PARTIAL_RECEIVED',
+                label: '部分收货',
+                color: 'bg-amber-50',
+              },
+              { value: 'RECEIVED', label: '已收货', color: 'bg-emerald-50' },
+              { value: 'CANCELLED', label: '已取消', color: 'bg-rose-50' },
+            ],
+          },
+        },
+        actions: [
+          {
+            name: 'reversePurchaseInbound',
+            label: '修正采购入库',
+            kind: 'correction',
+            tone: 'danger',
+            method: 'POST',
+            endpoint: '/inventory/posting/purchase/{purchaseNo}/reverse',
+            permission: 'inventory:post',
+            visibleWhen:
+              "eval:doc.status === 'PARTIAL_RECEIVED' || doc.status === 'RECEIVED'",
+            confirmText: '确认生成冲销出库',
+            description:
+              '用于修正已收货采购单的库存影响。系统会保留原入库流水，并生成反向出库流水。',
+            successMessage: '采购入库修正已提交',
+            fields: [
+              {
+                name: 'sourceLocationId',
+                label: '冲销库位',
+                type: 'reference',
+                reference: {
+                  model: 'stockLocation',
+                  labelField: 'name',
+                  valueField: 'id',
+                },
+              },
+              { name: 'batchNo', label: '批次号', type: 'string' },
+              {
+                name: 'note',
+                label: '修正原因',
+                type: 'text',
+                required: true,
+                placeholder: '例如：供应商退货、收货数量录入错误',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    [
+      'purchaseReceipt',
+      {
+        model: 'purchaseReceipt',
+        label: '采购收货单',
+        description: '采购收货记录与入库明细。',
+        companyScoped: true,
+        allowGenericWrite: false,
+        fields: [
+          { name: 'receiptNo', label: '收货单号', type: 'string' },
+          {
+            name: 'purchaseOrderId',
+            label: '采购单',
+            type: 'reference',
+            reference: {
+              model: 'purchaseOrder',
+              labelField: 'purchaseNo',
+              valueField: 'id',
+              relationField: 'purchaseOrder',
+            },
+          },
+          { name: 'status', label: '状态', type: 'string' },
+          { name: 'receivedAt', label: '收货时间', type: 'date' },
+          { name: 'note', label: '备注', type: 'text' },
+        ],
+        views: {
+          form: {
+            fields: [
+              'receiptNo',
+              'purchaseOrderId',
+              'status',
+              'receivedAt',
+              'note',
+            ],
+          },
+          list: {
+            columns: ['receiptNo', 'purchaseOrderId', 'status', 'receivedAt'],
+            defaultSort: { createdAt: 'desc' },
+            searchFields: ['receiptNo', 'status'],
+          },
+        },
+      },
+    ],
+    [
+      'purchaseInvoice',
+      {
+        model: 'purchaseInvoice',
+        label: '应付发票',
+        description: '采购应付账款与付款状态。',
+        companyScoped: true,
+        allowGenericWrite: false,
+        fields: [
+          { name: 'invoiceNo', label: '发票号', type: 'string' },
+          {
+            name: 'purchaseOrderId',
+            label: '采购单',
+            type: 'reference',
+            reference: {
+              model: 'purchaseOrder',
+              labelField: 'purchaseNo',
+              valueField: 'id',
+              relationField: 'purchaseOrder',
+            },
+          },
+          {
+            name: 'supplierId',
+            label: '供应商',
+            type: 'reference',
+            reference: {
+              model: 'partner',
+              labelField: 'name',
+              valueField: 'id',
+              relationField: 'supplier',
+            },
+          },
+          { name: 'status', label: '状态', type: 'string' },
+          { name: 'postingStatus', label: '过账状态', type: 'string' },
+          { name: 'subTotal', label: '未税金额', type: 'number' },
+          { name: 'taxAmount', label: '税额', type: 'number' },
+          { name: 'amount', label: '金额', type: 'number' },
+          { name: 'dueDate', label: '到期日', type: 'date' },
+        ],
+        views: {
+          form: {
+            fields: [
+              'invoiceNo',
+              'purchaseOrderId',
+              'supplierId',
+              'status',
+              'postingStatus',
+              'amount',
+              'dueDate',
+            ],
+          },
+          list: {
+            columns: [
+              'invoiceNo',
+              'purchaseOrderId',
+              'supplierId',
+              'status',
+              'postingStatus',
+              'subTotal',
+              'taxAmount',
+              'amount',
+              'dueDate',
+            ],
+            defaultSort: { createdAt: 'desc' },
+            searchFields: ['invoiceNo', 'status', 'postingStatus'],
+          },
+          kanban: {
+            statusField: 'status',
+            columns: [
+              { value: 'UNPAID', label: '未付款', color: 'bg-rose-50' },
+              { value: 'PARTIAL', label: '部分付款', color: 'bg-amber-50' },
+              { value: 'PAID', label: '已付款', color: 'bg-emerald-50' },
+            ],
+          },
+        },
+      },
+    ],
+    [
       'taxCode',
       {
         model: 'taxCode',

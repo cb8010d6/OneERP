@@ -88,6 +88,7 @@ export interface UiSchema {
   model: string;
   label: string;
   companyScoped?: boolean;
+  allowGenericWrite?: boolean;
   description?: string;
   fields: UiFieldSchema[];
   views: {

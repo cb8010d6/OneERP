@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Building2, Package, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table } from 'lucide-react';
+import { Building2, Package, PackageCheck, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
@@ -34,6 +34,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const navItems = [
     { icon: LayoutDashboard, label: t('navOverview'), href: '/dashboard' },
     { icon: ShoppingCart, label: t('navSales'), href: '/dashboard/sales', permission: 'order:read' },
+    { icon: PackageCheck, label: t('navPurchase'), href: '/dashboard/purchase', permission: 'purchase:read' },
     { icon: Package, label: t('navInventory'), href: '/dashboard/inventory', permission: 'inventory:read' },
     { icon: FileText, label: t('navFiles'), href: '/dashboard/files', permission: 'fileRecord:read' },
     { icon: Users, label: t('navCustomers'), href: '/dashboard/customers', permission: 'partner:read' },
