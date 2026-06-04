@@ -12,6 +12,7 @@ import { ReceivablesAgingView } from "./ReceivablesAgingView";
 import { CreditNotePanel } from "./CreditNotePanel";
 import { InventoryValuationView } from "./InventoryValuationView";
 import { AccountingPeriodsPanel } from "./AccountingPeriodsPanel";
+import { BankReconciliationPanel } from "./BankReconciliationPanel";
 import {
   FileText,
   BarChart3,
@@ -19,6 +20,7 @@ import {
   CalendarClock,
   PackageSearch,
   LockKeyhole,
+  Landmark,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useI18n } from "@/lib/i18n";
@@ -27,7 +29,13 @@ export default function FinancePageClient() {
   const { t } = useI18n();
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [activeTab, setActiveTab] = useState<
-    "invoices" | "trial-balance" | "aging" | "inventory" | "periods" | "dlq"
+    | "invoices"
+    | "trial-balance"
+    | "aging"
+    | "inventory"
+    | "bank"
+    | "periods"
+    | "dlq"
   >("invoices");
 
   const preview = useMemo(() => {
@@ -107,6 +115,18 @@ export default function FinancePageClient() {
             {t("financePeriodsTab")}
           </button>
           <button
+            onClick={() => setActiveTab("bank")}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === "bank"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700",
+            )}
+          >
+            <Landmark className="h-4 w-4" />
+            {t("financeBankReconciliationTab")}
+          </button>
+          <button
             onClick={() => setActiveTab("dlq")}
             className={clsx(
               "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
@@ -174,6 +194,10 @@ export default function FinancePageClient() {
       ) : activeTab === "periods" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <AccountingPeriodsPanel />
+        </div>
+      ) : activeTab === "bank" ? (
+        <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+          <BankReconciliationPanel />
         </div>
       ) : (
         <FinanceDlqCenter />

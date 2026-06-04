@@ -26,6 +26,8 @@ import {
   ApplyReceivablePaymentDto,
   CreateCreditNoteDto,
   CreateCustomerRefundDto,
+  ImportBankStatementLinesDto,
+  MatchBankStatementLineDto,
   PostInvoiceDto,
 } from './dto/finance.dto';
 import { UpdateFinanceAccountMappingsDto } from './dto/finance-account-mapping.dto';
@@ -230,6 +232,43 @@ export class FinanceController {
   @ApiOperation({ summary: '未分配客户收款' })
   async getUnappliedPayments(@CurrentCompany() companyId: string) {
     return this.financeService.getUnappliedPayments(companyId);
+  }
+
+  @Post('bank-statements/import')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '导入银行流水' })
+  async importBankStatementLines(
+    @CurrentCompany() companyId: string,
+    @Body() dto: ImportBankStatementLinesDto,
+  ) {
+    return this.financeService.importBankStatementLines(companyId, dto);
+  }
+
+  @Get('bank-statements')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '查看银行流水与匹配状态' })
+  async getBankStatementLines(
+    @CurrentCompany() companyId: string,
+    @Query('status') status?: string,
+  ) {
+    return this.financeService.getBankStatementLines(companyId, status);
+  }
+
+  @Post('bank-statements/:id/match')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '匹配银行流水到客户收款或供应商付款' })
+  async matchBankStatementLine(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') bankStatementLineId: string,
+    @Body() dto: MatchBankStatementLineDto,
+  ) {
+    return this.financeService.matchBankStatementLine(
+      companyId,
+      bankStatementLineId,
+      dto,
+      user.id,
+    );
   }
 
   @Post('credit-notes')

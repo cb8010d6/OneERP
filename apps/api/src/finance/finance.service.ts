@@ -6,11 +6,17 @@ import {
   Optional,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { EntryPostingStatus, Prisma } from '@prisma/client';
+import {
+  BankStatementLineStatus,
+  EntryPostingStatus,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateCreditNoteDto,
   CreateInvoiceDto,
+  ImportBankStatementLinesDto,
+  MatchBankStatementLineDto,
   CreatePaymentDto,
   CreateReceivablePaymentDto,
   ApplyReceivablePaymentDto,
@@ -633,6 +639,171 @@ export class FinanceService {
       .sort((a, b) => b.unappliedAmount - a.unappliedAmount);
 
     return { rows };
+  }
+
+  async importBankStatementLines(
+    companyId: string,
+    dto: ImportBankStatementLinesDto,
+  ) {
+    const lines = (dto.lines ?? []).slice(0, 200);
+    if (lines.length === 0) {
+      throw new BadRequestException('请提供银行流水');
+    }
+
+    const results: Array<{
+      externalRef?: string | null;
+      status: 'IMPORTED' | 'SKIPPED';
+      id?: string;
+      message?: string;
+    }> = [];
+
+    for (const line of lines) {
+      const transactionDate = new Date(line.transactionDate);
+      if (Number.isNaN(transactionDate.getTime())) {
+        throw new BadRequestException('银行流水交易日期无效');
+      }
+      const amount = this.round2(Number(line.amount));
+      if (amount === 0) {
+        throw new BadRequestException('银行流水金额不能为0');
+      }
+      const externalRef = line.externalRef?.trim() || null;
+      if (externalRef) {
+        const existing = await this.prisma.bankStatementLine.findUnique({
+          where: { companyId_externalRef: { companyId, externalRef } },
+          select: { id: true },
+        });
+        if (existing) {
+          results.push({
+            externalRef,
+            status: 'SKIPPED',
+            id: existing.id,
+            message: '银行流水已存在',
+          });
+          continue;
+        }
+      }
+
+      const created = await this.prisma.bankStatementLine.create({
+        data: {
+          companyId,
+          bankAccount: line.bankAccount?.trim() || null,
+          transactionDate,
+          description: line.description?.trim() || null,
+          counterparty: line.counterparty?.trim() || null,
+          amount,
+          externalRef,
+          status: BankStatementLineStatus.UNMATCHED,
+        },
+      });
+      results.push({
+        externalRef,
+        status: 'IMPORTED',
+        id: created.id,
+      });
+    }
+
+    return {
+      total: lines.length,
+      imported: results.filter((result) => result.status === 'IMPORTED').length,
+      skipped: results.filter((result) => result.status === 'SKIPPED').length,
+      results,
+    };
+  }
+
+  async getBankStatementLines(companyId: string, status?: string) {
+    const resolvedStatus =
+      status === BankStatementLineStatus.MATCHED ||
+      status === BankStatementLineStatus.UNMATCHED
+        ? status
+        : undefined;
+    const rows = await this.prisma.bankStatementLine.findMany({
+      where: {
+        companyId,
+        status: resolvedStatus,
+      },
+      include: {
+        payment: { include: { partner: { select: { id: true, name: true } } } },
+        supplierPayment: {
+          include: { supplier: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }],
+      take: 200,
+    });
+
+    return { rows };
+  }
+
+  async matchBankStatementLine(
+    companyId: string,
+    bankStatementLineId: string,
+    dto: MatchBankStatementLineDto,
+    operatorId?: string,
+  ) {
+    const line = await this.prisma.bankStatementLine.findFirst({
+      where: { id: bankStatementLineId, companyId },
+    });
+    if (!line) {
+      throw new NotFoundException('银行流水不存在');
+    }
+    if (line.status === BankStatementLineStatus.MATCHED) {
+      throw new BadRequestException('银行流水已匹配');
+    }
+
+    const amount = this.round2(Number(line.amount));
+    if (dto.targetType === 'CUSTOMER_PAYMENT') {
+      const payment = await this.prisma.payment.findFirst({
+        where: { id: dto.targetId, companyId },
+        select: { id: true, amount: true, postingStatus: true },
+      });
+      if (!payment) {
+        throw new NotFoundException('客户收款不存在');
+      }
+      if (payment.postingStatus !== EntryPostingStatus.POSTED) {
+        throw new BadRequestException('客户收款尚未过账，不能匹配银行流水');
+      }
+      if (amount <= 0 || this.round2(Number(payment.amount)) !== amount) {
+        throw new BadRequestException('银行流水金额与客户收款金额不一致');
+      }
+      return this.prisma.bankStatementLine.update({
+        where: { id: line.id },
+        data: {
+          status: BankStatementLineStatus.MATCHED,
+          paymentId: payment.id,
+          supplierPaymentId: null,
+          matchedAt: new Date(),
+          matchedBy: operatorId ?? null,
+        },
+      });
+    }
+
+    const supplierPayment = await this.prisma.supplierPayment.findFirst({
+      where: { id: dto.targetId, companyId },
+      select: { id: true, amount: true, postingStatus: true },
+    });
+    if (!supplierPayment) {
+      throw new NotFoundException('供应商付款不存在');
+    }
+    if (supplierPayment.postingStatus !== EntryPostingStatus.POSTED) {
+      throw new BadRequestException('供应商付款尚未过账，不能匹配银行流水');
+    }
+    if (
+      amount >= 0 ||
+      this.round2(Number(supplierPayment.amount)) !==
+        this.round2(Math.abs(amount))
+    ) {
+      throw new BadRequestException('银行流水金额与供应商付款金额不一致');
+    }
+    return this.prisma.bankStatementLine.update({
+      where: { id: line.id },
+      data: {
+        status: BankStatementLineStatus.MATCHED,
+        paymentId: null,
+        supplierPaymentId: supplierPayment.id,
+        matchedAt: new Date(),
+        matchedBy: operatorId ?? null,
+      },
+    });
   }
 
   async applyReceivablePayment(

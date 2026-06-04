@@ -1,4 +1,5 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BankStatementLineStatus } from '@prisma/client';
 import { FinanceService } from './finance.service';
 
 type MockPrisma = {
@@ -13,6 +14,14 @@ type MockPrisma = {
     update: jest.Mock;
   };
   payment: { create: jest.Mock; findMany: jest.Mock; findFirst: jest.Mock };
+  bankStatementLine: {
+    create: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+    findUnique: jest.Mock;
+    update: jest.Mock;
+  };
+  supplierPayment: { findFirst: jest.Mock };
   paymentAllocation: { create: jest.Mock };
   creditNote: {
     create: jest.Mock;
@@ -57,6 +66,14 @@ describe('FinanceService', () => {
       update: jest.fn(),
     },
     payment: { create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn() },
+    bankStatementLine: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    },
+    supplierPayment: { findFirst: jest.fn() },
     paymentAllocation: { create: jest.fn() },
     creditNote: {
       create: jest.fn(),
@@ -1185,6 +1202,107 @@ describe('FinanceService', () => {
           operatorId: 'u1',
         }),
       );
+    });
+  });
+
+  describe('bank statement reconciliation', () => {
+    it('imports bank statement lines and skips duplicate external refs', async () => {
+      prisma.bankStatementLine.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ id: 'bsl-existing' });
+      prisma.bankStatementLine.create.mockResolvedValue({
+        id: 'bsl-1',
+      });
+
+      const result = await service.importBankStatementLines('c1', {
+        lines: [
+          {
+            transactionDate: '2026-06-04',
+            amount: 100,
+            description: '客户回款',
+            counterparty: '客户A',
+            externalRef: 'BANK-1',
+          },
+          {
+            transactionDate: '2026-06-04',
+            amount: 100,
+            externalRef: 'BANK-1',
+          },
+        ],
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          total: 2,
+          imported: 1,
+          skipped: 1,
+        }),
+      );
+      expect(prisma.bankStatementLine.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          companyId: 'c1',
+          amount: 100,
+          externalRef: 'BANK-1',
+          status: BankStatementLineStatus.UNMATCHED,
+        }) as unknown,
+      });
+    });
+
+    it('matches a positive bank line to a posted customer payment', async () => {
+      prisma.bankStatementLine.findFirst.mockResolvedValue({
+        id: 'bsl-1',
+        amount: 100,
+        status: BankStatementLineStatus.UNMATCHED,
+      });
+      prisma.payment.findFirst.mockResolvedValue({
+        id: 'pay-1',
+        amount: 100,
+        postingStatus: 'POSTED',
+      });
+      prisma.bankStatementLine.update.mockResolvedValue({
+        id: 'bsl-1',
+        status: BankStatementLineStatus.MATCHED,
+      });
+
+      const result = await service.matchBankStatementLine(
+        'c1',
+        'bsl-1',
+        { targetType: 'CUSTOMER_PAYMENT', targetId: 'pay-1' },
+        'u1',
+      );
+
+      expect(result.status).toBe(BankStatementLineStatus.MATCHED);
+      expect(prisma.bankStatementLine.update).toHaveBeenCalledWith({
+        where: { id: 'bsl-1' },
+        data: expect.objectContaining({
+          status: BankStatementLineStatus.MATCHED,
+          paymentId: 'pay-1',
+          supplierPaymentId: null,
+          matchedBy: 'u1',
+        }) as unknown,
+      });
+    });
+
+    it('rejects supplier payment matching when bank line is not an outflow', async () => {
+      prisma.bankStatementLine.findFirst.mockResolvedValue({
+        id: 'bsl-1',
+        amount: 100,
+        status: BankStatementLineStatus.UNMATCHED,
+      });
+      prisma.supplierPayment.findFirst.mockResolvedValue({
+        id: 'sp-1',
+        amount: 100,
+        postingStatus: 'POSTED',
+      });
+
+      await expect(
+        service.matchBankStatementLine(
+          'c1',
+          'bsl-1',
+          { targetType: 'SUPPLIER_PAYMENT', targetId: 'sp-1' },
+          'u1',
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 });

@@ -49,6 +49,7 @@ model Company {
   paymentAllocations         PaymentAllocation[]
   supplierPayments           SupplierPayment[]
   supplierPaymentAllocations SupplierPaymentAllocation[]
+  bankStatementLines         BankStatementLine[]
   creditNotes                CreditNote[]
   customerRefunds            CustomerRefund[]
   eventDlqRecords            EventDlq[]
@@ -101,6 +102,11 @@ enum EntryPostingStatus {
 enum AccountingPeriodStatus {
   OPEN
   CLOSED
+}
+
+enum BankStatementLineStatus {
+  UNMATCHED
+  MATCHED
 }
 
 model User {
@@ -929,6 +935,7 @@ model SupplierPayment {
   supplier    Partner                     @relation(fields: [supplierId], references: [id])
   company     Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   allocations SupplierPaymentAllocation[]
+  bankStatementLines BankStatementLine[]
 
   @@index([companyId, paymentDate])
   @@index([supplierId, paymentDate])
@@ -968,6 +975,7 @@ model Payment {
   partner     Partner             @relation(fields: [partnerId], references: [id])
   company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
   allocations PaymentAllocation[]
+  bankStatementLines BankStatementLine[]
 
   @@index([companyId, paymentDate])
   @@index([partnerId, paymentDate])
@@ -990,6 +998,33 @@ model PaymentAllocation {
   @@unique([paymentId, invoiceId])
   @@index([companyId, invoiceId])
   @@index([invoiceId])
+}
+
+model BankStatementLine {
+  id                String                  @id @default(uuid())
+  companyId         String
+  bankAccount       String?
+  transactionDate   DateTime
+  description       String?
+  counterparty      String?
+  amount            Decimal                 @db.Decimal(18, 4)
+  externalRef       String?
+  status            BankStatementLineStatus @default(UNMATCHED)
+  paymentId         String?
+  supplierPaymentId String?
+  matchedAt         DateTime?
+  matchedBy         String?
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  payment         Payment?         @relation(fields: [paymentId], references: [id], onDelete: SetNull)
+  supplierPayment SupplierPayment? @relation(fields: [supplierPaymentId], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, externalRef])
+  @@index([companyId, status, transactionDate])
+  @@index([paymentId])
+  @@index([supplierPaymentId])
 }
 
 model Account {

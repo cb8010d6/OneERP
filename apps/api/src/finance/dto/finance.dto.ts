@@ -192,3 +192,57 @@ export class CreateCustomerRefundDto {
   @IsString()
   note?: string;
 }
+
+export class ImportBankStatementLineDto {
+  @ApiProperty({ description: '银行账号或账户名称', required: false })
+  @IsOptional()
+  @IsString()
+  bankAccount?: string;
+
+  @ApiProperty({ description: '交易日期 (ISO string)' })
+  @IsString()
+  @IsNotEmpty()
+  transactionDate!: string;
+
+  @ApiProperty({ description: '交易摘要', required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ description: '交易对方', required: false })
+  @IsOptional()
+  @IsString()
+  counterparty?: string;
+
+  @ApiProperty({ description: '交易金额，收入为正，支出为负' })
+  @IsNumber()
+  amount!: number;
+
+  @ApiProperty({ description: '银行流水唯一参考号', required: false })
+  @IsOptional()
+  @IsString()
+  externalRef?: string;
+}
+
+export class ImportBankStatementLinesDto {
+  @ApiProperty({ type: [ImportBankStatementLineDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImportBankStatementLineDto)
+  lines!: ImportBankStatementLineDto[];
+}
+
+export class MatchBankStatementLineDto {
+  @ApiProperty({
+    description: '匹配目标类型',
+    enum: ['CUSTOMER_PAYMENT', 'SUPPLIER_PAYMENT'],
+  })
+  @IsString()
+  @IsIn(['CUSTOMER_PAYMENT', 'SUPPLIER_PAYMENT'])
+  targetType!: 'CUSTOMER_PAYMENT' | 'SUPPLIER_PAYMENT';
+
+  @ApiProperty({ description: '客户收款 ID 或供应商付款 ID' })
+  @IsString()
+  @IsNotEmpty()
+  targetId!: string;
+}
