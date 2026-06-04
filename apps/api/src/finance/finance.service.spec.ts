@@ -1322,6 +1322,77 @@ describe('FinanceService', () => {
       );
     });
 
+    it('auto matches only bank lines with a unique candidate', async () => {
+      prisma.bankStatementLine.findMany.mockResolvedValue([
+        {
+          id: 'bsl-1',
+          amount: 100,
+          status: BankStatementLineStatus.UNMATCHED,
+          transactionDate: new Date('2026-06-04'),
+        },
+        {
+          id: 'bsl-2',
+          amount: 200,
+          status: BankStatementLineStatus.UNMATCHED,
+          transactionDate: new Date('2026-06-05'),
+        },
+      ]);
+      prisma.payment.findMany
+        .mockResolvedValueOnce([
+          {
+            id: 'pay-1',
+            amount: 100,
+            paymentDate: new Date('2026-06-04'),
+            partner: { name: '客户A' },
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            id: 'pay-2',
+            amount: 200,
+            paymentDate: new Date('2026-06-05'),
+            partner: { name: '客户B' },
+          },
+          {
+            id: 'pay-3',
+            amount: 200,
+            paymentDate: new Date('2026-06-05'),
+            partner: { name: '客户C' },
+          },
+        ]);
+      prisma.bankStatementLine.findFirst.mockResolvedValue({
+        id: 'bsl-1',
+        amount: 100,
+        status: BankStatementLineStatus.UNMATCHED,
+      });
+      prisma.payment.findFirst.mockResolvedValue({
+        id: 'pay-1',
+        amount: 100,
+        postingStatus: 'POSTED',
+      });
+      prisma.bankStatementLine.update.mockResolvedValue({
+        id: 'bsl-1',
+        status: BankStatementLineStatus.MATCHED,
+      });
+
+      const result = await service.autoMatchBankStatementLines('c1', 'u1');
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          total: 2,
+          matched: 1,
+          skipped: 1,
+        }),
+      );
+      expect(prisma.bankStatementLine.update).toHaveBeenCalledWith({
+        where: { id: 'bsl-1' },
+        data: expect.objectContaining({
+          paymentId: 'pay-1',
+          matchedBy: 'u1',
+        }) as unknown,
+      });
+    });
+
     it('rejects supplier payment matching when bank line is not an outflow', async () => {
       prisma.bankStatementLine.findFirst.mockResolvedValue({
         id: 'bsl-1',

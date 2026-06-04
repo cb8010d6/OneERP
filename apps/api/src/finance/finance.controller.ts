@@ -254,6 +254,16 @@ export class FinanceController {
     return this.financeService.getBankStatementLines(companyId, status);
   }
 
+  @Post('bank-statements/auto-match')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '自动匹配唯一候选银行流水' })
+  async autoMatchBankStatementLines(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+  ) {
+    return this.financeService.autoMatchBankStatementLines(companyId, user.id);
+  }
+
   @Post('bank-statements/:id/match')
   @RequirePermissions(Permission.FinancePost)
   @ApiOperation({ summary: '匹配银行流水到客户收款或供应商付款' })

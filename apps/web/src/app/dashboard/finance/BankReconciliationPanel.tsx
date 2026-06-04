@@ -102,6 +102,7 @@ export function BankReconciliationPanel() {
   );
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [autoMatching, setAutoMatching] = useState(false);
   const [matchingId, setMatchingId] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -202,6 +203,25 @@ export function BankReconciliationPanel() {
     [load, matchDrafts, t],
   );
 
+  const autoMatch = useCallback(async () => {
+    setAutoMatching(true);
+    setMessage("");
+    setError("");
+    try {
+      const response = await api.post<{ matched: number; skipped: number }>(
+        "/finance/bank-statements/auto-match",
+      );
+      setMessage(
+        `${t("bankReconciliationAutoMatched")}: ${response.data.matched}, ${t("bankReconciliationSkipped")}: ${response.data.skipped}`,
+      );
+      await load();
+    } catch {
+      setError(t("bankReconciliationAutoMatchFailed"));
+    } finally {
+      setAutoMatching(false);
+    }
+  }, [load, t]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -225,6 +245,19 @@ export function BankReconciliationPanel() {
             <RefreshCw className="h-4 w-4" />
           )}
           {t("refresh")}
+        </button>
+        <button
+          type="button"
+          onClick={() => void autoMatch()}
+          disabled={autoMatching}
+          className="inline-flex items-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
+        >
+          {autoMatching ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4" />
+          )}
+          {t("bankReconciliationAutoMatch")}
         </button>
       </div>
 

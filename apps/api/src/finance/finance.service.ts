@@ -794,6 +794,60 @@ export class FinanceService {
     }));
   }
 
+  async autoMatchBankStatementLines(companyId: string, operatorId?: string) {
+    const lines = await this.prisma.bankStatementLine.findMany({
+      where: { companyId, status: BankStatementLineStatus.UNMATCHED },
+      orderBy: [{ transactionDate: 'asc' }, { createdAt: 'asc' }],
+      take: 200,
+    });
+    const results: Array<{
+      bankStatementLineId: string;
+      status: 'MATCHED' | 'SKIPPED';
+      targetType?: 'CUSTOMER_PAYMENT' | 'SUPPLIER_PAYMENT';
+      targetId?: string;
+      message?: string;
+    }> = [];
+
+    for (const line of lines) {
+      const candidates = await this.findBankStatementMatchCandidates(
+        companyId,
+        line,
+      );
+      if (candidates.length !== 1) {
+        results.push({
+          bankStatementLineId: line.id,
+          status: 'SKIPPED',
+          message: candidates.length === 0 ? '无匹配候选' : '存在多个候选',
+        });
+        continue;
+      }
+
+      const [candidate] = candidates;
+      await this.matchBankStatementLine(
+        companyId,
+        line.id,
+        {
+          targetType: candidate.targetType,
+          targetId: candidate.targetId,
+        },
+        operatorId,
+      );
+      results.push({
+        bankStatementLineId: line.id,
+        status: 'MATCHED',
+        targetType: candidate.targetType,
+        targetId: candidate.targetId,
+      });
+    }
+
+    return {
+      total: lines.length,
+      matched: results.filter((result) => result.status === 'MATCHED').length,
+      skipped: results.filter((result) => result.status === 'SKIPPED').length,
+      results,
+    };
+  }
+
   async matchBankStatementLine(
     companyId: string,
     bankStatementLineId: string,
