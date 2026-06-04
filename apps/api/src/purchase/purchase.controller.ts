@@ -134,6 +134,13 @@ export class PurchaseController {
     return this.purchaseService.listSupplierPayments(companyId);
   }
 
+  @Get('open-payables')
+  @RequirePermissions(Permission.PurchaseRead)
+  @ApiOperation({ summary: '获取未结应付发票' })
+  async listOpenPayables(@CurrentCompany() companyId: string) {
+    return this.purchaseService.listOpenPayables(companyId);
+  }
+
   @Post('supplier-payments')
   @RequirePermissions(Permission.PurchaseInvoice)
   @ApiOperation({ summary: '创建供应商付款草稿并分配核销到应付发票' })

@@ -8,6 +8,7 @@ import { FinanceDlqCenter } from "./FinanceDlqCenter";
 import { FinanceActionsPanel } from "./FinanceActionsPanel";
 import { FinanceAccountMappingsPanel } from "./FinanceAccountMappingsPanel";
 import { ReceivablePaymentWorkbench } from "./ReceivablePaymentWorkbench";
+import { PayablePaymentWorkbench } from "./PayablePaymentWorkbench";
 import { ReceivablesAgingView } from "./ReceivablesAgingView";
 import { CreditNotePanel } from "./CreditNotePanel";
 import { InventoryValuationView } from "./InventoryValuationView";
@@ -21,6 +22,7 @@ import {
   PackageSearch,
   LockKeyhole,
   Landmark,
+  BanknoteArrowUp,
 } from "lucide-react";
 import { clsx } from "clsx";
 import { useI18n } from "@/lib/i18n";
@@ -30,6 +32,7 @@ export default function FinancePageClient() {
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
   const [activeTab, setActiveTab] = useState<
     | "invoices"
+    | "payables"
     | "trial-balance"
     | "aging"
     | "inventory"
@@ -77,6 +80,18 @@ export default function FinancePageClient() {
           >
             <BarChart3 className="h-4 w-4" />
             {t("financeTrialBalance")}
+          </button>
+          <button
+            onClick={() => setActiveTab("payables")}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === "payables"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700",
+            )}
+          >
+            <BanknoteArrowUp className="h-4 w-4" />
+            {t("financePayablesTab")}
           </button>
           <button
             onClick={() => setActiveTab("aging")}
@@ -179,6 +194,10 @@ export default function FinancePageClient() {
       ) : activeTab === "trial-balance" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <TrialBalanceView />
+        </div>
+      ) : activeTab === "payables" ? (
+        <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+          <PayablePaymentWorkbench />
         </div>
       ) : activeTab === "aging" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">

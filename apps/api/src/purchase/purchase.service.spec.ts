@@ -558,6 +558,68 @@ describe('PurchaseService', () => {
     );
   });
 
+  it('lists only open payables with posted credits and payments applied', async () => {
+    const { service, prisma } = createService();
+    prisma.purchaseInvoice.findMany.mockResolvedValue([
+      {
+        id: 'pi-1',
+        invoiceNo: 'PI-001',
+        purchaseOrderId: 'po-1',
+        supplierId: 'supplier-1',
+        issuedDate: new Date('2026-06-01'),
+        dueDate: new Date('2026-06-10'),
+        amount: new Decimal(1000),
+        status: 'PARTIAL',
+        supplier: { id: 'supplier-1', name: '供应商A' },
+        purchaseOrder: { id: 'po-1', purchaseNo: 'PO-001' },
+        supplierCreditNotes: [
+          { amount: new Decimal(100), postingStatus: 'POSTED' },
+        ],
+        supplierPaymentAllocations: [{ amount: new Decimal(250) }],
+      },
+      {
+        id: 'pi-2',
+        invoiceNo: 'PI-002',
+        purchaseOrderId: 'po-2',
+        supplierId: 'supplier-2',
+        issuedDate: new Date('2026-06-02'),
+        dueDate: null,
+        amount: new Decimal(300),
+        status: 'PAID',
+        supplier: { id: 'supplier-2', name: '供应商B' },
+        purchaseOrder: { id: 'po-2', purchaseNo: 'PO-002' },
+        supplierCreditNotes: [],
+        supplierPaymentAllocations: [{ amount: new Decimal(300) }],
+      },
+    ]);
+
+    const result = await service.listOpenPayables('c1');
+
+    expect(prisma.purchaseInvoice.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyId: 'c1',
+          postingStatus: 'POSTED',
+          status: { in: ['UNPAID', 'PARTIAL'] },
+        }) as unknown,
+      }),
+    );
+    expect(result.rows).toEqual([
+      expect.objectContaining({
+        purchaseInvoiceId: 'pi-1',
+        invoiceNo: 'PI-001',
+        purchaseNo: 'PO-001',
+        supplierId: 'supplier-1',
+        supplierName: '供应商A',
+        amount: 1000,
+        creditedAmount: 100,
+        paidAmount: 250,
+        openAmount: 650,
+        status: 'PARTIAL',
+      }),
+    ]);
+  });
+
   it('rejects supplier credit note when purchase return belongs to another order', async () => {
     const { service, prisma } = createService();
     prisma.purchaseInvoice.findFirst.mockResolvedValue({

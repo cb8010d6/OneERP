@@ -497,6 +497,73 @@ export class PurchaseService {
     });
   }
 
+  async listOpenPayables(companyId: string) {
+    const invoices = await this.prisma.purchaseInvoice.findMany({
+      where: {
+        companyId,
+        postingStatus: EntryPostingStatus.POSTED,
+        status: { in: ['UNPAID', 'PARTIAL'] },
+      },
+      include: {
+        supplier: { select: { id: true, name: true } },
+        purchaseOrder: { select: { id: true, purchaseNo: true } },
+        supplierCreditNotes: {
+          where: { postingStatus: EntryPostingStatus.POSTED },
+          select: { amount: true, postingStatus: true },
+        },
+        supplierPaymentAllocations: {
+          where: {
+            supplierPayment: { postingStatus: EntryPostingStatus.POSTED },
+          },
+          select: { amount: true },
+        },
+      },
+      orderBy: [{ dueDate: 'asc' }, { issuedDate: 'asc' }],
+      take: 500,
+    });
+
+    const rows = invoices
+      .map((invoice) => {
+        const amount = this.money(invoice.amount);
+        const creditedAmount = this.postedSupplierCreditAmount(
+          invoice.supplierCreditNotes,
+        );
+        const paidAmount = this.postedSupplierPaymentAmount(
+          invoice.supplierPaymentAllocations,
+        );
+        const openAmount = this.purchaseInvoiceOpenAmount(invoice);
+        const dueDate = invoice.dueDate ?? null;
+        const daysOverdue = dueDate
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() - dueDate.getTime()) / (1000 * 60 * 60 * 24),
+              ),
+            )
+          : 0;
+
+        return {
+          purchaseInvoiceId: invoice.id,
+          invoiceNo: invoice.invoiceNo,
+          purchaseOrderId: invoice.purchaseOrderId,
+          purchaseNo: invoice.purchaseOrder.purchaseNo,
+          supplierId: invoice.supplierId,
+          supplierName: invoice.supplier.name,
+          issuedDate: invoice.issuedDate.toISOString(),
+          dueDate: dueDate?.toISOString() ?? null,
+          daysOverdue,
+          amount: amount.toNumber(),
+          creditedAmount: creditedAmount.toNumber(),
+          paidAmount: paidAmount.toNumber(),
+          openAmount: openAmount.toNumber(),
+          status: invoice.status,
+        };
+      })
+      .filter((row) => row.openAmount > 0);
+
+    return { rows };
+  }
+
   async createSupplierPayment(
     companyId: string,
     dto: CreateSupplierPaymentDto,
