@@ -127,6 +127,78 @@ export class AuditService {
     };
   }
 
+  async listActionLogs(
+    companyId: string,
+    action: string,
+    options?: {
+      entity?: string;
+      limit?: number;
+      startDate?: string;
+      endDate?: string;
+      userId?: string;
+      status?: 'POSTED' | 'FAILED' | 'SKIPPED';
+    },
+  ) {
+    const limit = Math.min(Math.max(Number(options?.limit ?? 20), 1), 100);
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (options?.startDate) {
+      createdAt.gte = new Date(options.startDate);
+    }
+    if (options?.endDate) {
+      createdAt.lte = new Date(options.endDate);
+    }
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        companyId,
+        action,
+        ...(options?.entity ? { entity: options.entity } : {}),
+        ...(options?.userId ? { userId: options.userId } : {}),
+        ...(Object.keys(createdAt).length ? { createdAt } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+      take: limit,
+    });
+    const status = options?.status;
+    const filteredLogs = status
+      ? logs.filter((item) => this.auditDetailsHasStatus(item.details, status))
+      : logs;
+
+    return {
+      action,
+      events: filteredLogs.map((item) => ({
+        id: item.id,
+        action: item.action,
+        entity: item.entity,
+        entityId: item.entityId,
+        createdAt: item.createdAt,
+        user: item.user,
+        details: item.details,
+      })),
+    };
+  }
+
+  private auditDetailsHasStatus(
+    details: Prisma.JsonValue,
+    status: 'POSTED' | 'FAILED' | 'SKIPPED',
+  ) {
+    if (!this.isRecord(details)) {
+      return false;
+    }
+    const key =
+      status === 'POSTED'
+        ? 'posted'
+        : status === 'FAILED'
+          ? 'failed'
+          : 'skipped';
+    return Number(details[key] ?? 0) > 0;
+  }
+
   private buildCrudDetails(payload: CrudAuditPayload) {
     if (payload.action === 'CRUD_CREATE') {
       return {

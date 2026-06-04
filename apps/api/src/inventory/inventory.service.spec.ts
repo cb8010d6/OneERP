@@ -29,10 +29,22 @@ type MockPrisma = {
     count: jest.Mock;
     findMany: jest.Mock;
   };
+  inventoryReturnDocument: {
+    findMany: jest.Mock;
+    findUnique: jest.Mock;
+    upsert: jest.Mock;
+  };
   $transaction: jest.Mock;
 };
 
 type MockTx = {
+  material: {
+    findFirst: jest.Mock;
+  };
+  materialCost: {
+    findUnique: jest.Mock;
+    upsert: jest.Mock;
+  };
   stockQuant: {
     updateMany: jest.Mock;
     findMany: jest.Mock;
@@ -74,10 +86,22 @@ describe('InventoryService', () => {
       count: jest.fn(),
       findMany: jest.fn(),
     },
+    inventoryReturnDocument: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
   const tx: MockTx = {
+    material: {
+      findFirst: jest.fn(),
+    },
+    materialCost: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+    },
     stockQuant: {
       updateMany: jest.fn(),
       findMany: jest.fn(),
@@ -107,11 +131,14 @@ describe('InventoryService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    kyselyService.withTenant.mockReset();
     prisma.$transaction.mockImplementation(
       (callback: (trx: MockTx) => unknown) => callback(tx),
     );
     tx.stockQuant.aggregate.mockResolvedValue({ _sum: { quantity: 10 } });
     tx.stockQuant.count.mockResolvedValue(1);
+    tx.material.findFirst.mockResolvedValue({ unitPrice: 10 });
+    tx.materialCost.findUnique.mockResolvedValue(null);
     service = new InventoryService(
       prisma as unknown as ConstructorParameters<typeof InventoryService>[0],
       kyselyService as unknown as ConstructorParameters<
@@ -129,6 +156,42 @@ describe('InventoryService', () => {
     await expect(
       service.reverseSaleOrderShipment('c1', 'o1', {}, 'u1'),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('returns realtime ledger rows with moving average valuation', async () => {
+    kyselyService.withTenant.mockResolvedValue({
+      total: 1,
+      rows: [
+        {
+          locationId: 'loc-1',
+          locationName: '主库位',
+          warehouseId: 'wh-1',
+          warehouseName: '主仓',
+          materialId: 'm1',
+          materialSku: 'MAT-1',
+          materialName: '钢板',
+          materialUnit: 'pcs',
+          minStock: 1,
+          netQty: 5,
+          batchCount: 2,
+          averageCost: 12.5,
+        },
+      ],
+    });
+
+    const result = await service.getRealtimeLedger('c1', {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        materialId: 'm1',
+        averageCost: 12.5,
+        inventoryValue: 62.5,
+        isLow: false,
+      }),
+    );
   });
 
   it('skips reverse when reverse moves already exist', async () => {
@@ -149,6 +212,71 @@ describe('InventoryService', () => {
     await expect(
       service.reverseSaleOrderShipment('c1', 'o1', {}, 'u1'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('creates a sales return document after reversing shipped stock', async () => {
+    prisma.order.findFirst.mockResolvedValue({ id: 'o1', orderNo: 'ORD-001' });
+    prisma.inventoryTransaction.count.mockResolvedValue(0);
+    prisma.inventoryTransaction.findMany.mockResolvedValue([
+      {
+        materialId: 'm1',
+        quantity: 2,
+        sourceLocationId: 'loc-ship',
+      },
+    ]);
+    prisma.inventoryReturnDocument.upsert.mockResolvedValue({
+      id: 'ret1',
+      returnNo: 'SR-1',
+      lines: [{ id: 'rl1' }],
+    });
+    const moveSpy = jest.spyOn(service, 'createStockMove').mockResolvedValue({
+      id: 'move-rev-1',
+      type: 'INBOUND',
+      materialId: 'm1',
+      quantity: 2,
+      destLocationId: 'loc-return',
+      batchNo: 'B1',
+      referenceNo: 'SALE-SHIP-REV-ORD-001',
+    });
+
+    try {
+      const result = await service.reverseSaleOrderShipment(
+        'c1',
+        'o1',
+        { destLocationId: 'loc-return', note: '客户退货' },
+        'u1',
+      );
+
+      expect(result.returnDocument).toEqual(
+        expect.objectContaining({ id: 'ret1', returnNo: 'SR-1' }),
+      );
+      expect(prisma.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            companyId_referenceNo: {
+              companyId: 'c1',
+              referenceNo: 'SALE-SHIP-REV-ORD-001',
+            },
+          },
+          create: expect.objectContaining({
+            returnType: 'SALES',
+            sourceDocumentNo: 'ORD-001',
+            lines: {
+              create: [
+                expect.objectContaining({
+                  materialId: 'm1',
+                  quantity: 2,
+                  locationId: 'loc-return',
+                  inventoryMoveId: 'move-rev-1',
+                }),
+              ],
+            },
+          }),
+        }),
+      );
+    } finally {
+      moveSpy.mockRestore();
+    }
   });
 
   it('ships available quantities per line and marks the order as PARTIAL_SHIPPED', async () => {
@@ -339,6 +467,70 @@ describe('InventoryService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('creates a purchase return document after reversing inbound stock', async () => {
+    prisma.inventoryTransaction.count.mockResolvedValue(0);
+    prisma.inventoryTransaction.findMany.mockResolvedValue([
+      {
+        materialId: 'm1',
+        quantity: 3,
+        destLocationId: 'loc-receive',
+      },
+    ]);
+    prisma.inventoryReturnDocument.upsert.mockResolvedValue({
+      id: 'ret2',
+      returnNo: 'PR-1',
+      lines: [{ id: 'rl2' }],
+    });
+    const moveSpy = jest.spyOn(service, 'createStockMove').mockResolvedValue({
+      id: 'move-rev-2',
+      type: 'OUTBOUND',
+      materialId: 'm1',
+      quantity: 3,
+      sourceLocationId: 'loc-receive',
+      batchNo: 'B2',
+      referenceNo: 'PURCHASE-IN-REV-PO-001',
+    });
+
+    try {
+      const result = await service.reversePurchaseInbound(
+        'c1',
+        'PO-001',
+        { sourceLocationId: 'loc-receive', note: '供应商退货' },
+        'u1',
+      );
+
+      expect(result.returnDocument).toEqual(
+        expect.objectContaining({ id: 'ret2', returnNo: 'PR-1' }),
+      );
+      expect(prisma.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            companyId_referenceNo: {
+              companyId: 'c1',
+              referenceNo: 'PURCHASE-IN-REV-PO-001',
+            },
+          },
+          create: expect.objectContaining({
+            returnType: 'PURCHASE',
+            sourceDocumentNo: 'PO-001',
+            lines: {
+              create: [
+                expect.objectContaining({
+                  materialId: 'm1',
+                  quantity: 3,
+                  locationId: 'loc-receive',
+                  inventoryMoveId: 'move-rev-2',
+                }),
+              ],
+            },
+          }),
+        }),
+      );
+    } finally {
+      moveSpy.mockRestore();
+    }
+  });
+
   it('refreshes ledger snapshot after inbound stock move', async () => {
     prisma.stockLocation.findFirst.mockResolvedValue({
       id: 'loc-dest',
@@ -379,6 +571,107 @@ describe('InventoryService', () => {
         },
         create: expect.objectContaining({ netQty: 12, batchCount: 2 }),
         update: expect.objectContaining({ netQty: 12, batchCount: 2 }),
+      }),
+    );
+  });
+
+  it('updates moving average cost after inbound stock move', async () => {
+    prisma.stockLocation.findFirst.mockResolvedValue({
+      id: 'loc-dest',
+      name: 'Finished Goods',
+      warehouseId: 'w1',
+    });
+    prisma.material.findFirst.mockResolvedValue({ id: 'm1', unitPrice: 10 });
+    tx.materialCost.findUnique.mockResolvedValue({
+      quantityOnHand: 10,
+      averageCost: 10,
+      inventoryValue: 100,
+    });
+    tx.inventoryTransaction.create.mockResolvedValue({
+      id: 't-in',
+      type: 'INBOUND',
+      materialId: 'm1',
+      quantity: 5,
+      referenceNo: 'R-IN',
+    });
+
+    await service.createStockMove(
+      'c1',
+      {
+        destLocationId: 'loc-dest',
+        materialId: 'm1',
+        quantity: 5,
+        unitCost: 16,
+        referenceNo: 'R-IN',
+      },
+      'u1',
+    );
+
+    expect(tx.materialCost.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyId_materialId: {
+            companyId: 'c1',
+            materialId: 'm1',
+          },
+        },
+        update: expect.objectContaining({
+          quantityOnHand: 15,
+          averageCost: 12,
+          inventoryValue: 180,
+        }),
+      }),
+    );
+  });
+
+  it('emits outbound depletion with moving average unit cost', async () => {
+    prisma.stockLocation.findFirst.mockResolvedValue({
+      id: 'loc-source',
+      name: 'L1',
+      warehouseId: 'w1',
+    });
+    prisma.material.findFirst.mockResolvedValue({ id: 'm1', unitPrice: 10 });
+    tx.materialCost.findUnique.mockResolvedValue({
+      quantityOnHand: 10,
+      averageCost: 8,
+      inventoryValue: 80,
+    });
+    tx.stockQuant.findFirst.mockResolvedValue({ id: 'q1', batchNo: 'B1' });
+    tx.stockQuant.updateMany.mockResolvedValue({ count: 1 });
+    tx.inventoryTransaction.create.mockResolvedValue({
+      id: 't-out',
+      type: 'OUTBOUND',
+      materialId: 'm1',
+      quantity: 2,
+      referenceNo: 'R-OUT',
+    });
+
+    await service.createStockMove(
+      'c1',
+      {
+        sourceLocationId: 'loc-source',
+        materialId: 'm1',
+        quantity: 2,
+        referenceNo: 'R-OUT',
+      },
+      'u1',
+    );
+
+    expect(tx.materialCost.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({
+          quantityOnHand: 8,
+          averageCost: 8,
+          inventoryValue: 64,
+        }),
+      }),
+    );
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      'inventory.stock_depleted',
+      expect.objectContaining({
+        materialId: 'm1',
+        quantity: 2,
+        unitCost: 8,
       }),
     );
   });

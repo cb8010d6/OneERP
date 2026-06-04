@@ -17,9 +17,11 @@ type MockPrisma = {
   };
   product: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
   };
   bom: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
   };
   $transaction: jest.Mock;
 };
@@ -29,6 +31,10 @@ type MockTx = {
     create: jest.Mock;
   };
   workOrder: {
+    update: jest.Mock;
+    create: jest.Mock;
+  };
+  order: {
     update: jest.Mock;
   };
 };
@@ -50,9 +56,11 @@ describe('ProductionService', () => {
     },
     product: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     bom: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -67,6 +75,10 @@ describe('ProductionService', () => {
     },
     workOrder: {
       update: jest.fn(),
+      create: jest.fn(),
+    },
+    order: {
+      update: jest.fn(),
     },
   };
 
@@ -78,6 +90,8 @@ describe('ProductionService', () => {
       (callback: (trx: MockTx) => unknown) => callback(tx),
     );
     prisma.product.findFirst.mockResolvedValue(null);
+    prisma.product.findMany.mockResolvedValue([]);
+    prisma.bom.findMany.mockResolvedValue([]);
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
       inventoryService as unknown as ConstructorParameters<
@@ -164,6 +178,84 @@ describe('ProductionService', () => {
           plannedQty: 100,
         }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('generateWorkOrdersFromSalesOrder', () => {
+    it('creates one work order per order product and moves order into production', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 'order-1',
+        orderNo: 'ORD-001',
+        status: 'SUBMITTED',
+        items: [
+          { productId: 'product-1', quantity: 2 },
+          { productId: 'product-1', quantity: 3 },
+          { productId: 'product-2', quantity: 1 },
+        ],
+        workOrders: [],
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: 'product-1', sku: 'P1', name: '产品1' },
+        { id: 'product-2', sku: 'P2', name: '产品2' },
+      ]);
+      prisma.bom.findMany.mockResolvedValue([
+        { productId: 'product-1' },
+        { productId: 'product-2' },
+      ]);
+      tx.workOrder.create
+        .mockResolvedValueOnce({
+          id: 'wo-1',
+          workOrderNo: 'WO-001',
+          orderId: 'order-1',
+          productId: 'product-1',
+          plannedQty: 5,
+          status: 'PENDING',
+          companyId: 'c1',
+        })
+        .mockResolvedValueOnce({
+          id: 'wo-2',
+          workOrderNo: 'WO-002',
+          orderId: 'order-1',
+          productId: 'product-2',
+          plannedQty: 1,
+          status: 'PENDING',
+          companyId: 'c1',
+        });
+
+      const result = await service.generateWorkOrdersFromSalesOrder(
+        'c1',
+        'order-1',
+        {},
+      );
+
+      expect(result.created).toHaveLength(2);
+      const workOrderCreateCalls = tx.workOrder.create.mock.calls as Array<
+        [{ data: { productId: string; plannedQty: number } }]
+      >;
+      expect(workOrderCreateCalls[0]?.[0].data.productId).toBe('product-1');
+      expect(workOrderCreateCalls[0]?.[0].data.plannedQty).toBe(5);
+      expect(tx.order.update).toHaveBeenCalledWith({
+        where: { id: 'order-1' },
+        data: { status: 'IN_PRODUCTION' },
+      });
+    });
+
+    it('rejects generation when default BOM is missing', async () => {
+      prisma.order.findFirst.mockResolvedValue({
+        id: 'order-1',
+        orderNo: 'ORD-001',
+        status: 'SUBMITTED',
+        items: [{ productId: 'product-1', quantity: 2 }],
+        workOrders: [],
+      });
+      prisma.product.findMany.mockResolvedValue([
+        { id: 'product-1', sku: 'P1', name: '产品1' },
+      ]);
+      prisma.bom.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.generateWorkOrdersFromSalesOrder('c1', 'order-1', {}),
+      ).rejects.toThrow('未配置默认 BOM');
     });
   });
 

@@ -65,6 +65,28 @@ describe('EventQueueService', () => {
     );
   });
 
+  it('retries pending DLQ items scoped by event name', async () => {
+    prisma.eventDlq.findMany.mockResolvedValue([]);
+
+    await service.retryPending(10, 'c1', [
+      'inventory.stock_depleted',
+      'purchase.invoice.posted',
+      'inventory.stock_depleted',
+    ]);
+
+    expect(prisma.eventDlq.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          companyId: 'c1',
+          eventName: {
+            in: ['inventory.stock_depleted', 'purchase.invoice.posted'],
+          },
+        }) as unknown,
+        take: 10,
+      }),
+    );
+  });
+
   it('marks item as resolved when event publish succeeds', async () => {
     prisma.eventDlq.findMany.mockResolvedValue([
       {

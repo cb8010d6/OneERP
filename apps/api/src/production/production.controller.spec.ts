@@ -3,12 +3,14 @@ import { ProductionController } from './production.controller';
 import { ProductionService } from './production.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
+import { PermissionsGuard } from '../core/guards/permissions.guard';
 
 describe('ProductionController', () => {
   let controller: ProductionController;
 
   const mockProductionService = {
     createWorkOrder: jest.fn(),
+    generateWorkOrdersFromSalesOrder: jest.fn(),
     getWorkOrders: jest.fn(),
     submitWorkReport: jest.fn(),
   };
@@ -23,6 +25,8 @@ describe('ProductionController', () => {
       .overrideGuard(JwtAuthGuard)
       .useValue({ canActivate: () => true })
       .overrideGuard(TenantGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(PermissionsGuard)
       .useValue({ canActivate: () => true })
       .compile();
 
@@ -50,6 +54,26 @@ describe('ProductionController', () => {
         productId: 'p1',
         plannedQty: 100,
       });
+    });
+  });
+
+  describe('generateWorkOrdersFromSalesOrder', () => {
+    it('should generate work orders from a sales order', async () => {
+      const expected = { orderId: 'o1', created: [{ id: 'wo1' }] };
+      mockProductionService.generateWorkOrdersFromSalesOrder.mockResolvedValue(
+        expected,
+      );
+
+      const result = await controller.generateWorkOrdersFromSalesOrder(
+        'c1',
+        'o1',
+        { skipExisting: true },
+      );
+
+      expect(result).toEqual(expected);
+      expect(
+        mockProductionService.generateWorkOrdersFromSalesOrder,
+      ).toHaveBeenCalledWith('c1', 'o1', { skipExisting: true });
     });
   });
 

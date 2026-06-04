@@ -1,8 +1,21 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Building2, Package, PackageCheck, ShoppingCart, Users, Settings, FileText, LayoutDashboard, LogOut, PanelRight, Table } from 'lucide-react';
+import {
+  Factory,
+  Package,
+  PackageCheck,
+  ReceiptText,
+  ShoppingCart,
+  Users,
+  Settings,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  PanelRight,
+  Table,
+} from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
@@ -11,35 +24,101 @@ import { useI18n } from '../../lib/i18n';
 
 function hasPermission(permissions: readonly string[], required?: string) {
   if (!required) return true;
-  if (permissions.includes('ALL') || permissions.includes(required)) return true;
+  if (permissions.includes('ALL') || permissions.includes(required))
+    return true;
   const parts = required.split(':');
   const resource = parts[0];
   const action = parts[parts.length - 1];
-  return permissions.includes(`${resource}:*`) || permissions.includes(`*:${action}`);
+  return (
+    permissions.includes(`${resource}:*`) || permissions.includes(`*:${action}`)
+  );
 }
 
-export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [rightOpen, setRightOpen] = useState(true);
-  const { user, token, companies, currentCompanyId, setCurrentCompany, refreshPermissions, logout } = useAuthStore();
-  const { openTab, activateTab, closeTab, activePath } = useWorkspaceTabsStore();
+  const {
+    user,
+    token,
+    companies,
+    currentCompanyId,
+    setCurrentCompany,
+    refreshPermissions,
+    logout,
+  } = useAuthStore();
+  const { openTab, activateTab, closeTab, activePath } =
+    useWorkspaceTabsStore();
   const { language, setLanguage, t } = useI18n();
 
   const currentPermissions =
-    companies.find((company) => company.id === currentCompanyId)?.permissions ?? [];
-  const currentCompany = companies.find((company) => company.id === currentCompanyId);
+    companies.find((company) => company.id === currentCompanyId)?.permissions ??
+    [];
+  const currentCompany = companies.find(
+    (company) => company.id === currentCompanyId,
+  );
 
   const navItems = [
     { icon: LayoutDashboard, label: t('navOverview'), href: '/dashboard' },
-    { icon: ShoppingCart, label: t('navSales'), href: '/dashboard/sales', permission: 'order:read' },
-    { icon: PackageCheck, label: t('navPurchase'), href: '/dashboard/purchase', permission: 'purchase:read' },
-    { icon: Package, label: t('navInventory'), href: '/dashboard/inventory', permission: 'inventory:read' },
-    { icon: FileText, label: t('navFiles'), href: '/dashboard/files', permission: 'fileRecord:read' },
-    { icon: Users, label: t('navCustomers'), href: '/dashboard/customers', permission: 'partner:read' },
-    { icon: Settings, label: t('navSettings'), href: '/dashboard/settings', permission: 'user:read' },
-    { icon: Table, label: t('navGridLab'), href: '/dashboard/lab/data-grid', permission: 'ALL' },
+    {
+      icon: ShoppingCart,
+      label: t('navSales'),
+      href: '/dashboard/sales',
+      permission: 'order:read',
+    },
+    {
+      icon: PackageCheck,
+      label: t('navPurchase'),
+      href: '/dashboard/purchase',
+      permission: 'purchase:read',
+    },
+    {
+      icon: Package,
+      label: t('navInventory'),
+      href: '/dashboard/inventory',
+      permission: 'inventory:read',
+    },
+    {
+      icon: Factory,
+      label: t('navProduction'),
+      href: '/dashboard/production',
+      permission: 'production:read',
+    },
+    {
+      icon: ReceiptText,
+      label: t('navFinance'),
+      href: '/dashboard/finance',
+      permission: 'finance:read',
+    },
+    {
+      icon: FileText,
+      label: t('navFiles'),
+      href: '/dashboard/files',
+      permission: 'fileRecord:read',
+    },
+    {
+      icon: Users,
+      label: t('navCustomers'),
+      href: '/dashboard/customers',
+      permission: 'partner:read',
+    },
+    {
+      icon: Settings,
+      label: t('navSettings'),
+      href: '/dashboard/settings',
+      permission: 'user:read',
+    },
+    {
+      icon: Table,
+      label: t('navGridLab'),
+      href: '/dashboard/lab/data-grid',
+      permission: 'ALL',
+    },
   ];
   const visibleNavItems = navItems.filter((item) =>
     hasPermission(currentPermissions, item.permission),
@@ -74,21 +153,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      const isMetaSave = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's';
+      const isMetaSave =
+        (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's';
       if (isMetaSave) {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent('erp:shortcut-save'));
         return;
       }
 
-      const isCommandK = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k';
+      const isCommandK =
+        (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k';
       if (isCommandK) {
         event.preventDefault();
         window.dispatchEvent(new CustomEvent('erp:open-command-palette'));
         return;
       }
 
-      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      if (
+        event.key === '/' &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey
+      ) {
         const target = event.target as HTMLElement | null;
         const isInputTarget =
           target?.tagName === 'INPUT' ||
@@ -142,14 +228,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Company Switcher */}
         <div className="p-4 border-b border-gray-200">
-          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">{t('currentCompany')}</label>
-          <select 
+          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
+            {t('currentCompany')}
+          </label>
+          <select
             className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
             value={currentCompanyId || ''}
             onChange={handleCompanyChange}
           >
-            {companies.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
             ))}
           </select>
         </div>
@@ -162,15 +252,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 key={item.href}
                 onClick={() => router.push(item.href)}
                 className={`w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  isActive 
-                    ? 'bg-blue-50 text-blue-700' 
+                  isActive
+                    ? 'bg-blue-50 text-blue-700'
                     : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
-                <item.icon className={`mr-3 h-5 w-5 ${isActive ? 'text-blue-700' : 'text-gray-400'}`} />
+                <item.icon
+                  className={`mr-3 h-5 w-5 ${isActive ? 'text-blue-700' : 'text-gray-400'}`}
+                />
                 {item.label}
               </button>
-            )
+            );
           })}
         </nav>
 
@@ -178,17 +270,24 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
-                {(user?.name || user?.username || user?.email || 'U').charAt(0).toUpperCase()}
+                {(user?.name || user?.username || user?.email || 'U')
+                  .charAt(0)
+                  .toUpperCase()}
               </div>
               <div>
                 <p className="text-sm font-medium text-gray-900">
                   {user?.name || user?.username || user?.email || 'User'}
                 </p>
-                <p className="text-xs text-gray-500">{currentCompany?.role || user?.role || 'Role'}</p>
+                <p className="text-xs text-gray-500">
+                  {currentCompany?.role || user?.role || 'Role'}
+                </p>
               </div>
             </div>
-            <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100">
-            <LogOut className="h-5 w-5" />
+            <button
+              onClick={handleLogout}
+              className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100"
+            >
+              <LogOut className="h-5 w-5" />
             </button>
           </div>
         </div>
@@ -197,15 +296,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       {/* Main Content */}
       <main className="flex-1 flex flex-col overflow-hidden">
         <header className="relative h-16 bg-white border-b border-gray-200 flex items-center px-8 shadow-sm justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">
-                {navItems.find(i => i.href === pathname)?.label || t('navOverview')}
-            </h2>
+          <h2 className="text-lg font-semibold text-gray-800">
+            {navItems.find((i) => i.href === pathname)?.label ||
+              t('navOverview')}
+          </h2>
           <div className="absolute left-1/2 -translate-x-1/2">
             <CommandPalette />
           </div>
           <select
             value={language}
-            onChange={(event) => setLanguage(event.target.value as 'zh-CN' | 'en-US')}
+            onChange={(event) =>
+              setLanguage(event.target.value as 'zh-CN' | 'en-US')
+            }
             className="mr-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600"
             aria-label="Language"
           >
@@ -223,23 +325,29 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </header>
         <WorkspaceTabs />
         <div className="flex min-h-0 flex-1">
-          <div className="flex-1 overflow-auto p-8">
-            {children}
-          </div>
+          <div className="flex-1 overflow-auto p-8">{children}</div>
 
           {rightOpen ? (
             <aside className="hidden w-72 border-l border-gray-200 bg-white p-4 xl:block">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">{t('productivityPanel')}</h3>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
+                {t('productivityPanel')}
+              </h3>
               <div className="mt-3 space-y-2 text-xs text-gray-600">
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
-                  <div className="font-medium text-gray-800">{t('shortcuts')}</div>
+                  <div className="font-medium text-gray-800">
+                    {t('shortcuts')}
+                  </div>
                   <div className="mt-1">{t('shortcutSave')}</div>
                   <div>{t('shortcutSearch')}</div>
                   <div>{t('shortcutNewOrder')}</div>
                 </div>
                 <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
-                  <div className="font-medium text-gray-800">{t('multiTabs')}</div>
-                  <div>{t('currentTab')}: {activePath || '/dashboard'}</div>
+                  <div className="font-medium text-gray-800">
+                    {t('multiTabs')}
+                  </div>
+                  <div>
+                    {t('currentTab')}: {activePath || '/dashboard'}
+                  </div>
                   <div className="mt-1">{t('multiTabsHint')}</div>
                 </div>
                 <button
@@ -247,7 +355,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   className="w-full rounded-md border border-gray-200 px-2 py-1.5 text-left hover:bg-gray-50"
                   onClick={() => {
                     closeTab(activePath || '/dashboard');
-                    const next = useWorkspaceTabsStore.getState().activePath || '/dashboard';
+                    const next =
+                      useWorkspaceTabsStore.getState().activePath ||
+                      '/dashboard';
                     activateTab(next);
                     router.push(next);
                   }}

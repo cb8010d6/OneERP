@@ -10,6 +10,8 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { FinanceService } from './finance.service';
 import { FinanceDlqService } from './finance-dlq.service';
+import { FinanceAccountMappingService } from './finance-account-mapping.service';
+import { AccountingPeriodService } from './accounting-period.service';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
 import { PermissionsGuard } from '../core/guards/permissions.guard';
@@ -20,8 +22,17 @@ import { Permission } from '../core/permissions/permissions';
 import {
   CreateInvoiceDto,
   CreatePaymentDto,
+  CreateReceivablePaymentDto,
+  ApplyReceivablePaymentDto,
+  CreateCreditNoteDto,
+  CreateCustomerRefundDto,
   PostInvoiceDto,
 } from './dto/finance.dto';
+import { UpdateFinanceAccountMappingsDto } from './dto/finance-account-mapping.dto';
+import {
+  AccountingPeriodStatusQueryDto,
+  UpsertAccountingPeriodDto,
+} from './dto/accounting-period.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import type { JwtUserPayload } from '../core/http/request.types';
 
@@ -33,6 +44,8 @@ export class FinanceController {
   constructor(
     private readonly financeService: FinanceService,
     private readonly financeDlqService: FinanceDlqService,
+    private readonly financeAccountMappingService: FinanceAccountMappingService,
+    private readonly accountingPeriodService: AccountingPeriodService,
   ) {}
 
   @Post('invoices')
@@ -56,15 +69,114 @@ export class FinanceController {
     return this.financeService.getInvoices(companyId, pagination);
   }
 
+  @Get('account-mappings')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '获取公司级财务科目映射' })
+  async getAccountMappings(@CurrentCompany() companyId: string) {
+    return this.financeAccountMappingService.list(companyId);
+  }
+
+  @Get('account-options')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '获取可用于财务映射的会计科目' })
+  async getAccountOptions(@CurrentCompany() companyId: string) {
+    return this.financeAccountMappingService.listAccountOptions(companyId);
+  }
+
+  @Post('account-mappings')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '更新公司级财务科目映射' })
+  async updateAccountMappings(
+    @CurrentCompany() companyId: string,
+    @Body() dto: UpdateFinanceAccountMappingsDto,
+  ) {
+    return this.financeAccountMappingService.update(companyId, dto);
+  }
+
+  @Get('accounting-periods')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '查看会计期间与关账状态' })
+  async getAccountingPeriods(
+    @CurrentCompany() companyId: string,
+    @Query() query: AccountingPeriodStatusQueryDto,
+  ) {
+    return this.accountingPeriodService.list(companyId, query.status);
+  }
+
+  @Post('accounting-periods')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '创建或更新会计期间' })
+  async upsertAccountingPeriod(
+    @CurrentCompany() companyId: string,
+    @Body() dto: UpsertAccountingPeriodDto,
+  ) {
+    return this.accountingPeriodService.upsert(companyId, dto);
+  }
+
+  @Post('accounting-periods/:periodKey/close')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '关账会计期间' })
+  async closeAccountingPeriod(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('periodKey') periodKey: string,
+  ) {
+    return this.accountingPeriodService.close(companyId, periodKey, user.id);
+  }
+
+  @Post('accounting-periods/:periodKey/reopen')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '重开会计期间' })
+  async reopenAccountingPeriod(
+    @CurrentCompany() companyId: string,
+    @Param('periodKey') periodKey: string,
+  ) {
+    return this.accountingPeriodService.reopen(companyId, periodKey);
+  }
+
   @Post('invoices/:id/payments')
   @RequirePermissions(Permission.FinancePost)
   @ApiOperation({ summary: '登记发票收款' })
   async recordPayment(
     @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
     @Param('id') invoiceId: string,
     @Body() dto: CreatePaymentDto,
   ) {
-    return this.financeService.recordPayment(companyId, invoiceId, dto);
+    return this.financeService.recordPayment(
+      companyId,
+      invoiceId,
+      dto,
+      user.id,
+    );
+  }
+
+  @Post('payments')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '登记客户收款并分配核销到应收发票' })
+  async recordReceivablePayment(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Body() dto: CreateReceivablePaymentDto,
+  ) {
+    return this.financeService.recordReceivablePayment(companyId, dto, user.id);
+  }
+
+  @Post('payments/:id/allocations')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '将未分配收款核销到应收发票' })
+  async applyReceivablePayment(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') paymentId: string,
+    @Body() dto: ApplyReceivablePaymentDto,
+  ) {
+    return this.financeService.applyReceivablePayment(
+      companyId,
+      paymentId,
+      dto,
+      user.id,
+    );
   }
 
   @Post('invoices/:id/post')
@@ -96,6 +208,94 @@ export class FinanceController {
     return this.financeService.getTrialBalance(companyId, startDate, endDate);
   }
 
+  @Get('inventory-valuation')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '库存估值与总账库存科目对账' })
+  async getInventoryValuation(@CurrentCompany() companyId: string) {
+    return this.financeService.getInventoryValuationReconciliation(companyId);
+  }
+
+  @Get('receivables-aging')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '应收账龄分析' })
+  async getReceivableAging(
+    @CurrentCompany() companyId: string,
+    @Query('asOfDate') asOfDate?: string,
+  ) {
+    return this.financeService.getReceivableAging(companyId, asOfDate);
+  }
+
+  @Get('unapplied-payments')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '未分配客户收款' })
+  async getUnappliedPayments(@CurrentCompany() companyId: string) {
+    return this.financeService.getUnappliedPayments(companyId);
+  }
+
+  @Post('credit-notes')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '创建应收贷项/红字凭证草稿' })
+  async createCreditNote(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Body() dto: CreateCreditNoteDto,
+  ) {
+    return this.financeService.createCreditNote(companyId, dto, user.id);
+  }
+
+  @Get('credit-notes')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '获取应收贷项/红字凭证列表' })
+  async getCreditNotes(
+    @CurrentCompany() companyId: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.financeService.getCreditNotes(companyId, pagination);
+  }
+
+  @Post('credit-notes/:id/post')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '贷项/红字凭证过账并冲减应收' })
+  async postCreditNote(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') creditNoteId: string,
+  ) {
+    return this.financeService.postCreditNote(companyId, creditNoteId, user.id);
+  }
+
+  @Post('customer-refunds')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '创建客户退款单草稿' })
+  async createCustomerRefund(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Body() dto: CreateCustomerRefundDto,
+  ) {
+    return this.financeService.createCustomerRefund(companyId, dto, user.id);
+  }
+
+  @Get('customer-refunds')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '获取客户退款单列表' })
+  async getCustomerRefunds(
+    @CurrentCompany() companyId: string,
+    @Query() pagination: PaginationDto,
+  ) {
+    return this.financeService.getCustomerRefunds(companyId, pagination);
+  }
+
+  @Post('customer-refunds/:id/post')
+  @RequirePermissions(Permission.FinancePost)
+  @ApiOperation({ summary: '客户退款单过账并冲减应退客户款' })
+  async postCustomerRefund(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') refundId: string,
+  ) {
+    return this.financeService.postCustomerRefund(companyId, refundId, user.id);
+  }
+
   @Get('dlq')
   @RequirePermissions(Permission.FinanceRead)
   @ApiOperation({ summary: '查看财务事件补偿队列' })
@@ -111,8 +311,18 @@ export class FinanceController {
   @ApiOperation({ summary: '重试财务事件补偿队列' })
   async retryDlq(
     @CurrentCompany() companyId: string,
-    @Body() body?: { limit?: number },
+    @Body() body?: { limit?: number; eventNames?: unknown[] },
   ) {
-    return this.financeDlqService.retryPending(body?.limit ?? 20, companyId);
+    const eventNames =
+      body && Array.isArray(body.eventNames)
+        ? body.eventNames.filter(
+            (eventName): eventName is string => typeof eventName === 'string',
+          )
+        : undefined;
+    return this.financeDlqService.retryPending(
+      body?.limit ?? 20,
+      companyId,
+      eventNames,
+    );
   }
 }

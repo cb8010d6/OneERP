@@ -5,7 +5,11 @@ import {
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateWorkOrderDto, CreateWorkReportDto } from './dto/production.dto';
+import {
+  CreateWorkOrderDto,
+  CreateWorkReportDto,
+  GenerateWorkOrdersFromOrderDto,
+} from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { InventoryService } from '../inventory/inventory.service';
 
@@ -30,6 +34,16 @@ export interface WorkReportRecord {
 interface BomRequirement {
   materialId: string;
   quantity: Decimal;
+}
+
+export interface GenerateWorkOrdersResult {
+  orderId: string;
+  orderNo: string;
+  created: WorkOrderRecord[];
+  skipped: Array<{
+    productId: string;
+    reason: string;
+  }>;
 }
 
 @Injectable()
@@ -57,6 +71,103 @@ export class ProductionService {
         status: 'PENDING',
         companyId,
       },
+    });
+  }
+
+  async generateWorkOrdersFromSalesOrder(
+    companyId: string,
+    orderId: string,
+    dto: GenerateWorkOrdersFromOrderDto = {},
+  ): Promise<GenerateWorkOrdersResult> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      include: { items: true, workOrders: true },
+    });
+    if (!order) throw new NotFoundException('找不到对应的销售订单');
+    if (['CANCELLED', 'COMPLETED'].includes(order.status)) {
+      throw new BadRequestException('当前销售订单状态不允许生成生产工单');
+    }
+    if (order.items.length === 0) {
+      throw new BadRequestException('销售订单没有明细，无法生成生产工单');
+    }
+
+    const productIds = [...new Set(order.items.map((item) => item.productId))];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, companyId, isActive: true },
+      select: { id: true, sku: true, name: true },
+    });
+    const productMap = new Map(
+      products.map((product) => [product.id, product]),
+    );
+    const boms = await this.prisma.bom.findMany({
+      where: { companyId, productId: { in: productIds }, isDefault: true },
+      select: { productId: true },
+    });
+    const bomProductIds = new Set(boms.map((bom) => bom.productId));
+    const missing: string[] = [];
+
+    for (const productId of productIds) {
+      const product = productMap.get(productId);
+      if (!product) {
+        missing.push(productId);
+        continue;
+      }
+      if (!bomProductIds.has(productId)) {
+        missing.push(`${product.sku || product.name} 未配置默认 BOM`);
+      }
+    }
+    if (missing.length > 0) {
+      throw new BadRequestException(`无法生成生产工单：${missing.join('；')}`);
+    }
+
+    const quantitiesByProduct = new Map<string, number>();
+    for (const item of order.items) {
+      quantitiesByProduct.set(
+        item.productId,
+        (quantitiesByProduct.get(item.productId) ?? 0) + Number(item.quantity),
+      );
+    }
+
+    const existingProductIds = new Set(
+      order.workOrders.map((workOrder) => workOrder.productId),
+    );
+    const skipExisting = dto.skipExisting !== false;
+
+    return this.prisma.$transaction(async (tx) => {
+      const created: WorkOrderRecord[] = [];
+      const skipped: GenerateWorkOrdersResult['skipped'] = [];
+
+      for (const [productId, plannedQty] of quantitiesByProduct.entries()) {
+        if (skipExisting && existingProductIds.has(productId)) {
+          skipped.push({ productId, reason: '该产品已有生产工单' });
+          continue;
+        }
+        const workOrder = await tx.workOrder.create({
+          data: {
+            workOrderNo: this.generateWorkOrderNo(),
+            orderId: order.id,
+            productId,
+            plannedQty,
+            status: 'PENDING',
+            companyId,
+          },
+        });
+        created.push(workOrder);
+      }
+
+      if (created.length > 0 && order.status !== 'IN_PRODUCTION') {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: 'IN_PRODUCTION' },
+        });
+      }
+
+      return {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        created,
+        skipped,
+      };
     });
   }
 
@@ -278,5 +389,14 @@ export class ProductionService {
       materialId,
       quantity: requiredQty,
     }));
+  }
+
+  private generateWorkOrderNo() {
+    const now = new Date();
+    const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(
+      2,
+      '0',
+    )}${String(now.getDate()).padStart(2, '0')}`;
+    return `WO-${date}-${String(now.getTime()).slice(-6)}`;
   }
 }

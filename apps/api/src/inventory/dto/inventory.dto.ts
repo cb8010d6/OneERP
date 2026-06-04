@@ -53,6 +53,12 @@ export class CreateStockMoveDto {
   @Min(1)
   quantity!: number;
 
+  @ApiPropertyOptional({ description: '本次入库/调整单位成本' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitCost?: number;
+
   @ApiPropertyOptional({ description: '批次号' })
   @IsOptional()
   @IsString()
@@ -153,6 +159,12 @@ export class PurchaseInboundPostingDto {
   @IsNumber()
   @Min(1)
   quantity!: number;
+
+  @ApiPropertyOptional({ description: '本次入库单位成本' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitCost?: number;
 
   @ApiPropertyOptional({ description: '目标库位ID' })
   @IsOptional()

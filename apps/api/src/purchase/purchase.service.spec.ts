@@ -14,6 +14,15 @@ function createService() {
     purchaseOrder: {
       update: jest.fn(),
     },
+    purchaseInvoice: {
+      update: jest.fn(),
+    },
+    supplierCreditNote: {
+      update: jest.fn(),
+    },
+    supplierPayment: {
+      update: jest.fn(),
+    },
   };
   const prisma = {
     partner: {
@@ -29,6 +38,25 @@ function createService() {
     },
     purchaseInvoice: {
       create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
+    inventoryReturnDocument: {
+      findFirst: jest.fn(),
+    },
+    supplierCreditNote: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    supplierPayment: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    auditLog: {
+      create: jest.fn(),
     },
     $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
       callback(tx),
@@ -37,12 +65,17 @@ function createService() {
   const inventoryService = {
     postPurchaseInbound: jest.fn(),
     createStockMove: jest.fn(),
+    createStockMoveInTransaction: jest.fn(),
+  };
+  const eventEmitter = {
+    emit: jest.fn(),
   };
   const service = new PurchaseService(
     prisma as never,
     inventoryService as never,
+    eventEmitter as never,
   );
-  return { service, prisma, tx, inventoryService };
+  return { service, prisma, tx, inventoryService, eventEmitter };
 }
 
 describe('PurchaseService', () => {
@@ -83,6 +116,7 @@ describe('PurchaseService', () => {
           materialId: 'm1',
           quantity: new Decimal(5),
           receivedQty: new Decimal(1),
+          unitPrice: new Decimal(12),
         },
       ],
     });
@@ -91,6 +125,7 @@ describe('PurchaseService', () => {
       receiptNo: 'GR-001',
       lines: [
         {
+          purchaseOrderLineId: 'line-1',
           materialId: 'm1',
           quantity: new Decimal(2),
           destLocationId: 'loc-1',
@@ -112,6 +147,7 @@ describe('PurchaseService', () => {
             materialId: 'm1',
             quantity: new Decimal(5),
             receivedQty: new Decimal(1),
+            unitPrice: new Decimal(12),
           },
         ],
       })
@@ -128,14 +164,18 @@ describe('PurchaseService', () => {
       ],
     });
 
-    expect(result).toEqual({ id: 'po-1', status: 'PARTIAL_RECEIVED' });
-    expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+    expect(result).toEqual(
+      expect.objectContaining({ id: 'po-1', status: 'PARTIAL_RECEIVED' }),
+    );
+    expect(inventoryService.createStockMoveInTransaction).toHaveBeenCalledWith(
+      tx,
       'c1',
       expect.objectContaining({
         materialId: 'm1',
         quantity: 2,
         destLocationId: 'loc-1',
         batchNo: 'B1',
+        unitCost: 12,
         referenceNo: 'PURCHASE-IN-PO-001-GR-001',
         documentId: 'GR-001',
         documentType: 'PURCHASE_RECEIPT',
@@ -192,6 +232,527 @@ describe('PurchaseService', () => {
           status: 'UNPAID',
         }) as unknown,
       }),
+    );
+  });
+
+  it('posts payable invoice and emits accounting event', async () => {
+    const { service, prisma, eventEmitter } = createService();
+    prisma.purchaseInvoice.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      invoiceNo: 'PI-001',
+      postingStatus: 'DRAFT',
+      purchaseOrder: {
+        items: [
+          {
+            id: 'line-1',
+            materialId: 'm1',
+            quantity: new Decimal(2),
+            receivedQty: new Decimal(2),
+            unitPrice: new Decimal(50),
+            material: { name: '钢板', sku: 'SP-1' },
+          },
+        ],
+        invoices: [
+          {
+            id: 'pi-1',
+            invoiceNo: 'PI-001',
+            amount: new Decimal(100),
+            subTotal: new Decimal(100),
+            taxAmount: new Decimal(0),
+          },
+        ],
+      },
+    });
+    prisma.purchaseInvoice.update.mockResolvedValue({
+      id: 'pi-1',
+      postingStatus: 'POSTED',
+    });
+
+    const result = await service.postPurchaseInvoice('c1', 'pi-1', 'u1');
+
+    expect(result).toEqual({ id: 'pi-1', postingStatus: 'POSTED' });
+    expect(prisma.purchaseInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'pi-1' },
+      data: { postingStatus: 'POSTED' },
+    });
+    expect(eventEmitter.emit).toHaveBeenCalledWith('purchase.invoice.posted', {
+      companyId: 'c1',
+      idempotencyKey: 'purchase_invoice_posted:pi-1',
+      purchaseInvoiceId: 'pi-1',
+      operatorId: 'u1',
+    });
+  });
+
+  it('rejects payable invoice posting when receipt is short', async () => {
+    const { service, prisma, eventEmitter } = createService();
+    prisma.purchaseInvoice.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      invoiceNo: 'PI-001',
+      postingStatus: 'DRAFT',
+      purchaseOrder: {
+        items: [
+          {
+            id: 'line-1',
+            materialId: 'm1',
+            quantity: new Decimal(2),
+            receivedQty: new Decimal(1),
+            unitPrice: new Decimal(50),
+            material: { name: '钢板', sku: 'SP-1' },
+          },
+        ],
+        invoices: [
+          {
+            id: 'pi-1',
+            invoiceNo: 'PI-001',
+            amount: new Decimal(100),
+            subTotal: new Decimal(100),
+            taxAmount: new Decimal(0),
+          },
+        ],
+      },
+    });
+
+    await expect(
+      service.postPurchaseInvoice('c1', 'pi-1', 'u1'),
+    ).rejects.toThrow('应付发票未通过三单匹配');
+    expect(prisma.purchaseInvoice.update).not.toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it('allows payable invoice posting when only purchase price variance exists', async () => {
+    const { service, prisma, eventEmitter } = createService();
+    prisma.purchaseInvoice.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      invoiceNo: 'PI-001',
+      postingStatus: 'DRAFT',
+      purchaseOrder: {
+        items: [
+          {
+            id: 'line-1',
+            materialId: 'm1',
+            quantity: new Decimal(2),
+            receivedQty: new Decimal(2),
+            unitPrice: new Decimal(50),
+            material: { name: '钢板', sku: 'SP-1' },
+          },
+        ],
+        invoices: [
+          {
+            id: 'pi-1',
+            invoiceNo: 'PI-001',
+            amount: new Decimal(110),
+            subTotal: new Decimal(110),
+            taxAmount: new Decimal(0),
+          },
+        ],
+      },
+    });
+    prisma.purchaseInvoice.update.mockResolvedValue({
+      id: 'pi-1',
+      postingStatus: 'POSTED',
+    });
+
+    const result = await service.postPurchaseInvoice('c1', 'pi-1', 'u1');
+
+    expect(result).toEqual({ id: 'pi-1', postingStatus: 'POSTED' });
+    expect(eventEmitter.emit).toHaveBeenCalledWith('purchase.invoice.posted', {
+      companyId: 'c1',
+      idempotencyKey: 'purchase_invoice_posted:pi-1',
+      purchaseInvoiceId: 'pi-1',
+      operatorId: 'u1',
+    });
+  });
+
+  it('adds three-way match summary to listed purchase orders', async () => {
+    const { service, prisma } = createService();
+    prisma.purchaseOrder.findMany.mockResolvedValue([
+      {
+        id: 'po-1',
+        purchaseNo: 'PO-001',
+        items: [
+          {
+            id: 'line-1',
+            materialId: 'm1',
+            quantity: new Decimal(2),
+            receivedQty: new Decimal(2),
+            unitPrice: new Decimal(50),
+            material: { name: '钢板', sku: 'SP-1' },
+          },
+        ],
+        invoices: [
+          {
+            id: 'pi-1',
+            invoiceNo: 'PI-001',
+            amount: new Decimal(100),
+            subTotal: new Decimal(100),
+            taxAmount: new Decimal(0),
+          },
+        ],
+      },
+    ]);
+
+    const result = await service.listPurchaseOrders('c1');
+
+    expect(result[0]).toEqual(
+      expect.objectContaining({
+        purchaseMatch: expect.objectContaining({
+          status: 'MATCHED',
+          isPostable: true,
+          receivedAmount: 100,
+          invoicedAmount: 100,
+          amountVariance: 0,
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('does not emit duplicate event for already posted payable invoice', async () => {
+    const { service, prisma, eventEmitter } = createService();
+    prisma.purchaseInvoice.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      invoiceNo: 'PI-001',
+      postingStatus: 'POSTED',
+    });
+
+    const result = await service.postPurchaseInvoice('c1', 'pi-1', 'u1');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        purchaseInvoiceId: 'pi-1',
+        postingStatus: 'POSTED',
+      }),
+    );
+    expect(prisma.purchaseInvoice.update).not.toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
+  });
+
+  it('bulk posts payable invoices and keeps per-invoice failure reasons', async () => {
+    const { service, prisma } = createService();
+    prisma.purchaseInvoice.findMany.mockResolvedValue([
+      { id: 'pi-1', invoiceNo: 'PI-1' },
+      { id: 'pi-2', invoiceNo: 'PI-2' },
+      { id: 'pi-3', invoiceNo: 'PI-3' },
+    ]);
+    const postSpy = jest
+      .spyOn(service, 'postPurchaseInvoice')
+      .mockResolvedValueOnce({
+        id: 'pi-1',
+        invoiceNo: 'PI-1',
+        postingStatus: 'POSTED',
+      } as never)
+      .mockResolvedValueOnce({
+        purchaseInvoiceId: 'pi-2',
+        invoiceNo: 'PI-2',
+        postingStatus: 'POSTED',
+        message: '应付发票已过账，无需重复处理',
+      } as never)
+      .mockRejectedValueOnce(new BadRequestException('三单匹配未通过'));
+
+    const result = await service.bulkPostPurchaseInvoices(
+      'c1',
+      ['pi-1', 'pi-2', 'pi-2', 'pi-3'],
+      'u1',
+    );
+
+    expect(prisma.purchaseInvoice.findMany).toHaveBeenCalledWith({
+      where: { companyId: 'c1', id: { in: ['pi-1', 'pi-2', 'pi-3'] } },
+      select: { id: true, invoiceNo: true },
+    });
+    expect(postSpy).toHaveBeenCalledTimes(3);
+    expect(postSpy).toHaveBeenNthCalledWith(1, 'c1', 'pi-1', 'u1');
+    expect(postSpy).toHaveBeenNthCalledWith(2, 'c1', 'pi-2', 'u1');
+    expect(postSpy).toHaveBeenNthCalledWith(3, 'c1', 'pi-3', 'u1');
+    expect(result).toEqual({
+      total: 3,
+      posted: 1,
+      failed: 1,
+      skipped: 1,
+      results: [
+        {
+          purchaseInvoiceId: 'pi-1',
+          status: 'POSTED',
+          invoiceNo: 'PI-1',
+          message: undefined,
+        },
+        {
+          purchaseInvoiceId: 'pi-2',
+          status: 'SKIPPED',
+          invoiceNo: 'PI-2',
+          message: '应付发票已过账，无需重复处理',
+        },
+        {
+          purchaseInvoiceId: 'pi-3',
+          status: 'FAILED',
+          invoiceNo: 'PI-3',
+          error: '三单匹配未通过',
+        },
+      ],
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'u1',
+        action: 'BULK_POST_PURCHASE_INVOICES',
+        entity: 'PurchaseInvoice',
+        entityId: null,
+        companyId: 'c1',
+        details: result,
+      },
+    });
+  });
+
+  it('rejects bulk payable invoice posting without invoice ids', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.bulkPostPurchaseInvoices('c1', [' ', ''], 'u1'),
+    ).rejects.toThrow('请选择需要过账的应付发票');
+  });
+
+  it('creates supplier credit note linked to a purchase return document', async () => {
+    const { service, prisma } = createService();
+    prisma.purchaseInvoice.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      invoiceNo: 'PI-001',
+      supplierId: 'supplier-1',
+      amount: new Decimal(1000),
+      purchaseOrder: { id: 'po-1', purchaseNo: 'PO-001' },
+      supplierCreditNotes: [
+        { amount: new Decimal(100), postingStatus: 'POSTED' },
+      ],
+    });
+    prisma.inventoryReturnDocument.findFirst.mockResolvedValue({
+      id: 'ret-1',
+      returnNo: 'PR-001',
+      returnType: 'PURCHASE',
+      sourceDocumentNo: 'PO-001',
+      status: 'POSTED',
+      supplierCreditNote: null,
+    });
+    prisma.supplierCreditNote.create.mockResolvedValue({ id: 'scn-1' });
+
+    await service.createSupplierCreditNote('c1', 'pi-1', {
+      amount: 200,
+      inventoryReturnDocumentId: 'ret-1',
+      reason: '采购退货扣款',
+    });
+
+    expect(prisma.inventoryReturnDocument.findFirst).toHaveBeenCalledWith({
+      where: { id: 'ret-1', companyId: 'c1' },
+      include: {
+        supplierCreditNote: { select: { id: true, creditNo: true } },
+      },
+    });
+    expect(prisma.supplierCreditNote.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          purchaseInvoiceId: 'pi-1',
+          supplierId: 'supplier-1',
+          amount: new Decimal(200),
+          inventoryReturnDocumentId: 'ret-1',
+          reason: '采购退货扣款',
+          status: 'DRAFT',
+          postingStatus: 'DRAFT',
+          companyId: 'c1',
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('rejects supplier credit note when purchase return belongs to another order', async () => {
+    const { service, prisma } = createService();
+    prisma.purchaseInvoice.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      supplierId: 'supplier-1',
+      amount: new Decimal(1000),
+      purchaseOrder: { id: 'po-1', purchaseNo: 'PO-001' },
+      supplierCreditNotes: [],
+    });
+    prisma.inventoryReturnDocument.findFirst.mockResolvedValue({
+      id: 'ret-2',
+      returnType: 'PURCHASE',
+      sourceDocumentNo: 'PO-999',
+      status: 'POSTED',
+      supplierCreditNote: null,
+    });
+
+    await expect(
+      service.createSupplierCreditNote('c1', 'pi-1', {
+        amount: 200,
+        inventoryReturnDocumentId: 'ret-2',
+      }),
+    ).rejects.toThrow('采购退货单与应付发票采购单不匹配');
+    expect(prisma.supplierCreditNote.create).not.toHaveBeenCalled();
+  });
+
+  it('posts supplier credit note and updates purchase invoice status', async () => {
+    const { service, prisma, tx, eventEmitter } = createService();
+    prisma.supplierCreditNote.findFirst.mockResolvedValue({
+      id: 'scn-1',
+      creditNo: 'SCN-001',
+      purchaseInvoiceId: 'pi-1',
+      amount: new Decimal(300),
+      postingStatus: 'DRAFT',
+      purchaseInvoice: {
+        id: 'pi-1',
+        amount: new Decimal(1000),
+        supplierCreditNotes: [
+          { amount: new Decimal(700), postingStatus: 'POSTED' },
+        ],
+      },
+    });
+    tx.supplierCreditNote.update.mockResolvedValue({
+      id: 'scn-1',
+      postingStatus: 'POSTED',
+    });
+    tx.purchaseInvoice.update.mockResolvedValue({});
+
+    const result = await service.postSupplierCreditNote('c1', 'scn-1', 'u1');
+
+    expect(result).toEqual({ id: 'scn-1', postingStatus: 'POSTED' });
+    expect(tx.supplierCreditNote.update).toHaveBeenCalledWith({
+      where: { id: 'scn-1' },
+      data: expect.objectContaining({
+        status: 'POSTED',
+        postingStatus: 'POSTED',
+      }) as unknown,
+    });
+    expect(tx.purchaseInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'pi-1' },
+      data: { status: 'PAID' },
+    });
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      'purchase.supplier_credit_note.posted',
+      {
+        companyId: 'c1',
+        idempotencyKey: 'supplier_credit_note_posted:scn-1',
+        supplierCreditNoteId: 'scn-1',
+        operatorId: 'u1',
+      },
+    );
+  });
+
+  it('creates supplier payment allocated to a payable invoice', async () => {
+    const { service, prisma } = createService();
+    prisma.partner.findFirst.mockResolvedValue({ id: 'supplier-1' });
+    prisma.purchaseInvoice.findMany.mockResolvedValue([
+      {
+        id: 'pi-1',
+        invoiceNo: 'PI-001',
+        supplierId: 'supplier-1',
+        amount: new Decimal(1000),
+        supplierCreditNotes: [
+          { amount: new Decimal(200), postingStatus: 'POSTED' },
+        ],
+        supplierPaymentAllocations: [],
+      },
+    ]);
+    prisma.supplierPayment.create.mockResolvedValue({ id: 'sp-1' });
+
+    await service.createSupplierPayment('c1', {
+      supplierId: 'supplier-1',
+      amount: 300,
+      method: 'BANK_TRANSFER',
+      allocations: [{ purchaseInvoiceId: 'pi-1', amount: 300 }],
+    });
+
+    expect(prisma.supplierPayment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          supplierId: 'supplier-1',
+          amount: new Decimal(300),
+          method: 'BANK_TRANSFER',
+          postingStatus: 'DRAFT',
+          companyId: 'c1',
+          allocations: {
+            create: [
+              {
+                purchaseInvoiceId: 'pi-1',
+                amount: new Decimal(300),
+                companyId: 'c1',
+              },
+            ],
+          },
+        }) as unknown,
+      }),
+    );
+  });
+
+  it('rejects supplier payment beyond open payable', async () => {
+    const { service, prisma } = createService();
+    prisma.partner.findFirst.mockResolvedValue({ id: 'supplier-1' });
+    prisma.purchaseInvoice.findMany.mockResolvedValue([
+      {
+        id: 'pi-1',
+        invoiceNo: 'PI-001',
+        supplierId: 'supplier-1',
+        amount: new Decimal(1000),
+        supplierCreditNotes: [
+          { amount: new Decimal(700), postingStatus: 'POSTED' },
+        ],
+        supplierPaymentAllocations: [{ amount: new Decimal(250) }],
+      },
+    ]);
+
+    await expect(
+      service.createSupplierPayment('c1', {
+        supplierId: 'supplier-1',
+        amount: 100,
+        method: 'BANK_TRANSFER',
+        allocations: [{ purchaseInvoiceId: 'pi-1', amount: 100 }],
+      }),
+    ).rejects.toThrow('付款金额超过未结应付');
+    expect(prisma.supplierPayment.create).not.toHaveBeenCalled();
+  });
+
+  it('posts supplier payment and marks payable invoice paid', async () => {
+    const { service, prisma, tx, eventEmitter } = createService();
+    prisma.supplierPayment.findFirst.mockResolvedValue({
+      id: 'sp-1',
+      paymentNo: 'SP-001',
+      amount: new Decimal(300),
+      postingStatus: 'DRAFT',
+      allocations: [
+        {
+          amount: new Decimal(300),
+          purchaseInvoice: {
+            id: 'pi-1',
+            invoiceNo: 'PI-001',
+            amount: new Decimal(1000),
+            supplierCreditNotes: [
+              { amount: new Decimal(700), postingStatus: 'POSTED' },
+            ],
+            supplierPaymentAllocations: [],
+          },
+        },
+      ],
+    });
+    tx.supplierPayment.update.mockResolvedValue({
+      id: 'sp-1',
+      postingStatus: 'POSTED',
+    });
+    tx.purchaseInvoice.update.mockResolvedValue({});
+
+    const result = await service.postSupplierPayment('c1', 'sp-1', 'u1');
+
+    expect(result).toEqual({ id: 'sp-1', postingStatus: 'POSTED' });
+    expect(tx.supplierPayment.update).toHaveBeenCalledWith({
+      where: { id: 'sp-1' },
+      data: expect.objectContaining({
+        postingStatus: 'POSTED',
+      }) as unknown,
+    });
+    expect(tx.purchaseInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'pi-1' },
+      data: { status: 'PAID' },
+    });
+    expect(eventEmitter.emit).toHaveBeenCalledWith(
+      'purchase.supplier_payment.posted',
+      {
+        companyId: 'c1',
+        idempotencyKey: 'supplier_payment_posted:sp-1',
+        supplierPaymentId: 'sp-1',
+        operatorId: 'u1',
+      },
     );
   });
 });

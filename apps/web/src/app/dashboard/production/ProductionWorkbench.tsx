@@ -1,7 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Factory, Loader2, PackageCheck } from 'lucide-react';
+import {
+  CheckCircle2,
+  Factory,
+  Loader2,
+  PackageCheck,
+  PlusCircle,
+} from 'lucide-react';
 import api from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
@@ -15,6 +21,13 @@ type WorkOrder = {
     orderNo?: string;
     partner?: { name?: string };
   };
+};
+
+type SalesOrder = {
+  id: string;
+  orderNo: string;
+  status: string;
+  partner?: { name?: string };
 };
 
 type Location = {
@@ -43,11 +56,15 @@ function statusLabel(status: string, t: ReturnType<typeof useI18n>['t']) {
 export function ProductionWorkbench() {
   const { t } = useI18n();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
+  const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
+  const [selectedSalesOrderId, setSelectedSalesOrderId] = useState('');
   const [locations, setLocations] = useState<Location[]>([]);
   const [drafts, setDrafts] = useState<Record<string, ReportDraft>>({});
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -59,6 +76,14 @@ export function ProductionWorkbench() {
       ]);
       setOrders((ordersResp.data?.data as WorkOrder[]) ?? []);
       setLocations((locationsResp.data as Location[]) ?? []);
+      const salesResp = await api.get('/orders', {
+        params: { page: 1, limit: 100 },
+      });
+      const nextSalesOrders = (
+        (salesResp.data?.data as SalesOrder[]) ?? []
+      ).filter((order) => !['CANCELLED', 'COMPLETED'].includes(order.status));
+      setSalesOrders(nextSalesOrders);
+      setSelectedSalesOrderId((prev) => prev || nextSalesOrders[0]?.id || '');
     } catch (reason) {
       const message =
         reason && typeof reason === 'object' && 'response' in reason
@@ -91,11 +116,38 @@ export function ProductionWorkbench() {
       batchNo: '',
     };
 
-  const updateDraft = (
-    id: string,
-    patch: Partial<ReportDraft>,
-  ) => {
+  const updateDraft = (id: string, patch: Partial<ReportDraft>) => {
     setDrafts((prev) => ({ ...prev, [id]: { ...readDraft(id), ...patch } }));
+  };
+
+  const generateWorkOrders = async () => {
+    if (!selectedSalesOrderId) return;
+    try {
+      setGenerating(true);
+      setError(null);
+      setMessage(null);
+      const response = await api.post(
+        `/production/orders/from-sales-order/${selectedSalesOrderId}`,
+        { skipExisting: true },
+      );
+      const createdCount = Number(response.data?.created?.length ?? 0);
+      const skippedCount = Number(response.data?.skipped?.length ?? 0);
+      setMessage(
+        `${t('productionGeneratedCount')}: ${createdCount}; ${t(
+          'productionSkippedCount',
+        )}: ${skippedCount}`,
+      );
+      await load();
+    } catch (reason) {
+      const message =
+        reason && typeof reason === 'object' && 'response' in reason
+          ? (reason as { response?: { data?: { message?: string } } }).response
+              ?.data?.message
+          : undefined;
+      setError(message || t('productionGenerateFailed'));
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const submitReport = async (order: WorkOrder) => {
@@ -162,6 +214,49 @@ export function ProductionWorkbench() {
           {error}
         </div>
       ) : null}
+      {message ? (
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-700">
+          {message}
+        </div>
+      ) : null}
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              {t('productionGenerateFromOrder')}
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              {t('productionGenerateHint')}
+            </p>
+            <select
+              value={selectedSalesOrderId}
+              onChange={(event) => setSelectedSalesOrderId(event.target.value)}
+              className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            >
+              {salesOrders.map((order) => (
+                <option key={order.id} value={order.id}>
+                  {order.orderNo} · {order.partner?.name || '-'} ·{' '}
+                  {order.status}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={() => void generateWorkOrders()}
+            disabled={!selectedSalesOrderId || generating}
+            className="inline-flex items-center justify-center gap-2 self-end rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            {generating ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <PlusCircle className="h-4 w-4" />
+            )}
+            {t('productionGenerate')}
+          </button>
+        </div>
+      </section>
 
       <div className="grid gap-4 xl:grid-cols-3">
         {grouped.map((group) => (
@@ -186,7 +281,10 @@ export function ProductionWorkbench() {
                 const draft = readDraft(order.id);
                 const progress =
                   order.plannedQty > 0
-                    ? Math.min(100, Math.round((order.actualQty / order.plannedQty) * 100))
+                    ? Math.min(
+                        100,
+                        Math.round((order.actualQty / order.plannedQty) * 100),
+                      )
                     : 0;
                 return (
                   <article

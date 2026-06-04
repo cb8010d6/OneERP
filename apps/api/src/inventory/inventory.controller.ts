@@ -87,6 +87,13 @@ export class InventoryController {
     return this.inventoryService.getTransactions(companyId);
   }
 
+  @Get('returns')
+  @RequirePermissions(Permission.InventoryRead)
+  @ApiOperation({ summary: '获取最近退货过账单据' })
+  async getReturnDocuments(@CurrentCompany() companyId: string) {
+    return this.inventoryService.getReturnDocuments(companyId);
+  }
+
   @Get('realtime-ledger')
   @RequirePermissions(Permission.InventoryRead)
   @ApiOperation({

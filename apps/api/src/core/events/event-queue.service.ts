@@ -99,11 +99,16 @@ export class EventQueueService {
   async retryPending(
     limit = 20,
     companyId?: string,
+    eventNames?: string[],
   ): Promise<RetryPendingResult> {
     const now = new Date();
+    const scopedEventNames = [...new Set(eventNames ?? [])].filter(Boolean);
     const items = await this.prisma.eventDlq.findMany({
       where: {
         ...(companyId ? { companyId } : {}),
+        ...(scopedEventNames.length
+          ? { eventName: { in: scopedEventNames } }
+          : {}),
         status: { in: ['PENDING', 'RETRYING'] },
         OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
       },

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
@@ -31,6 +32,8 @@ export interface StockLedgerRow {
   minStock: number;
   netQty: number;
   batchCount: number;
+  averageCost: number;
+  inventoryValue: number;
   isLow: boolean;
 }
 
@@ -46,6 +49,7 @@ interface StockLedgerQueryRow {
   minStock: number | string | null;
   netQty: number | string | null;
   batchCount: number | string | null;
+  averageCost: number | string | null;
 }
 
 export interface InventoryTransactionRecord {
@@ -60,6 +64,26 @@ export interface InventoryTransactionRecord {
   companyId?: string;
   operatorId?: string;
   note?: string | null;
+  unitCost?: number;
+}
+
+export interface InventoryReturnDocumentRow {
+  id: string;
+  returnNo: string;
+  returnType: string;
+  sourceDocumentNo: string;
+  referenceNo: string;
+  status: string;
+  note?: string | null;
+  postedAt: Date;
+  lines: Array<{
+    id: string;
+    materialId: string;
+    quantity: Prisma.Decimal | number | string;
+    locationId?: string | null;
+    inventoryMoveId?: string | null;
+    batchNo?: string | null;
+  }>;
 }
 
 @Injectable()
@@ -121,6 +145,33 @@ export class InventoryService {
       },
       orderBy: { createdAt: 'desc' },
       take: 100,
+    });
+  }
+
+  async getReturnDocuments(companyId: string) {
+    return this.prisma.inventoryReturnDocument.findMany({
+      where: { companyId },
+      include: {
+        lines: {
+          orderBy: { createdAt: 'asc' },
+        },
+        creditNote: {
+          select: {
+            id: true,
+            creditNo: true,
+            postingStatus: true,
+          },
+        },
+        supplierCreditNote: {
+          select: {
+            id: true,
+            creditNo: true,
+            postingStatus: true,
+          },
+        },
+      },
+      orderBy: { postedAt: 'desc' },
+      take: 50,
     });
   }
 
@@ -455,6 +506,11 @@ export class InventoryService {
         .innerJoin('StockLocation as loc', 'loc.id', 'snap.locationId')
         .innerJoin('Material as mat', 'mat.id', 'snap.materialId')
         .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
+        .leftJoin('MaterialCost as cost', (join) =>
+          join
+            .onRef('cost.materialId', '=', 'snap.materialId')
+            .on('cost.companyId', '=', companyId),
+        )
         .select([
           'loc.id as locationId',
           'loc.name as locationName',
@@ -467,6 +523,7 @@ export class InventoryService {
           'mat.minStock as minStock',
           'snap.netQty as netQty',
           'snap.batchCount as batchCount',
+          'cost.averageCost as averageCost',
         ])
         .where('snap.companyId', '=', companyId)
         .orderBy('wh.name', 'asc')
@@ -511,6 +568,7 @@ export class InventoryService {
     const data = rows.map((row): StockLedgerRow => {
       const netQty = Number(row.netQty ?? 0);
       const minStock = Number(row.minStock ?? 0);
+      const averageCost = Number(row.averageCost ?? 0);
       return {
         locationId: String(row.locationId),
         locationName: String(row.locationName),
@@ -523,6 +581,8 @@ export class InventoryService {
         minStock,
         netQty,
         batchCount: Number(row.batchCount ?? 0),
+        averageCost,
+        inventoryValue: this.round2(netQty * averageCost),
         isLow: minStock > 0 && netQty <= minStock,
       };
     });
@@ -588,6 +648,7 @@ export class InventoryService {
         operatorId: operatorId || 'SYSTEM',
         referenceNo,
         note: finalNote,
+        unitCost: data.unitCost,
       }),
     );
 
@@ -599,12 +660,59 @@ export class InventoryService {
         referenceNo: transaction.referenceNo,
         materialId: transaction.materialId,
         quantity: transaction.quantity,
-        unitCost: Number(material?.unitPrice ?? 0),
+        unitCost: transaction.unitCost ?? Number(material?.unitPrice ?? 0),
         operatorId: operatorId || 'SYSTEM',
       });
     }
 
     return transaction;
+  }
+
+  async createStockMoveInTransaction(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    data: CreateStockMoveDto,
+    operatorId?: string,
+  ): Promise<InventoryTransactionRecord> {
+    const sourceLocation = await this.resolveLocationOwnership(
+      companyId,
+      data.sourceLocationId,
+      '来源库位',
+    );
+    const destLocation = await this.resolveLocationOwnership(
+      companyId,
+      data.destLocationId,
+      '目标库位',
+    );
+
+    if (!sourceLocation?.id && !destLocation?.id) {
+      throw new BadRequestException('来源库位和目标库位不能同时为空');
+    }
+
+    if (
+      sourceLocation?.id &&
+      destLocation?.id &&
+      sourceLocation.id === destLocation.id
+    ) {
+      throw new BadRequestException('来源库位和目标库位不能相同');
+    }
+
+    return this.executeStockMove(tx, {
+      companyId,
+      materialId: data.materialId,
+      quantity: data.quantity,
+      sourceLocationId: sourceLocation?.id,
+      destLocationId: destLocation?.id,
+      batchNo: data.batchNo,
+      operatorId: operatorId || 'SYSTEM',
+      referenceNo: this.buildReferenceNo(
+        data.referenceNo,
+        data.documentType,
+        data.documentId,
+      ),
+      note: data.note ?? this.buildMoveNote(data.documentType, data.documentId),
+      unitCost: data.unitCost,
+    });
   }
 
   async createInbound(
@@ -614,6 +722,7 @@ export class InventoryService {
       materialId: string;
       quantity: number;
       batchNo?: string;
+      unitCost?: number;
     },
     operatorId?: string,
   ) {
@@ -624,6 +733,7 @@ export class InventoryService {
         destLocationId: data.destLocationId,
         quantity: data.quantity,
         batchNo: data.batchNo,
+        unitCost: data.unitCost,
       },
       operatorId,
     );
@@ -760,10 +870,15 @@ export class InventoryService {
     });
 
     if (existedReverse > 0) {
+      const returnDocument = await this.findReturnDocumentByReference(
+        companyId,
+        reverseReferenceNo,
+      );
       return {
         orderId: order.id,
         orderNo: order.orderNo,
         reversedLines: [],
+        returnDocument,
         message: '销售订单冲销已存在，已跳过重复处理',
       };
     }
@@ -789,6 +904,8 @@ export class InventoryService {
       materialId: string;
       quantity: number;
       transactionId: string;
+      locationId?: string | null;
+      batchNo?: string | null;
     }> = [];
 
     for (const move of shippedMoves) {
@@ -812,6 +929,8 @@ export class InventoryService {
         materialId: move.materialId,
         quantity: Number(move.quantity),
         transactionId: transaction.id,
+        locationId: transaction.destLocationId ?? null,
+        batchNo: transaction.batchNo ?? null,
       });
     }
 
@@ -822,10 +941,22 @@ export class InventoryService {
       });
     }
 
+    const returnDocument = await this.createReturnDocument({
+      companyId,
+      returnType: 'SALES',
+      sourceDocumentId: order.id,
+      sourceDocumentNo: order.orderNo,
+      referenceNo: reverseReferenceNo,
+      note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+      operatorId,
+      lines: reversedLines,
+    });
+
     return {
       orderId: order.id,
       orderNo: order.orderNo,
       reversedLines,
+      returnDocument,
       message:
         options?.rollbackStatus === false
           ? '销售订单冲销完成'
@@ -847,9 +978,14 @@ export class InventoryService {
     });
 
     if (existedReverse > 0) {
+      const returnDocument = await this.findReturnDocumentByReference(
+        companyId,
+        reverseReferenceNo,
+      );
       return {
         purchaseNo,
         reversedLines: [],
+        returnDocument,
         message: '采购入库冲销已存在，已跳过重复处理',
       };
     }
@@ -878,6 +1014,8 @@ export class InventoryService {
       materialId: string;
       quantity: number;
       transactionId: string;
+      locationId?: string | null;
+      batchNo?: string | null;
     }> = [];
 
     for (const move of inboundMoves) {
@@ -901,14 +1039,97 @@ export class InventoryService {
         materialId: move.materialId,
         quantity: Number(move.quantity),
         transactionId: transaction.id,
+        locationId: transaction.sourceLocationId ?? null,
+        batchNo: transaction.batchNo ?? null,
       });
     }
+
+    const returnDocument = await this.createReturnDocument({
+      companyId,
+      returnType: 'PURCHASE',
+      sourceDocumentNo: purchaseNo,
+      referenceNo: reverseReferenceNo,
+      note: payload.note ?? `采购入库冲销：${purchaseNo}`,
+      operatorId,
+      lines: reversedLines,
+    });
 
     return {
       purchaseNo,
       reversedLines,
+      returnDocument,
       message: '采购入库冲销完成',
     };
+  }
+
+  private async findReturnDocumentByReference(
+    companyId: string,
+    referenceNo: string,
+  ) {
+    return this.prisma.inventoryReturnDocument.findUnique({
+      where: { companyId_referenceNo: { companyId, referenceNo } },
+      include: { lines: { orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  private async createReturnDocument(input: {
+    companyId: string;
+    returnType: 'SALES' | 'PURCHASE';
+    sourceDocumentId?: string;
+    sourceDocumentNo: string;
+    referenceNo: string;
+    note?: string;
+    operatorId?: string;
+    lines: Array<{
+      materialId: string;
+      quantity: number;
+      transactionId: string;
+      locationId?: string | null;
+      batchNo?: string | null;
+    }>;
+  }) {
+    return this.prisma.inventoryReturnDocument.upsert({
+      where: {
+        companyId_referenceNo: {
+          companyId: input.companyId,
+          referenceNo: input.referenceNo,
+        },
+      },
+      update: {
+        note: input.note,
+        status: 'POSTED',
+      },
+      create: {
+        returnNo: this.generateReturnNo(input.returnType),
+        returnType: input.returnType,
+        sourceDocumentId: input.sourceDocumentId,
+        sourceDocumentNo: input.sourceDocumentNo,
+        referenceNo: input.referenceNo,
+        status: 'POSTED',
+        note: input.note,
+        operatorId: input.operatorId,
+        companyId: input.companyId,
+        lines: {
+          create: input.lines.map((line) => ({
+            materialId: line.materialId,
+            quantity: line.quantity,
+            locationId: line.locationId,
+            inventoryMoveId: line.transactionId,
+            batchNo: line.batchNo,
+          })),
+        },
+      },
+      include: { lines: { orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  private generateReturnNo(returnType: 'SALES' | 'PURCHASE') {
+    const prefix = returnType === 'SALES' ? 'SR' : 'PR';
+    const now = new Date();
+    const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+      now.getDate(),
+    ).padStart(2, '0')}`;
+    return `${prefix}-${date}-${String(now.getTime()).slice(-6)}`;
   }
 
   private async resolveLocationOwnership(
@@ -1062,6 +1283,10 @@ export class InventoryService {
     return roundDecimal(value);
   }
 
+  private round4(value: Decimal.Value) {
+    return roundDecimal(value, 4);
+  }
+
   private generateBatchNo() {
     return `BATCH${Date.now()}`;
   }
@@ -1078,6 +1303,7 @@ export class InventoryService {
       operatorId: string;
       referenceNo?: string;
       note?: string;
+      unitCost?: number;
     },
   ): Promise<InventoryTransactionRecord> {
     let finalBatchNo = input.batchNo;
@@ -1139,6 +1365,13 @@ export class InventoryService {
         : input.sourceLocationId
           ? 'OUTBOUND'
           : 'INBOUND';
+    const unitCost = await this.updateMaterialCost(tx, {
+      companyId: input.companyId,
+      materialId: input.materialId,
+      quantity: input.quantity,
+      moveType,
+      unitCost: input.unitCost,
+    });
 
     const transaction = await tx.inventoryTransaction.create({
       data: {
@@ -1158,7 +1391,135 @@ export class InventoryService {
     return {
       ...transaction,
       quantity: Number(transaction.quantity),
+      unitCost,
     };
+  }
+
+  private async updateMaterialCost(
+    tx: Prisma.TransactionClient,
+    input: {
+      companyId: string;
+      materialId: string;
+      quantity: number;
+      moveType: 'INBOUND' | 'OUTBOUND' | 'TRANSFER';
+      unitCost?: number;
+    },
+  ) {
+    if (input.moveType === 'TRANSFER') {
+      return this.resolveMovingAverageCost(
+        tx,
+        input.companyId,
+        input.materialId,
+      );
+    }
+
+    const existing = await tx.materialCost.findUnique({
+      where: {
+        companyId_materialId: {
+          companyId: input.companyId,
+          materialId: input.materialId,
+        },
+      },
+    });
+    const fallbackUnitCost = await this.resolveMaterialFallbackCost(
+      tx,
+      input.materialId,
+    );
+    const currentQty = new Decimal(existing?.quantityOnHand ?? 0);
+    const currentValue = new Decimal(
+      existing?.inventoryValue ??
+        currentQty.times(existing?.averageCost ?? fallbackUnitCost),
+    );
+    const currentAverageCost = currentQty.gt(0)
+      ? currentValue.div(currentQty)
+      : new Decimal(existing?.averageCost ?? fallbackUnitCost);
+    const moveQty = new Decimal(input.quantity);
+
+    if (input.moveType === 'INBOUND') {
+      const incomingUnitCost = new Decimal(input.unitCost ?? fallbackUnitCost);
+      const nextQty = currentQty.plus(moveQty);
+      const nextValue = currentValue.plus(moveQty.times(incomingUnitCost));
+      const nextAverageCost = nextQty.gt(0)
+        ? nextValue.div(nextQty)
+        : incomingUnitCost;
+      await tx.materialCost.upsert({
+        where: {
+          companyId_materialId: {
+            companyId: input.companyId,
+            materialId: input.materialId,
+          },
+        },
+        create: {
+          companyId: input.companyId,
+          materialId: input.materialId,
+          quantityOnHand: this.round4(nextQty),
+          averageCost: this.round4(nextAverageCost),
+          inventoryValue: this.round4(nextValue),
+        },
+        update: {
+          quantityOnHand: this.round4(nextQty),
+          averageCost: this.round4(nextAverageCost),
+          inventoryValue: this.round4(nextValue),
+        },
+      });
+      return this.round4(incomingUnitCost);
+    }
+
+    const issuedUnitCost = currentAverageCost;
+    const nextQty = Decimal.max(0, currentQty.minus(moveQty));
+    const nextValue = nextQty.eq(0)
+      ? new Decimal(0)
+      : Decimal.max(0, currentValue.minus(moveQty.times(issuedUnitCost)));
+    const nextAverageCost = nextQty.gt(0)
+      ? nextValue.div(nextQty)
+      : issuedUnitCost;
+
+    await tx.materialCost.upsert({
+      where: {
+        companyId_materialId: {
+          companyId: input.companyId,
+          materialId: input.materialId,
+        },
+      },
+      create: {
+        companyId: input.companyId,
+        materialId: input.materialId,
+        quantityOnHand: this.round4(nextQty),
+        averageCost: this.round4(nextAverageCost),
+        inventoryValue: this.round4(nextValue),
+      },
+      update: {
+        quantityOnHand: this.round4(nextQty),
+        averageCost: this.round4(nextAverageCost),
+        inventoryValue: this.round4(nextValue),
+      },
+    });
+
+    return this.round4(issuedUnitCost);
+  }
+
+  private async resolveMovingAverageCost(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    materialId: string,
+  ) {
+    const cost = await tx.materialCost.findUnique({
+      where: { companyId_materialId: { companyId, materialId } },
+      select: { averageCost: true },
+    });
+    if (cost) return Number(cost.averageCost);
+    return this.resolveMaterialFallbackCost(tx, materialId);
+  }
+
+  private async resolveMaterialFallbackCost(
+    tx: Prisma.TransactionClient,
+    materialId: string,
+  ) {
+    const material = await tx.material.findFirst({
+      where: { id: materialId },
+      select: { unitPrice: true },
+    });
+    return Number(material?.unitPrice ?? 0);
   }
 
   private async refreshLedgerSnapshot(

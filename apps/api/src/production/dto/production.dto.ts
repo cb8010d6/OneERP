@@ -4,6 +4,7 @@ import {
   IsString,
   IsNotEmpty,
   IsNumber,
+  IsBoolean,
   Min,
 } from 'class-validator';
 
@@ -49,4 +50,14 @@ export class CreateWorkReportDto {
   @IsOptional()
   @IsString()
   batchNo?: string;
+}
+
+export class GenerateWorkOrdersFromOrderDto {
+  @ApiPropertyOptional({
+    description: '已存在同销售订单/产品工单时是否跳过，默认 true',
+    default: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  skipExisting?: boolean;
 }

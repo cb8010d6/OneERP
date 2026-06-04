@@ -16,5 +16,6 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
     PermissionsGuard,
   ],
   controllers: [OrdersController],
+  exports: [OrdersService],
 })
 export class OrdersModule {}

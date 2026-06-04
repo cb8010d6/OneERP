@@ -1,15 +1,32 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { DynamicView } from '@/components/core';
+import { PurchaseWorkbench } from '@/components/purchase/PurchaseWorkbench';
 import { useI18n, type TranslationKey } from '@/lib/i18n';
 
 type PurchaseTab = 'purchaseOrder' | 'purchaseReceipt' | 'purchaseInvoice';
 
-const tabs: Array<{ key: PurchaseTab; labelKey: TranslationKey; titleKey: TranslationKey }> = [
-  { key: 'purchaseOrder', labelKey: 'purchaseOrderTab', titleKey: 'purchaseOrderTitle' },
-  { key: 'purchaseReceipt', labelKey: 'purchaseReceiptTab', titleKey: 'purchaseReceiptTitle' },
-  { key: 'purchaseInvoice', labelKey: 'purchaseInvoiceTab', titleKey: 'purchaseInvoiceTitle' },
+const tabs: Array<{
+  key: PurchaseTab;
+  labelKey: TranslationKey;
+  titleKey: TranslationKey;
+}> = [
+  {
+    key: 'purchaseOrder',
+    labelKey: 'purchaseOrderTab',
+    titleKey: 'purchaseOrderTitle',
+  },
+  {
+    key: 'purchaseReceipt',
+    labelKey: 'purchaseReceiptTab',
+    titleKey: 'purchaseReceiptTitle',
+  },
+  {
+    key: 'purchaseInvoice',
+    labelKey: 'purchaseInvoiceTab',
+    titleKey: 'purchaseInvoiceTitle',
+  },
 ];
 
 export default function PurchasePage() {
@@ -17,8 +34,16 @@ export default function PurchasePage() {
   const [activeTab, setActiveTab] = useState<PurchaseTab>('purchaseOrder');
   const current = tabs.find((tab) => tab.key === activeTab) ?? tabs[0];
 
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get('tab');
+    if (tabs.some((tab) => tab.key === requestedTab)) {
+      setActiveTab(requestedTab as PurchaseTab);
+    }
+  }, []);
+
   return (
     <div className="space-y-4">
+      <PurchaseWorkbench />
       <div className="flex flex-wrap gap-2 border-b border-slate-200">
         {tabs.map((tab) => (
           <button

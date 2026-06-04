@@ -17,12 +17,16 @@ function createService() {
     resolveToolCall: jest.fn(),
     resolveReadSql: jest.fn(),
   };
+  const ordersService = {
+    createOrder: jest.fn(),
+  };
   const service = new AIService(
     prisma as never,
     crudService as never,
     metadataService as never,
     workflowService as never,
     llmAdapterService as never,
+    ordersService as never,
   );
   return {
     service,
@@ -31,6 +35,7 @@ function createService() {
     metadataService,
     workflowService,
     llmAdapterService,
+    ordersService,
   };
 }
 
@@ -78,6 +83,49 @@ describe('AIService', () => {
       'partner',
       { name: '客户A' },
       'c1',
+    );
+  });
+
+  it('routes AI order creation through OrdersService', async () => {
+    const { service, llmAdapterService, crudService, ordersService } =
+      createService();
+    llmAdapterService.resolveToolCall.mockResolvedValue({
+      toolName: 'create_resource',
+      args: {
+        modelName: 'order',
+        data: {
+          partnerId: 'partner-1',
+          items: [{ productId: 'product-1', quantity: 2 }],
+        },
+      },
+    });
+    ordersService.createOrder.mockResolvedValue({
+      id: 'order-1',
+      orderNo: 'ORD-001',
+      status: 'DRAFT',
+    });
+
+    const preview = (await service.command('创建订单', 'company-1', 'user-1', {
+      dryRun: true,
+    })) as { draft: { previewToken: string } };
+
+    await service.command('创建订单', 'company-1', 'user-1', {
+      dryRun: false,
+      confirmation: { token: preview.draft.previewToken },
+    });
+
+    expect(crudService.create).not.toHaveBeenCalledWith(
+      'order',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      'company-1',
+      'user-1',
+      expect.objectContaining({
+        partnerId: 'partner-1',
+        items: [{ productId: 'product-1', quantity: 2 }],
+      }),
     );
   });
 

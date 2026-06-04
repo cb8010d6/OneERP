@@ -2,6 +2,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsDateString,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -87,4 +88,61 @@ export class CreatePurchaseInvoiceDto {
   @IsOptional()
   @IsDateString()
   dueDate?: string;
+}
+
+export class CreateSupplierCreditNoteDto {
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+
+  @IsOptional()
+  @IsString()
+  inventoryReturnDocumentId?: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @IsOptional()
+  @IsDateString()
+  creditDate?: string;
+}
+
+export class SupplierPaymentAllocationDto {
+  @IsString()
+  @IsNotEmpty()
+  purchaseInvoiceId!: string;
+
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+}
+
+export class CreateSupplierPaymentDto {
+  @IsString()
+  @IsNotEmpty()
+  supplierId!: string;
+
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'])
+  method!: string;
+
+  @IsOptional()
+  @IsDateString()
+  paymentDate?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => SupplierPaymentAllocationDto)
+  allocations!: SupplierPaymentAllocationDto[];
 }

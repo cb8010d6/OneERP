@@ -33,8 +33,8 @@ export class FinanceDlqService {
     return this.eventQueueService.list(limit, companyId);
   }
 
-  async retryPending(limit = 20, companyId?: string) {
-    return this.eventQueueService.retryPending(limit, companyId);
+  async retryPending(limit = 20, companyId?: string, eventNames?: string[]) {
+    return this.eventQueueService.retryPending(limit, companyId, eventNames);
   }
 
   @Cron(CronExpression.EVERY_5_MINUTES)

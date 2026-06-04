@@ -3,8 +3,10 @@ import { FinanceController } from './finance.controller';
 import { FinanceService } from './finance.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AccountingService } from './accounting.service';
+import { FinanceAccountMappingService } from './finance-account-mapping.service';
 import { FinanceDlqService } from './finance-dlq.service';
 import { FinanceBridgeListener } from './finance-bridge.listener';
+import { AccountingPeriodService } from './accounting-period.service';
 import { EventQueueModule } from '../core/events/event-queue.module';
 import { PermissionsGuard } from '../core/guards/permissions.guard';
 
@@ -14,10 +16,17 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
   providers: [
     FinanceService,
     AccountingService,
+    FinanceAccountMappingService,
     FinanceDlqService,
+    AccountingPeriodService,
     FinanceBridgeListener,
     PermissionsGuard,
   ],
-  exports: [AccountingService, FinanceDlqService],
+  exports: [
+    AccountingService,
+    FinanceAccountMappingService,
+    FinanceDlqService,
+    AccountingPeriodService,
+  ],
 })
 export class FinanceModule {}

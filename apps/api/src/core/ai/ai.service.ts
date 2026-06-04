@@ -1,10 +1,12 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CrudService } from '../crud/crud.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { LlmAdapterService } from './llm-adapter.service';
+import { OrdersService } from '../../orders/orders.service';
 
 export interface AIToolSchema {
   name: string;
@@ -52,6 +54,7 @@ export class AIService {
     private readonly metadataService: MetadataService,
     private readonly workflowService: WorkflowService,
     private readonly llmAdapterService: LlmAdapterService,
+    private readonly ordersService: OrdersService,
   ) {}
 
   private toSafeText(value: unknown): string {
@@ -242,6 +245,7 @@ export class AIService {
     const llmCall = await this.llmAdapterService.resolveToolCall(
       text,
       toolSchemas,
+      companyId,
     );
     if (llmCall) {
       if (dryRun && this.isWriteTool(llmCall.toolName)) {
@@ -380,6 +384,7 @@ export class AIService {
     const sql = await this.llmAdapterService.resolveReadSql(
       input,
       schemaContext,
+      companyId,
     );
 
     if (!sql) {
@@ -429,7 +434,10 @@ export class AIService {
       sourceSize: file.size,
     };
 
-    const llmDraft = await this.llmAdapterService.resolveDocumentDraft(name);
+    const llmDraft = await this.llmAdapterService.resolveDocumentDraft(
+      name,
+      companyId,
+    );
     return {
       type: 'draft',
       message: '单据解析完成，请确认草稿后再落库。',
@@ -554,27 +562,16 @@ export class AIService {
       throw new BadRequestException('没有可用产品，请先维护产品主数据。');
     }
 
-    const created = await this.crudService.create(
-      'order',
-      {
-        partnerId: partner.id,
-        salesId: userId,
-        status: 'DRAFT',
-        totalAmount: 0,
-        aiSummary: { source: 'v1_ai_command', prompt: text },
-        items: {
-          create: [
-            {
-              productId: product.id,
-              quantity,
-              unitPrice: 0,
-              totalPrice: 0,
-            },
-          ],
+    const created = await this.ordersService.createOrder(companyId, userId, {
+      partnerId: partner.id,
+      aiSummary: { source: 'v1_ai_command', prompt: text },
+      items: [
+        {
+          productId: product.id,
+          quantity,
         },
-      },
-      companyId,
-    );
+      ],
+    });
 
     const record = created as Record<string, unknown>;
 
@@ -706,6 +703,25 @@ export class AIService {
         return null;
       }
 
+      if (modelName === 'order') {
+        const order = await this.createOrderFromToolData(
+          data,
+          companyId,
+          userId,
+        );
+        const record = order as Record<string, unknown>;
+        return {
+          type: 'tool_result',
+          tool: toolName,
+          message: `已创建订单 ${this.toSafeText(record.orderNo)}`,
+          card: {
+            modelName,
+            id: record.id,
+            ...record,
+          },
+        };
+      }
+
       const created = await this.crudService.create(modelName, data, companyId);
       const record = created as Record<string, unknown>;
       return {
@@ -769,6 +785,51 @@ export class AIService {
     }
 
     return null;
+  }
+
+  private async createOrderFromToolData(
+    data: JsonRecord,
+    companyId: string,
+    userId: string,
+  ) {
+    const partnerId = this.toSafeText(data.partnerId).trim();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!partnerId || items.length === 0) {
+      throw new BadRequestException(
+        'AI 创建订单需要 partnerId 和至少一条 items 明细',
+      );
+    }
+
+    return this.ordersService.createOrder(companyId, userId, {
+      partnerId,
+      taxCodeId: this.readOptionalStringArg(data, 'taxCodeId'),
+      expectedDate: this.readOptionalStringArg(data, 'expectedDate'),
+      notes: this.readOptionalStringArg(data, 'notes'),
+      aiSummary: {
+        source: 'v1_ai_tool_call',
+        originalData: data,
+      } as Prisma.InputJsonValue,
+      items: items.map((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          throw new BadRequestException('订单明细格式不正确');
+        }
+        const record = item as JsonRecord;
+        const productId = this.toSafeText(record.productId).trim();
+        const quantity = Number(record.quantity);
+        if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+          throw new BadRequestException('订单明细缺少 productId 或 quantity');
+        }
+        return {
+          productId,
+          quantity,
+          requestedDiscount:
+            record.requestedDiscount === undefined
+              ? undefined
+              : Number(record.requestedDiscount),
+          taxCodeId: this.readOptionalStringArg(record, 'taxCodeId'),
+        };
+      }),
+    });
   }
 
   private isWriteTool(toolName: string) {
@@ -850,7 +911,8 @@ export class AIService {
 Tables and Fields:
 - "Order": id(uuid), orderNo(string), status(enum: DRAFT, PENDING, SHIPPED, COMPLETED), totalAmount(decimal), partnerId(uuid), companyId(uuid), createdAt(datetime)
 - "Invoice": id(uuid), invoiceNo(string), amount(decimal), status(enum: UNPAID, PARTIAL, PAID), postingStatus(enum: DRAFT, POSTED), companyId(uuid), orderId(uuid)
-- "Payment": id(uuid), invoiceId(uuid), amount(decimal), method(enum: CASH, TRANSFER, ALIPAY, WECHAT), paymentDate(datetime)
+- "Payment": id(uuid), invoiceId(uuid, optional legacy link), partnerId(uuid), companyId(uuid), amount(decimal), method(enum: BANK_TRANSFER, CASH, ALIPAY, WECHAT), paymentDate(datetime), postingStatus(enum: DRAFT, POSTED, CANCELLED)
+- "PaymentAllocation": id(uuid), paymentId(uuid), invoiceId(uuid), amount(decimal), companyId(uuid)
 - "Partner": id(uuid), name(string), code(string), type(enum: CUSTOMER, SUPPLIER, BOTH), companyId(uuid)
 - "InventoryTransaction": id(uuid), type(enum: INBOUND, OUTBOUND, TRANSFER), materialId(uuid), quantity(decimal), companyId(uuid), createdAt(datetime)
 - "Material": id(uuid), sku(string), name(string), category(string), unitPrice(decimal), companyId(uuid)
@@ -861,6 +923,8 @@ Relations:
 - Invoice.orderId -> Order.id
 - Order.partnerId -> Partner.id
 - Payment.invoiceId -> Invoice.id
+- PaymentAllocation.paymentId -> Payment.id
+- PaymentAllocation.invoiceId -> Invoice.id
 - JournalEntryLine.journalEntryId -> JournalEntry.id
 
 Rules:

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Put,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -24,7 +25,9 @@ import {
   AICommandDto,
   AIChat2DashDto,
 } from './dto/ai-command.dto';
+import { AISettingsDto } from './dto/ai-settings.dto';
 import { AIService } from './ai.service';
+import { AISettingsService } from './ai-settings.service';
 
 interface CurrentUserPayload {
   id: string;
@@ -41,7 +44,10 @@ type UploadedDocument = {
 @UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
 @Controller('v1/ai')
 export class AIController {
-  constructor(private readonly aiService: AIService) {}
+  constructor(
+    private readonly aiService: AIService,
+    private readonly aiSettingsService: AISettingsService,
+  ) {}
 
   @Get('tools')
   @RequirePermissions(Permission.AiRead)
@@ -50,6 +56,33 @@ export class AIController {
     return {
       tools: await this.aiService.getToolSchemas(),
     };
+  }
+
+  @Get('settings')
+  @RequirePermissions(Permission.AiRead)
+  @ApiOperation({ summary: '获取当前公司 AI Provider 配置（密钥脱敏）' })
+  settings(@CurrentCompany() companyId: string) {
+    return this.aiSettingsService.getPublicSettings(companyId);
+  }
+
+  @Put('settings')
+  @RequirePermissions(Permission.AiSettingsUpdate)
+  @ApiOperation({ summary: '更新当前公司 AI Provider 配置' })
+  updateSettings(
+    @Body() dto: AISettingsDto,
+    @CurrentCompany() companyId: string,
+  ) {
+    return this.aiSettingsService.updateSettings(companyId, dto);
+  }
+
+  @Post('settings/test')
+  @RequirePermissions(Permission.AiSettingsUpdate)
+  @ApiOperation({ summary: '测试当前公司 AI Provider 连接' })
+  testSettings(
+    @Body() dto: AISettingsDto,
+    @CurrentCompany() companyId: string,
+  ) {
+    return this.aiSettingsService.testConnection(companyId, dto);
   }
 
   @Post('command')
