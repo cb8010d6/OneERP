@@ -21,7 +21,7 @@ type MockPrisma = {
     findUnique: jest.Mock;
     update: jest.Mock;
   };
-  supplierPayment: { findFirst: jest.Mock };
+  supplierPayment: { findFirst: jest.Mock; findMany: jest.Mock };
   paymentAllocation: { create: jest.Mock };
   creditNote: {
     create: jest.Mock;
@@ -73,7 +73,7 @@ describe('FinanceService', () => {
       findUnique: jest.fn(),
       update: jest.fn(),
     },
-    supplierPayment: { findFirst: jest.fn() },
+    supplierPayment: { findFirst: jest.fn(), findMany: jest.fn() },
     paymentAllocation: { create: jest.fn() },
     creditNote: {
       create: jest.fn(),
@@ -1281,6 +1281,45 @@ describe('FinanceService', () => {
           matchedBy: 'u1',
         }) as unknown,
       });
+    });
+
+    it('returns posted payment candidates for unmatched bank lines', async () => {
+      prisma.bankStatementLine.findMany.mockResolvedValue([
+        {
+          id: 'bsl-1',
+          amount: 100,
+          status: BankStatementLineStatus.UNMATCHED,
+          transactionDate: new Date('2026-06-04'),
+        },
+      ]);
+      prisma.payment.findMany.mockResolvedValue([
+        {
+          id: 'pay-1',
+          amount: 100,
+          paymentDate: new Date('2026-06-04'),
+          partner: { name: '客户A' },
+        },
+      ]);
+
+      const result = await service.getBankStatementLines('c1', 'UNMATCHED');
+
+      expect(result.rows[0]?.matchCandidates).toEqual([
+        {
+          targetType: 'CUSTOMER_PAYMENT',
+          targetId: 'pay-1',
+          label: '客户A',
+          amount: 100,
+          date: '2026-06-04T00:00:00.000Z',
+        },
+      ]);
+      expect(prisma.payment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            amount: 100,
+            postingStatus: 'POSTED',
+          }) as unknown,
+        }) as unknown,
+      );
     });
 
     it('rejects supplier payment matching when bank line is not an outflow', async () => {

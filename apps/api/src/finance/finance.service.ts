@@ -731,7 +731,67 @@ export class FinanceService {
       take: 200,
     });
 
-    return { rows };
+    const rowsWithCandidates = await Promise.all(
+      rows.map(async (row) => ({
+        ...row,
+        matchCandidates:
+          row.status === BankStatementLineStatus.UNMATCHED
+            ? await this.findBankStatementMatchCandidates(companyId, row)
+            : [],
+      })),
+    );
+
+    return { rows: rowsWithCandidates };
+  }
+
+  private async findBankStatementMatchCandidates(
+    companyId: string,
+    line: { amount: Prisma.Decimal | number | string; transactionDate: Date },
+  ) {
+    const amount = this.round2(Number(line.amount));
+    if (amount > 0) {
+      const payments = await this.prisma.payment.findMany({
+        where: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          amount,
+          bankStatementLines: {
+            none: { status: BankStatementLineStatus.MATCHED },
+          },
+        },
+        include: { partner: { select: { id: true, name: true } } },
+        orderBy: { paymentDate: 'desc' },
+        take: 5,
+      });
+      return payments.map((payment) => ({
+        targetType: 'CUSTOMER_PAYMENT' as const,
+        targetId: payment.id,
+        label: payment.partner.name,
+        amount: this.round2(Number(payment.amount)),
+        date: payment.paymentDate.toISOString(),
+      }));
+    }
+
+    const supplierPayments = await this.prisma.supplierPayment.findMany({
+      where: {
+        companyId,
+        postingStatus: EntryPostingStatus.POSTED,
+        amount: this.round2(Math.abs(amount)),
+        bankStatementLines: {
+          none: { status: BankStatementLineStatus.MATCHED },
+        },
+      },
+      include: { supplier: { select: { id: true, name: true } } },
+      orderBy: { paymentDate: 'desc' },
+      take: 5,
+    });
+    return supplierPayments.map((payment) => ({
+      targetType: 'SUPPLIER_PAYMENT' as const,
+      targetId: payment.id,
+      label: payment.supplier.name,
+      amount: this.round2(Number(payment.amount)),
+      date: payment.paymentDate.toISOString(),
+    }));
   }
 
   async matchBankStatementLine(

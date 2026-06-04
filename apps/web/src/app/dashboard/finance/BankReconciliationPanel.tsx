@@ -27,6 +27,15 @@ type BankStatementLine = {
   paymentId?: string | null;
   supplierPaymentId?: string | null;
   matchedAt?: string | null;
+  matchCandidates?: MatchCandidate[];
+};
+
+type MatchCandidate = {
+  targetType: MatchTargetType;
+  targetId: string;
+  label: string;
+  amount: number;
+  date: string;
 };
 
 type BankStatementResponse = {
@@ -432,21 +441,58 @@ export function BankReconciliationPanel() {
                               {t("bankReconciliationSupplierPayment")}
                             </option>
                           </select>
-                          <input
-                            type="text"
-                            value={draft.targetId}
-                            onChange={(event) =>
-                              setMatchDrafts((current) => ({
-                                ...current,
-                                [line.id]: {
-                                  ...draft,
-                                  targetId: event.target.value,
-                                },
-                              }))
-                            }
-                            placeholder={t("bankReconciliationTargetId")}
-                            className="w-40 rounded-md border border-slate-200 px-2 py-1 text-xs"
-                          />
+                          {(line.matchCandidates?.length ?? 0) > 0 ? (
+                            <select
+                              value={
+                                draft.targetId
+                                  ? `${draft.targetType}:${draft.targetId}`
+                                  : ""
+                              }
+                              onChange={(event) => {
+                                const [targetType, targetId] =
+                                  event.target.value.split(":");
+                                setMatchDrafts((current) => ({
+                                  ...current,
+                                  [line.id]: {
+                                    targetType:
+                                      targetType as MatchTargetType,
+                                    targetId: targetId ?? "",
+                                  },
+                                }));
+                              }}
+                              className="w-64 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+                            >
+                              <option value="">
+                                {t("bankReconciliationSelectCandidate")}
+                              </option>
+                              {line.matchCandidates?.map((candidate) => (
+                                <option
+                                  key={`${candidate.targetType}:${candidate.targetId}`}
+                                  value={`${candidate.targetType}:${candidate.targetId}`}
+                                >
+                                  {candidate.label} ·{" "}
+                                  {dateText(candidate.date)} ·{" "}
+                                  {money(candidate.amount)}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={draft.targetId}
+                              onChange={(event) =>
+                                setMatchDrafts((current) => ({
+                                  ...current,
+                                  [line.id]: {
+                                    ...draft,
+                                    targetId: event.target.value,
+                                  },
+                                }))
+                              }
+                              placeholder={t("bankReconciliationTargetId")}
+                              className="w-40 rounded-md border border-slate-200 px-2 py-1 text-xs"
+                            />
+                          )}
                           <button
                             type="button"
                             onClick={() => void matchLine(line)}
