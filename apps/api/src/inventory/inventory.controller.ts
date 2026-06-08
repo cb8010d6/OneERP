@@ -80,6 +80,13 @@ export class InventoryController {
     return this.inventoryService.getMaterials(companyId);
   }
 
+  @Get('replenishment-suggestions')
+  @RequirePermissions(Permission.InventoryRead)
+  @ApiOperation({ summary: '获取库存补货建议（最小库存、在手与在途）' })
+  async getReplenishmentSuggestions(@CurrentCompany() companyId: string) {
+    return this.inventoryService.getReplenishmentSuggestions(companyId);
+  }
+
   @Get('transactions')
   @RequirePermissions(Permission.InventoryRead)
   @ApiOperation({ summary: '获取出入库流水记录' })

@@ -13,10 +13,14 @@ type MockPrisma = {
   };
   material: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
   };
   stockQuant: {
     findMany: jest.Mock;
     findFirst: jest.Mock;
+  };
+  purchaseOrderLine: {
+    findMany: jest.Mock;
   };
   stockLocation: {
     findFirst: jest.Mock;
@@ -70,10 +74,14 @@ describe('InventoryService', () => {
     },
     material: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     stockQuant: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+    },
+    purchaseOrderLine: {
+      findMany: jest.fn(),
     },
     stockLocation: {
       findFirst: jest.fn(),
@@ -192,6 +200,88 @@ describe('InventoryService', () => {
         isLow: false,
       }),
     );
+  });
+
+  it('returns replenishment suggestions net of incoming purchase quantities', async () => {
+    prisma.material.findMany.mockResolvedValue([
+      {
+        id: 'm1',
+        sku: 'MAT-1',
+        name: '钢板',
+        category: '板材',
+        unit: 'pcs',
+        minStock: 20,
+        unitPrice: 12.5,
+      },
+      {
+        id: 'm2',
+        sku: 'MAT-2',
+        name: '螺丝',
+        category: '标准件',
+        unit: 'pcs',
+        minStock: 10,
+        unitPrice: 1,
+      },
+    ]);
+    prisma.stockQuant.findMany.mockResolvedValue([
+      { materialId: 'm1', quantity: 5 },
+      { materialId: 'm1', quantity: 3 },
+      { materialId: 'm2', quantity: 10 },
+    ]);
+    prisma.purchaseOrderLine.findMany.mockResolvedValue([
+      { materialId: 'm1', quantity: 8, receivedQty: 2 },
+      { materialId: 'm2', quantity: 5, receivedQty: 0 },
+    ]);
+
+    const result = await service.getReplenishmentSuggestions('c1');
+
+    expect(prisma.material.findMany).toHaveBeenCalledWith({
+      where: { OR: [{ companyId: 'c1' }, { companyId: null }] },
+      orderBy: [{ category: 'asc' }, { sku: 'asc' }],
+    });
+    expect(prisma.stockQuant.findMany).toHaveBeenCalledWith({
+      where: { location: { companyId: 'c1' } },
+      select: {
+        materialId: true,
+        quantity: true,
+      },
+    });
+    expect(prisma.purchaseOrderLine.findMany).toHaveBeenCalledWith({
+      where: {
+        purchaseOrder: {
+          companyId: 'c1',
+          status: { in: ['DRAFT', 'ORDERED', 'PARTIAL_RECEIVED'] },
+        },
+      },
+      select: {
+        materialId: true,
+        quantity: true,
+        receivedQty: true,
+      },
+    });
+    expect(result).toEqual({
+      totalSuggestions: 1,
+      totalShortageQty: 6,
+      totalEstimatedAmount: 75,
+      rows: [
+        {
+          materialId: 'm1',
+          sku: 'MAT-1',
+          name: '钢板',
+          category: '板材',
+          unit: 'pcs',
+          minStock: 20,
+          onHandQty: 8,
+          incomingQty: 6,
+          projectedQty: 14,
+          shortageQty: 6,
+          suggestedPurchaseQty: 6,
+          unitPrice: 12.5,
+          estimatedAmount: 75,
+          severity: 'SHORTAGE',
+        },
+      ],
+    });
   });
 
   it('skips reverse when reverse moves already exist', async () => {

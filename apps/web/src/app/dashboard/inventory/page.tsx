@@ -19,6 +19,7 @@ import {
   Search,
   CheckCircle2,
   Loader2,
+  ShoppingCart,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatNumber } from "@/lib/format";
@@ -54,6 +55,30 @@ interface LocationGroup {
   locationName: string;
   rows: LedgerRow[];
   lowCount: number;
+}
+
+interface ReplenishmentSuggestionRow {
+  materialId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  minStock: number;
+  onHandQty: number;
+  incomingQty: number;
+  projectedQty: number;
+  shortageQty: number;
+  suggestedPurchaseQty: number;
+  unitPrice: number;
+  estimatedAmount: number;
+  severity: "OUT_OF_STOCK" | "SHORTAGE";
+}
+
+interface ReplenishmentSuggestionData {
+  totalSuggestions: number;
+  totalShortageQty: number;
+  totalEstimatedAmount: number;
+  rows: ReplenishmentSuggestionRow[];
 }
 
 /** Build a two-level tree: Warehouse > Location > rows */
@@ -115,6 +140,9 @@ function QtyCell({ row }: { row: LedgerRow }) {
 export default function InventoryPage() {
   const [rows, setRows] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [suggestions, setSuggestions] =
+    useState<ReplenishmentSuggestionData | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [expandedWh, setExpandedWh] = useState<Set<string>>(new Set());
   const [expandedLoc, setExpandedLoc] = useState<Set<string>>(new Set());
@@ -148,6 +176,21 @@ export default function InventoryPage() {
     [search],
   );
 
+  const fetchReplenishmentSuggestions = useCallback(async () => {
+    setSuggestionsLoading(true);
+    try {
+      const res = await api.get<ReplenishmentSuggestionData>(
+        "/inventory/replenishment-suggestions",
+      );
+      setSuggestions(res.data);
+    } catch (error) {
+      console.error("Failed to fetch replenishment suggestions", error);
+      toast.error("加载补货建议失败");
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void fetchLedger(search);
@@ -157,6 +200,10 @@ export default function InventoryPage() {
       window.clearTimeout(timer);
     };
   }, [fetchLedger, search]);
+
+  useEffect(() => {
+    void fetchReplenishmentSuggestions();
+  }, [fetchReplenishmentSuggestions]);
 
   const tree = useMemo(() => buildTree(rows), [rows]);
 
@@ -280,11 +327,18 @@ export default function InventoryPage() {
           </button>
           <button
             type="button"
-            onClick={() => void fetchLedger(search)}
-            disabled={loading}
+            onClick={() => {
+              void fetchLedger(search);
+              void fetchReplenishmentSuggestions();
+            }}
+            disabled={loading || suggestionsLoading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading || suggestionsLoading ? "animate-spin" : ""
+              }`}
+            />
             刷新
           </button>
         </div>
@@ -329,7 +383,12 @@ export default function InventoryPage() {
       )}
 
       {/* Stats Bar */}
-      <ReturnsWorkbench onPosted={() => void fetchLedger(search)} />
+      <ReturnsWorkbench
+        onPosted={() => {
+          void fetchLedger(search);
+          void fetchReplenishmentSuggestions();
+        }}
+      />
 
       {/* Stats Bar */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
@@ -383,6 +442,115 @@ export default function InventoryPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="erp-card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <ShoppingCart className="h-4 w-4 text-amber-600" />
+              库存补货建议
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              按最低库存、当前库存和未收采购数量计算建议采购量。
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-right text-xs text-slate-500">
+            <span>
+              建议项
+              <strong className="ml-1 text-slate-900">
+                {suggestions?.totalSuggestions ?? 0}
+              </strong>
+            </span>
+            <span>
+              缺口
+              <strong className="ml-1 text-slate-900">
+                {formatNumber(suggestions?.totalShortageQty ?? 0)}
+              </strong>
+            </span>
+            <span>
+              预估金额
+              <strong className="ml-1 text-slate-900">
+                ¥{formatNumber(suggestions?.totalEstimatedAmount ?? 0)}
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        {suggestionsLoading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在计算补货建议...
+          </div>
+        ) : !suggestions || suggestions.rows.length === 0 ? (
+          <div className="py-8 text-center text-sm text-slate-500">
+            暂无需要补货的物料
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-[920px] w-full text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">物料</th>
+                  <th className="px-3 py-2 text-left">分类</th>
+                  <th className="px-3 py-2 text-right">最低库存</th>
+                  <th className="px-3 py-2 text-right">当前库存</th>
+                  <th className="px-3 py-2 text-right">在途采购</th>
+                  <th className="px-3 py-2 text-right">预计库存</th>
+                  <th className="px-3 py-2 text-right">建议采购</th>
+                  <th className="px-3 py-2 text-right">预估金额</th>
+                  <th className="px-3 py-2 text-right">状态</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {suggestions.rows.map((row) => (
+                  <tr key={row.materialId} className="hover:bg-slate-50">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-900">
+                        {row.name}
+                      </div>
+                      <div className="font-mono text-xs text-slate-500">
+                        {row.sku}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-slate-600">
+                      {row.category}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.minStock)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.onHandQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.incomingQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.projectedQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-semibold text-amber-700">
+                      {formatNumber(row.suggestedPurchaseQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                      ¥{formatNumber(row.estimatedAmount)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span
+                        className={
+                          row.severity === "OUT_OF_STOCK"
+                            ? "erp-badge erp-badge--danger"
+                            : "erp-badge erp-badge--pending"
+                        }
+                      >
+                        {row.severity === "OUT_OF_STOCK" ? "缺货" : "低库存"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Search */}

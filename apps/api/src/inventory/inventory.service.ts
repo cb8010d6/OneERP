@@ -86,6 +86,30 @@ export interface InventoryReturnDocumentRow {
   }>;
 }
 
+export interface ReplenishmentSuggestionRow {
+  materialId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  minStock: number;
+  onHandQty: number;
+  incomingQty: number;
+  projectedQty: number;
+  shortageQty: number;
+  suggestedPurchaseQty: number;
+  unitPrice: number;
+  estimatedAmount: number;
+  severity: 'OUT_OF_STOCK' | 'SHORTAGE';
+}
+
+export interface ReplenishmentSuggestionResult {
+  totalSuggestions: number;
+  totalShortageQty: number;
+  totalEstimatedAmount: number;
+  rows: ReplenishmentSuggestionRow[];
+}
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -133,6 +157,109 @@ export class InventoryService {
     return this.prisma.material.findMany({
       where: { OR: [{ companyId }, { companyId: null }] },
     });
+  }
+
+  async getReplenishmentSuggestions(
+    companyId: string,
+  ): Promise<ReplenishmentSuggestionResult> {
+    const [materials, quants, purchaseLines] = await Promise.all([
+      this.prisma.material.findMany({
+        where: { OR: [{ companyId }, { companyId: null }] },
+        orderBy: [{ category: 'asc' }, { sku: 'asc' }],
+      }),
+      this.prisma.stockQuant.findMany({
+        where: { location: { companyId } },
+        select: {
+          materialId: true,
+          quantity: true,
+        },
+      }),
+      this.prisma.purchaseOrderLine.findMany({
+        where: {
+          purchaseOrder: {
+            companyId,
+            status: { in: ['DRAFT', 'ORDERED', 'PARTIAL_RECEIVED'] },
+          },
+        },
+        select: {
+          materialId: true,
+          quantity: true,
+          receivedQty: true,
+        },
+      }),
+    ]);
+
+    const onHandByMaterial = new Map<string, number>();
+    for (const quant of quants) {
+      const current = onHandByMaterial.get(quant.materialId) ?? 0;
+      onHandByMaterial.set(
+        quant.materialId,
+        this.round2(current + Number(quant.quantity ?? 0)),
+      );
+    }
+
+    const incomingByMaterial = new Map<string, number>();
+    for (const line of purchaseLines) {
+      const outstanding = Math.max(
+        0,
+        Number(line.quantity ?? 0) - Number(line.receivedQty ?? 0),
+      );
+      const current = incomingByMaterial.get(line.materialId) ?? 0;
+      incomingByMaterial.set(
+        line.materialId,
+        this.round2(current + outstanding),
+      );
+    }
+
+    const rows = materials
+      .map((material): ReplenishmentSuggestionRow | null => {
+        const minStock = this.round2(Number(material.minStock ?? 0));
+        if (minStock <= 0) return null;
+
+        const onHandQty = this.round2(onHandByMaterial.get(material.id) ?? 0);
+        const incomingQty = this.round2(
+          incomingByMaterial.get(material.id) ?? 0,
+        );
+        const projectedQty = this.round2(onHandQty + incomingQty);
+        const shortageQty = this.round2(Math.max(0, minStock - projectedQty));
+        if (shortageQty <= 0) return null;
+
+        const unitPrice = this.round2(Number(material.unitPrice ?? 0));
+        return {
+          materialId: material.id,
+          sku: material.sku,
+          name: material.name,
+          category: material.category,
+          unit: material.unit,
+          minStock,
+          onHandQty,
+          incomingQty,
+          projectedQty,
+          shortageQty,
+          suggestedPurchaseQty: shortageQty,
+          unitPrice,
+          estimatedAmount: this.round2(shortageQty * unitPrice),
+          severity: onHandQty <= 0 ? 'OUT_OF_STOCK' : 'SHORTAGE',
+        };
+      })
+      .filter((row): row is ReplenishmentSuggestionRow => Boolean(row))
+      .sort(
+        (a, b) =>
+          b.estimatedAmount - a.estimatedAmount ||
+          b.shortageQty - a.shortageQty ||
+          a.sku.localeCompare(b.sku),
+      );
+
+    return {
+      totalSuggestions: rows.length,
+      totalShortageQty: this.round2(
+        rows.reduce((sum, row) => sum + row.shortageQty, 0),
+      ),
+      totalEstimatedAmount: this.round2(
+        rows.reduce((sum, row) => sum + row.estimatedAmount, 0),
+      ),
+      rows,
+    };
   }
 
   async getTransactions(companyId: string) {
