@@ -29,6 +29,8 @@ describe('FinanceController', () => {
     getCashFlowStatement: jest.fn(),
     getReceivableAging: jest.fn(),
     getUnappliedPayments: jest.fn(),
+    listCustomerOptions: jest.fn(),
+    getCustomerStatement: jest.fn(),
   };
 
   const mockFinanceDlqService = {
@@ -354,6 +356,38 @@ describe('FinanceController', () => {
       expect(result).toBe(expected);
       expect(mockFinanceService.getUnappliedPayments).toHaveBeenCalledWith(
         'c1',
+      );
+    });
+  });
+
+  describe('customer statements', () => {
+    it('should return customer options', async () => {
+      const expected = [{ id: 'p1', name: '蓝海科技' }];
+      mockFinanceService.listCustomerOptions.mockResolvedValue(expected);
+
+      const result = await controller.getCustomerOptions('c1');
+
+      expect(result).toBe(expected);
+      expect(mockFinanceService.listCustomerOptions).toHaveBeenCalledWith('c1');
+    });
+
+    it('should return a customer statement', async () => {
+      const expected = { totalEndingBalance: 1050 };
+      mockFinanceService.getCustomerStatement.mockResolvedValue(expected);
+
+      const result = await controller.getCustomerStatement(
+        'c1',
+        '2026-06-01',
+        '2026-06-30',
+        'p1',
+      );
+
+      expect(result).toBe(expected);
+      expect(mockFinanceService.getCustomerStatement).toHaveBeenCalledWith(
+        'c1',
+        '2026-06-01',
+        '2026-06-30',
+        'p1',
       );
     });
   });

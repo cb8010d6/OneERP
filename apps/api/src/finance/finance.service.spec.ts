@@ -4,7 +4,7 @@ import { FinanceService } from './finance.service';
 
 type MockPrisma = {
   order: { findFirst: jest.Mock };
-  partner: { findFirst: jest.Mock };
+  partner: { findFirst: jest.Mock; findMany: jest.Mock };
   taxCode: { findFirst: jest.Mock };
   invoice: {
     create: jest.Mock;
@@ -56,7 +56,7 @@ type MockTx = {
 describe('FinanceService', () => {
   const prisma: MockPrisma = {
     order: { findFirst: jest.fn() },
-    partner: { findFirst: jest.fn() },
+    partner: { findFirst: jest.fn(), findMany: jest.fn() },
     taxCode: { findFirst: jest.fn() },
     invoice: {
       create: jest.fn(),
@@ -1221,6 +1221,168 @@ describe('FinanceService', () => {
           amount: 700,
           allocatedAmount: 500,
           unappliedAmount: 200,
+        }),
+      ]);
+    });
+  });
+
+  describe('customer statements', () => {
+    it('lists active customer options', async () => {
+      prisma.partner.findMany.mockResolvedValue([
+        { id: 'p1', code: 'C001', name: '蓝海科技', type: 'CUSTOMER' },
+      ]);
+
+      const result = await service.listCustomerOptions('c1');
+
+      expect(prisma.partner.findMany).toHaveBeenCalledWith({
+        where: {
+          companyId: 'c1',
+          isActive: true,
+          type: { in: ['CUSTOMER', 'BOTH'] },
+        },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          type: true,
+        },
+        orderBy: [{ name: 'asc' }, { code: 'asc' }],
+        take: 500,
+      });
+      expect(result).toEqual([
+        { id: 'p1', code: 'C001', name: '蓝海科技', type: 'CUSTOMER' },
+      ]);
+    });
+
+    it('builds a customer statement with opening and running balances', async () => {
+      prisma.partner.findFirst.mockResolvedValue({ id: 'p1' });
+      prisma.invoice.findMany.mockResolvedValue([
+        {
+          id: 'inv-opening',
+          invoiceNo: 'INV-OPEN',
+          issuedDate: new Date('2026-05-20T00:00:00.000Z'),
+          amount: 1000,
+          order: {
+            orderNo: 'SO-OPEN',
+            partner: { id: 'p1', code: 'C001', name: '蓝海科技' },
+          },
+        },
+        {
+          id: 'inv-1',
+          invoiceNo: 'INV-001',
+          issuedDate: new Date('2026-06-05T00:00:00.000Z'),
+          amount: 600,
+          order: {
+            orderNo: 'SO-001',
+            partner: { id: 'p1', code: 'C001', name: '蓝海科技' },
+          },
+        },
+      ]);
+      prisma.payment.findMany.mockResolvedValue([
+        {
+          id: 'pay-opening',
+          paymentDate: new Date('2026-05-25T00:00:00.000Z'),
+          amount: 200,
+          method: 'BANK_TRANSFER',
+          partner: { id: 'p1', code: 'C001', name: '蓝海科技' },
+        },
+        {
+          id: 'pay-1',
+          paymentDate: new Date('2026-06-10T00:00:00.000Z'),
+          amount: 300,
+          method: 'BANK_TRANSFER',
+          partner: { id: 'p1', code: 'C001', name: '蓝海科技' },
+        },
+      ]);
+      prisma.creditNote.findMany.mockResolvedValue([
+        {
+          id: 'cn-1',
+          creditNo: 'CN-001',
+          creditDate: new Date('2026-06-12T00:00:00.000Z'),
+          amount: 100,
+          partner: { id: 'p1', code: 'C001', name: '蓝海科技' },
+          invoice: { invoiceNo: 'INV-001' },
+        },
+      ]);
+      prisma.customerRefund.findMany.mockResolvedValue([
+        {
+          id: 'rf-1',
+          refundNo: 'RF-001',
+          refundDate: new Date('2026-06-18T00:00:00.000Z'),
+          amount: 50,
+          partner: { id: 'p1', code: 'C001', name: '蓝海科技' },
+          creditNote: { creditNo: 'CN-001' },
+        },
+      ]);
+
+      const result = await service.getCustomerStatement(
+        'c1',
+        '2026-06-01',
+        '2026-06-30',
+        'p1',
+      );
+
+      expect(prisma.partner.findFirst).toHaveBeenCalledWith({
+        where: {
+          id: 'p1',
+          companyId: 'c1',
+          isActive: true,
+          type: { in: ['CUSTOMER', 'BOTH'] },
+        },
+        select: { id: true },
+      });
+      expect(prisma.invoice.findMany).toHaveBeenCalledWith({
+        where: {
+          companyId: 'c1',
+          postingStatus: 'POSTED',
+          issuedDate: { lte: new Date('2026-06-30T23:59:59.999Z') },
+          order: { partnerId: 'p1' },
+        },
+        include: {
+          order: { select: { orderNo: true, partner: true } },
+        },
+      });
+      expect(result.totalOpeningBalance).toBe(800);
+      expect(result.totalDebit).toBe(650);
+      expect(result.totalCredit).toBe(400);
+      expect(result.totalEndingBalance).toBe(1050);
+      expect(result.partners[0]).toMatchObject({
+        partnerId: 'p1',
+        partnerCode: 'C001',
+        partnerName: '蓝海科技',
+        openingBalance: 800,
+        periodDebit: 650,
+        periodCredit: 400,
+        endingBalance: 1050,
+      });
+      expect(result.partners[0].lines).toEqual([
+        expect.objectContaining({
+          sourceType: 'INVOICE',
+          documentNo: 'INV-001',
+          debit: 600,
+          credit: 0,
+          runningBalance: 1400,
+        }),
+        expect.objectContaining({
+          sourceType: 'PAYMENT',
+          documentNo: 'pay-1',
+          debit: 0,
+          credit: 300,
+          runningBalance: 1100,
+        }),
+        expect.objectContaining({
+          sourceType: 'CREDIT_NOTE',
+          documentNo: 'CN-001',
+          debit: 0,
+          credit: 100,
+          runningBalance: 1000,
+        }),
+        expect.objectContaining({
+          sourceType: 'REFUND',
+          documentNo: 'RF-001',
+          debit: 50,
+          credit: 0,
+          runningBalance: 1050,
         }),
       ]);
     });

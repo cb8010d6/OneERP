@@ -291,6 +291,30 @@ export class FinanceController {
     return this.financeService.getUnappliedPayments(companyId);
   }
 
+  @Get('customer-options')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '获取客户下拉选项' })
+  async getCustomerOptions(@CurrentCompany() companyId: string) {
+    return this.financeService.listCustomerOptions(companyId);
+  }
+
+  @Get('customer-statement')
+  @RequirePermissions(Permission.FinanceRead)
+  @ApiOperation({ summary: '客户对账单（应收、收款、贷项与退款）' })
+  async getCustomerStatement(
+    @CurrentCompany() companyId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('partnerId') partnerId?: string,
+  ) {
+    return this.financeService.getCustomerStatement(
+      companyId,
+      startDate,
+      endDate,
+      partnerId,
+    );
+  }
+
   @Post('bank-statements/import')
   @RequirePermissions(Permission.FinancePost)
   @ApiOperation({ summary: '导入银行流水' })
