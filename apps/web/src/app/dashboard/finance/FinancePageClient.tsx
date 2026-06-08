@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { DynamicView } from "@/components/core";
 import { DocumentDraftUploader } from "@/components/ai/DocumentDraftUploader";
 import { TrialBalanceView } from "./TrialBalanceView";
+import { GeneralLedgerView } from "./GeneralLedgerView";
 import { IncomeStatementView } from "./IncomeStatementView";
 import { BalanceSheetView } from "./BalanceSheetView";
 import { CashFlowStatementView } from "./CashFlowStatementView";
@@ -19,6 +20,7 @@ import { AccountingPeriodsPanel } from "./AccountingPeriodsPanel";
 import { BankReconciliationPanel } from "./BankReconciliationPanel";
 import {
   FileText,
+  BookOpen,
   BarChart3,
   LineChart,
   Scale,
@@ -40,6 +42,7 @@ export default function FinancePageClient() {
     | "invoices"
     | "payables"
     | "trial-balance"
+    | "general-ledger"
     | "income-statement"
     | "balance-sheet"
     | "cash-flow"
@@ -89,6 +92,18 @@ export default function FinancePageClient() {
           >
             <BarChart3 className="h-4 w-4" />
             {t("financeTrialBalance")}
+          </button>
+          <button
+            onClick={() => setActiveTab("general-ledger")}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === "general-ledger"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700",
+            )}
+          >
+            <BookOpen className="h-4 w-4" />
+            {t("financeGeneralLedgerTab")}
           </button>
           <button
             onClick={() => setActiveTab("payables")}
@@ -239,6 +254,10 @@ export default function FinancePageClient() {
       ) : activeTab === "trial-balance" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <TrialBalanceView />
+        </div>
+      ) : activeTab === "general-ledger" ? (
+        <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+          <GeneralLedgerView />
         </div>
       ) : activeTab === "payables" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">

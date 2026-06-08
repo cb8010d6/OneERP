@@ -47,6 +47,44 @@ export interface TrialBalanceResult {
   rows: TrialBalanceRow[];
 }
 
+export interface GeneralLedgerLine {
+  lineId: string;
+  journalEntryId: string;
+  entryNo: string;
+  date: string;
+  ref: string | null;
+  description: string | null;
+  lineNo: number;
+  partnerName: string | null;
+  memo: string | null;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+}
+
+export interface GeneralLedgerAccount {
+  accountId: string;
+  code: string;
+  name: string;
+  type: string;
+  openingBalance: number;
+  periodDebit: number;
+  periodCredit: number;
+  endingBalance: number;
+  lines: GeneralLedgerLine[];
+}
+
+export interface GeneralLedgerResult {
+  startDate: string | null;
+  endDate: string;
+  accountCode: string | null;
+  totalOpeningBalance: number;
+  totalDebit: number;
+  totalCredit: number;
+  totalEndingBalance: number;
+  accounts: GeneralLedgerAccount[];
+}
+
 export interface IncomeStatementRow {
   accountId: string;
   code: string;
@@ -1724,6 +1762,144 @@ export class FinanceService {
     };
   }
 
+  async getGeneralLedger(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+    accountCode?: string,
+  ): Promise<GeneralLedgerResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate =
+      this.parseTrialBalanceDate(endDate, 'endDate') ?? new Date();
+
+    if (
+      parsedStartDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const normalizedAccountCode = accountCode?.trim() || undefined;
+    const lineWhere: Prisma.JournalEntryLineWhereInput = {
+      journalEntry: {
+        companyId,
+        postingStatus: EntryPostingStatus.POSTED,
+        date: { lte: parsedEndDate },
+      },
+    };
+    if (normalizedAccountCode) {
+      lineWhere.account = { code: normalizedAccountCode };
+    }
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: lineWhere,
+      include: {
+        account: true,
+        journalEntry: true,
+        partner: true,
+      },
+      orderBy: [
+        { account: { code: 'asc' } },
+        { journalEntry: { date: 'asc' } },
+        { journalEntry: { entryNo: 'asc' } },
+        { lineNo: 'asc' },
+      ],
+    });
+
+    const accountsById = new Map<string, GeneralLedgerAccount>();
+    for (const line of lines) {
+      const account = accountsById.get(line.accountId) ?? {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type: line.account.type,
+        openingBalance: 0,
+        periodDebit: 0,
+        periodCredit: 0,
+        endingBalance: 0,
+        lines: [],
+      };
+      accountsById.set(line.accountId, account);
+
+      const debit = this.round2(Number(line.debit ?? 0));
+      const credit = this.round2(Number(line.credit ?? 0));
+      const balanceEffect = this.accountBalanceEffect(
+        line.account.type,
+        debit,
+        credit,
+      );
+      const lineDate = line.journalEntry.date;
+
+      if (parsedStartDate && lineDate.getTime() < parsedStartDate.getTime()) {
+        account.openingBalance = this.round2(
+          account.openingBalance + balanceEffect,
+        );
+        account.endingBalance = account.openingBalance;
+        continue;
+      }
+
+      account.periodDebit = this.round2(account.periodDebit + debit);
+      account.periodCredit = this.round2(account.periodCredit + credit);
+      account.endingBalance = this.round2(
+        account.endingBalance + balanceEffect,
+      );
+      account.lines.push({
+        lineId: line.id,
+        journalEntryId: line.journalEntryId,
+        entryNo: line.journalEntry.entryNo,
+        date: lineDate.toISOString(),
+        ref: line.journalEntry.ref,
+        description: line.journalEntry.description,
+        lineNo: line.lineNo,
+        partnerName: line.partner?.name ?? null,
+        memo: line.memo,
+        debit,
+        credit,
+        runningBalance: account.endingBalance,
+      });
+    }
+
+    const accounts = [...accountsById.values()]
+      .map((account) => ({
+        ...account,
+        endingBalance: this.round2(
+          account.openingBalance +
+            this.accountBalanceEffect(
+              account.type,
+              account.periodDebit,
+              account.periodCredit,
+            ),
+        ),
+      }))
+      .filter(
+        (account) =>
+          Math.abs(account.openingBalance) >= 0.01 ||
+          Math.abs(account.periodDebit) >= 0.01 ||
+          Math.abs(account.periodCredit) >= 0.01 ||
+          Math.abs(account.endingBalance) >= 0.01,
+      )
+      .sort((a, b) => a.code.localeCompare(b.code));
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate.toISOString(),
+      accountCode: normalizedAccountCode ?? null,
+      totalOpeningBalance: this.round2(
+        accounts.reduce((sum, account) => sum + account.openingBalance, 0),
+      ),
+      totalDebit: this.round2(
+        accounts.reduce((sum, account) => sum + account.periodDebit, 0),
+      ),
+      totalCredit: this.round2(
+        accounts.reduce((sum, account) => sum + account.periodCredit, 0),
+      ),
+      totalEndingBalance: this.round2(
+        accounts.reduce((sum, account) => sum + account.endingBalance, 0),
+      ),
+      accounts,
+    };
+  }
+
   async getIncomeStatement(
     companyId: string,
     startDate?: string,
@@ -2475,6 +2651,12 @@ export class FinanceService {
     return type === 'ASSET'
       ? this.round2(debit - credit)
       : this.round2(credit - debit);
+  }
+
+  private accountBalanceEffect(type: string, debit: number, credit: number) {
+    return type === 'LIABILITY' || type === 'EQUITY' || type === 'REVENUE'
+      ? this.round2(credit - debit)
+      : this.round2(debit - credit);
   }
 
   private cashFlowCategory(

@@ -137,6 +137,142 @@ describe('FinanceService', () => {
     expect(service).toBeDefined();
   });
 
+  it('builds a general ledger with opening and running balances', async () => {
+    prisma.journalEntryLine.findMany.mockResolvedValue([
+      {
+        id: 'line-opening',
+        journalEntryId: 'je-opening',
+        lineNo: 1,
+        accountId: 'bank-1',
+        debit: 1000,
+        credit: 100,
+        memo: '期初余额',
+        partner: null,
+        account: { code: '1002', name: '银行存款', type: 'ASSET' },
+        journalEntry: {
+          entryNo: 'JE-OPEN',
+          date: new Date('2026-05-31T00:00:00.000Z'),
+          ref: 'OPEN-001',
+          description: '期初导入',
+        },
+      },
+      {
+        id: 'line-inflow',
+        journalEntryId: 'je-inflow',
+        lineNo: 1,
+        accountId: 'bank-1',
+        debit: 500,
+        credit: 0,
+        memo: '客户回款',
+        partner: { name: '蓝海科技' },
+        account: { code: '1002', name: '银行存款', type: 'ASSET' },
+        journalEntry: {
+          entryNo: 'JE-001',
+          date: new Date('2026-06-05T00:00:00.000Z'),
+          ref: 'PAY-001',
+          description: '客户收款',
+        },
+      },
+      {
+        id: 'line-outflow',
+        journalEntryId: 'je-outflow',
+        lineNo: 2,
+        accountId: 'bank-1',
+        debit: 0,
+        credit: 300,
+        memo: null,
+        partner: null,
+        account: { code: '1002', name: '银行存款', type: 'ASSET' },
+        journalEntry: {
+          entryNo: 'JE-002',
+          date: new Date('2026-06-12T00:00:00.000Z'),
+          ref: 'SUPPAY-001',
+          description: '供应商付款',
+        },
+      },
+    ]);
+
+    const result = await service.getGeneralLedger(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+      '1002',
+    );
+
+    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
+      where: {
+        journalEntry: {
+          companyId: 'c1',
+          postingStatus: 'POSTED',
+          date: { lte: new Date('2026-06-30T23:59:59.999Z') },
+        },
+        account: { code: '1002' },
+      },
+      include: {
+        account: true,
+        journalEntry: true,
+        partner: true,
+      },
+      orderBy: [
+        { account: { code: 'asc' } },
+        { journalEntry: { date: 'asc' } },
+        { journalEntry: { entryNo: 'asc' } },
+        { lineNo: 'asc' },
+      ],
+    });
+    expect(result).toEqual({
+      startDate: '2026-06-01T00:00:00.000Z',
+      endDate: '2026-06-30T23:59:59.999Z',
+      accountCode: '1002',
+      totalOpeningBalance: 900,
+      totalDebit: 500,
+      totalCredit: 300,
+      totalEndingBalance: 1100,
+      accounts: [
+        {
+          accountId: 'bank-1',
+          code: '1002',
+          name: '银行存款',
+          type: 'ASSET',
+          openingBalance: 900,
+          periodDebit: 500,
+          periodCredit: 300,
+          endingBalance: 1100,
+          lines: [
+            {
+              lineId: 'line-inflow',
+              journalEntryId: 'je-inflow',
+              entryNo: 'JE-001',
+              date: '2026-06-05T00:00:00.000Z',
+              ref: 'PAY-001',
+              description: '客户收款',
+              lineNo: 1,
+              partnerName: '蓝海科技',
+              memo: '客户回款',
+              debit: 500,
+              credit: 0,
+              runningBalance: 1400,
+            },
+            {
+              lineId: 'line-outflow',
+              journalEntryId: 'je-outflow',
+              entryNo: 'JE-002',
+              date: '2026-06-12T00:00:00.000Z',
+              ref: 'SUPPAY-001',
+              description: '供应商付款',
+              lineNo: 2,
+              partnerName: null,
+              memo: null,
+              debit: 0,
+              credit: 300,
+              runningBalance: 1100,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
   it('builds an income statement from posted revenue and expense accounts', async () => {
     prisma.journalEntryLine.findMany.mockResolvedValue([
       {

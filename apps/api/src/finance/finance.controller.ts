@@ -210,6 +210,23 @@ export class FinanceController {
     return this.financeService.getTrialBalance(companyId, startDate, endDate);
   }
 
+  @Get('general-ledger')
+  @RequirePermissions(Permission.FinanceTrialBalanceRead)
+  @ApiOperation({ summary: '总账明细账（科目期初、本期发生与逐笔余额）' })
+  async getGeneralLedger(
+    @CurrentCompany() companyId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('accountCode') accountCode?: string,
+  ) {
+    return this.financeService.getGeneralLedger(
+      companyId,
+      startDate,
+      endDate,
+      accountCode,
+    );
+  }
+
   @Get('income-statement')
   @RequirePermissions(Permission.FinanceTrialBalanceRead)
   @ApiOperation({ summary: '损益表（收入、费用与净利润）' })

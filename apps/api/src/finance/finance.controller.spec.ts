@@ -23,6 +23,7 @@ describe('FinanceController', () => {
     getCustomerRefunds: jest.fn(),
     postCustomerRefund: jest.fn(),
     postInvoice: jest.fn(),
+    getGeneralLedger: jest.fn(),
     getIncomeStatement: jest.fn(),
     getBalanceSheet: jest.fn(),
     getCashFlowStatement: jest.fn(),
@@ -317,6 +318,28 @@ describe('FinanceController', () => {
         'c1',
         '2026-06-01',
         '2026-06-30',
+      );
+    });
+  });
+
+  describe('getGeneralLedger', () => {
+    it('should return general ledger rows', async () => {
+      const expected = { totalDebit: 1000, totalCredit: 300 };
+      mockFinanceService.getGeneralLedger.mockResolvedValue(expected);
+
+      const result = await controller.getGeneralLedger(
+        'c1',
+        '2026-06-01',
+        '2026-06-30',
+        '1002',
+      );
+
+      expect(result).toBe(expected);
+      expect(mockFinanceService.getGeneralLedger).toHaveBeenCalledWith(
+        'c1',
+        '2026-06-01',
+        '2026-06-30',
+        '1002',
       );
     });
   });
