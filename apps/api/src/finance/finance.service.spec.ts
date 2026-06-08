@@ -220,6 +220,98 @@ describe('FinanceService', () => {
     });
   });
 
+  it('builds a balance sheet including unclosed current earnings', async () => {
+    prisma.journalEntryLine.findMany.mockResolvedValue([
+      {
+        accountId: 'asset-1',
+        debit: 1300,
+        credit: 100,
+        account: { code: '1002', name: '银行存款', type: 'ASSET' },
+      },
+      {
+        accountId: 'liability-1',
+        debit: 0,
+        credit: 400,
+        account: { code: '2202', name: '应付账款', type: 'LIABILITY' },
+      },
+      {
+        accountId: 'equity-1',
+        debit: 0,
+        credit: 500,
+        account: { code: '4001', name: '实收资本', type: 'EQUITY' },
+      },
+      {
+        accountId: 'revenue-1',
+        debit: 0,
+        credit: 600,
+        account: { code: '6001', name: '主营业务收入', type: 'REVENUE' },
+      },
+      {
+        accountId: 'expense-1',
+        debit: 300,
+        credit: 0,
+        account: { code: '6401', name: '主营业务成本', type: 'EXPENSE' },
+      },
+    ]);
+
+    const result = await service.getBalanceSheet('c1', '2026-06-30');
+
+    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
+      where: {
+        journalEntry: {
+          companyId: 'c1',
+          postingStatus: 'POSTED',
+          date: { lte: new Date('2026-06-30T23:59:59.999Z') },
+        },
+        account: {
+          type: {
+            in: ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'],
+          },
+        },
+      },
+      include: { account: true },
+    });
+    expect(result).toEqual({
+      asOfDate: '2026-06-30T23:59:59.999Z',
+      totalAssets: 1200,
+      totalLiabilities: 400,
+      totalEquity: 500,
+      currentEarnings: 300,
+      totalLiabilitiesAndEquity: 1200,
+      difference: 0,
+      balanced: true,
+      rows: [
+        {
+          accountId: 'asset-1',
+          code: '1002',
+          name: '银行存款',
+          type: 'ASSET',
+          debit: 1300,
+          credit: 100,
+          amount: 1200,
+        },
+        {
+          accountId: 'liability-1',
+          code: '2202',
+          name: '应付账款',
+          type: 'LIABILITY',
+          debit: 0,
+          credit: 400,
+          amount: 400,
+        },
+        {
+          accountId: 'equity-1',
+          code: '4001',
+          name: '实收资本',
+          type: 'EQUITY',
+          debit: 0,
+          credit: 500,
+          amount: 500,
+        },
+      ],
+    });
+  });
+
   it('reconciles inventory valuation with inventory general ledger balance', async () => {
     prisma.materialCost.findMany.mockResolvedValue([
       {

@@ -225,6 +225,16 @@ export class FinanceController {
     );
   }
 
+  @Get('balance-sheet')
+  @RequirePermissions(Permission.FinanceTrialBalanceRead)
+  @ApiOperation({ summary: '资产负债表（资产、负债、权益与未结转损益）' })
+  async getBalanceSheet(
+    @CurrentCompany() companyId: string,
+    @Query('asOfDate') asOfDate?: string,
+  ) {
+    return this.financeService.getBalanceSheet(companyId, asOfDate);
+  }
+
   @Get('inventory-valuation')
   @RequirePermissions(Permission.FinanceRead)
   @ApiOperation({ summary: '库存估值与总账库存科目对账' })

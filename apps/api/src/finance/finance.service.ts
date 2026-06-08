@@ -66,6 +66,28 @@ export interface IncomeStatementResult {
   rows: IncomeStatementRow[];
 }
 
+export interface BalanceSheetRow {
+  accountId: string;
+  code: string;
+  name: string;
+  type: 'ASSET' | 'LIABILITY' | 'EQUITY';
+  debit: number;
+  credit: number;
+  amount: number;
+}
+
+export interface BalanceSheetResult {
+  asOfDate: string;
+  totalAssets: number;
+  totalLiabilities: number;
+  totalEquity: number;
+  currentEarnings: number;
+  totalLiabilitiesAndEquity: number;
+  difference: number;
+  balanced: boolean;
+  rows: BalanceSheetRow[];
+}
+
 export interface ReceivableAgingRow {
   invoiceId: string;
   invoiceNo: string;
@@ -1759,6 +1781,114 @@ export class FinanceService {
     };
   }
 
+  async getBalanceSheet(
+    companyId: string,
+    asOfDate?: string,
+  ): Promise<BalanceSheetResult> {
+    const parsedAsOfDate = this.parseAsOfDate(asOfDate);
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: {
+        journalEntry: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          date: { lte: parsedAsOfDate },
+        },
+        account: {
+          type: { in: ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'] },
+        },
+      },
+      include: { account: true },
+    });
+
+    const rowsByAccount = new Map<string, BalanceSheetRow>();
+    let totalRevenue = 0;
+    let totalExpense = 0;
+
+    for (const line of lines) {
+      const debit = this.round2(Number(line.debit ?? 0));
+      const credit = this.round2(Number(line.credit ?? 0));
+      const accountType = line.account.type;
+
+      if (accountType === 'REVENUE') {
+        totalRevenue = this.round2(
+          totalRevenue + this.incomeStatementAmount('REVENUE', debit, credit),
+        );
+        continue;
+      }
+      if (accountType === 'EXPENSE') {
+        totalExpense = this.round2(
+          totalExpense + this.incomeStatementAmount('EXPENSE', debit, credit),
+        );
+        continue;
+      }
+      if (
+        accountType !== 'ASSET' &&
+        accountType !== 'LIABILITY' &&
+        accountType !== 'EQUITY'
+      ) {
+        continue;
+      }
+
+      const existing = rowsByAccount.get(line.accountId);
+      if (existing) {
+        existing.debit = this.round2(existing.debit + debit);
+        existing.credit = this.round2(existing.credit + credit);
+        existing.amount = this.balanceSheetAmount(
+          existing.type,
+          existing.debit,
+          existing.credit,
+        );
+        continue;
+      }
+
+      rowsByAccount.set(line.accountId, {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type: accountType,
+        debit,
+        credit,
+        amount: this.balanceSheetAmount(accountType, debit, credit),
+      });
+    }
+
+    const rows = [...rowsByAccount.values()].sort((a, b) =>
+      a.code.localeCompare(b.code),
+    );
+    const totalAssets = this.round2(
+      rows
+        .filter((row) => row.type === 'ASSET')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const totalLiabilities = this.round2(
+      rows
+        .filter((row) => row.type === 'LIABILITY')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const totalEquity = this.round2(
+      rows
+        .filter((row) => row.type === 'EQUITY')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const currentEarnings = this.round2(totalRevenue - totalExpense);
+    const totalLiabilitiesAndEquity = this.round2(
+      totalLiabilities + totalEquity + currentEarnings,
+    );
+    const difference = this.round2(totalAssets - totalLiabilitiesAndEquity);
+
+    return {
+      asOfDate: parsedAsOfDate.toISOString(),
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+      currentEarnings,
+      totalLiabilitiesAndEquity,
+      difference,
+      balanced: Math.abs(difference) < 0.01,
+      rows,
+    };
+  }
+
   async getInventoryValuationReconciliation(
     companyId: string,
   ): Promise<InventoryValuationReconciliationResult> {
@@ -2178,5 +2308,15 @@ export class FinanceService {
     return type === 'REVENUE'
       ? this.round2(credit - debit)
       : this.round2(debit - credit);
+  }
+
+  private balanceSheetAmount(
+    type: 'ASSET' | 'LIABILITY' | 'EQUITY',
+    debit: number,
+    credit: number,
+  ) {
+    return type === 'ASSET'
+      ? this.round2(debit - credit)
+      : this.round2(credit - debit);
   }
 }

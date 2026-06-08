@@ -24,6 +24,7 @@ describe('FinanceController', () => {
     postCustomerRefund: jest.fn(),
     postInvoice: jest.fn(),
     getIncomeStatement: jest.fn(),
+    getBalanceSheet: jest.fn(),
     getReceivableAging: jest.fn(),
     getUnappliedPayments: jest.fn(),
   };
@@ -279,6 +280,21 @@ describe('FinanceController', () => {
       expect(mockFinanceService.getIncomeStatement).toHaveBeenCalledWith(
         'c1',
         '2026-06-01',
+        '2026-06-30',
+      );
+    });
+  });
+
+  describe('getBalanceSheet', () => {
+    it('should return balance sheet rows', async () => {
+      const expected = { totalAssets: 1000, totalLiabilities: 400, rows: [] };
+      mockFinanceService.getBalanceSheet.mockResolvedValue(expected);
+
+      const result = await controller.getBalanceSheet('c1', '2026-06-30');
+
+      expect(result).toBe(expected);
+      expect(mockFinanceService.getBalanceSheet).toHaveBeenCalledWith(
+        'c1',
         '2026-06-30',
       );
     });

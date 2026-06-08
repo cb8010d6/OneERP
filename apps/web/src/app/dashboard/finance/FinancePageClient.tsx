@@ -5,6 +5,7 @@ import { DynamicView } from "@/components/core";
 import { DocumentDraftUploader } from "@/components/ai/DocumentDraftUploader";
 import { TrialBalanceView } from "./TrialBalanceView";
 import { IncomeStatementView } from "./IncomeStatementView";
+import { BalanceSheetView } from "./BalanceSheetView";
 import { FinanceDlqCenter } from "./FinanceDlqCenter";
 import { FinanceActionsPanel } from "./FinanceActionsPanel";
 import { FinanceAccountMappingsPanel } from "./FinanceAccountMappingsPanel";
@@ -19,6 +20,7 @@ import {
   FileText,
   BarChart3,
   LineChart,
+  Scale,
   AlertTriangle,
   CalendarClock,
   PackageSearch,
@@ -37,6 +39,7 @@ export default function FinancePageClient() {
     | "payables"
     | "trial-balance"
     | "income-statement"
+    | "balance-sheet"
     | "aging"
     | "inventory"
     | "bank"
@@ -107,6 +110,18 @@ export default function FinancePageClient() {
           >
             <LineChart className="h-4 w-4" />
             {t("financeIncomeStatementTab")}
+          </button>
+          <button
+            onClick={() => setActiveTab("balance-sheet")}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === "balance-sheet"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700",
+            )}
+          >
+            <Scale className="h-4 w-4" />
+            {t("financeBalanceSheetTab")}
           </button>
           <button
             onClick={() => setActiveTab("aging")}
@@ -217,6 +232,10 @@ export default function FinancePageClient() {
       ) : activeTab === "income-statement" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <IncomeStatementView />
+        </div>
+      ) : activeTab === "balance-sheet" ? (
+        <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+          <BalanceSheetView />
         </div>
       ) : activeTab === "aging" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
