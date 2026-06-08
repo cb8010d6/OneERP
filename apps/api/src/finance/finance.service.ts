@@ -47,6 +47,25 @@ export interface TrialBalanceResult {
   rows: TrialBalanceRow[];
 }
 
+export interface IncomeStatementRow {
+  accountId: string;
+  code: string;
+  name: string;
+  type: 'REVENUE' | 'EXPENSE';
+  debit: number;
+  credit: number;
+  amount: number;
+}
+
+export interface IncomeStatementResult {
+  startDate: string | null;
+  endDate: string | null;
+  totalRevenue: number;
+  totalExpense: number;
+  netIncome: number;
+  rows: IncomeStatementRow[];
+}
+
 export interface ReceivableAgingRow {
   invoiceId: string;
   invoiceNo: string;
@@ -1652,6 +1671,94 @@ export class FinanceService {
     };
   }
 
+  async getIncomeStatement(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<IncomeStatementResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate = this.parseTrialBalanceDate(endDate, 'endDate');
+
+    if (
+      parsedStartDate &&
+      parsedEndDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const journalEntryWhere: Prisma.JournalEntryWhereInput = {
+      companyId,
+      postingStatus: EntryPostingStatus.POSTED,
+    };
+    const dateFilter: Prisma.DateTimeFilter = {};
+    if (parsedStartDate) dateFilter.gte = parsedStartDate;
+    if (parsedEndDate) dateFilter.lte = parsedEndDate;
+    if (Object.keys(dateFilter).length > 0) {
+      journalEntryWhere.date = dateFilter;
+    }
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: {
+        journalEntry: journalEntryWhere,
+        account: { type: { in: ['REVENUE', 'EXPENSE'] } },
+      },
+      include: { account: true },
+    });
+
+    const rowsByAccount = new Map<string, IncomeStatementRow>();
+    for (const line of lines) {
+      const debit = this.round2(Number(line.debit ?? 0));
+      const credit = this.round2(Number(line.credit ?? 0));
+      const type = line.account.type === 'REVENUE' ? 'REVENUE' : 'EXPENSE';
+      const existing = rowsByAccount.get(line.accountId);
+
+      if (existing) {
+        existing.debit = this.round2(existing.debit + debit);
+        existing.credit = this.round2(existing.credit + credit);
+        existing.amount = this.incomeStatementAmount(
+          existing.type,
+          existing.debit,
+          existing.credit,
+        );
+        continue;
+      }
+
+      rowsByAccount.set(line.accountId, {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type,
+        debit,
+        credit,
+        amount: this.incomeStatementAmount(type, debit, credit),
+      });
+    }
+
+    const rows = [...rowsByAccount.values()].sort((a, b) =>
+      a.code.localeCompare(b.code),
+    );
+    const totalRevenue = this.round2(
+      rows
+        .filter((row) => row.type === 'REVENUE')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const totalExpense = this.round2(
+      rows
+        .filter((row) => row.type === 'EXPENSE')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate?.toISOString() ?? null,
+      totalRevenue,
+      totalExpense,
+      netIncome: this.round2(totalRevenue - totalExpense),
+      rows,
+    };
+  }
+
   async getInventoryValuationReconciliation(
     companyId: string,
   ): Promise<InventoryValuationReconciliationResult> {
@@ -2061,5 +2168,15 @@ export class FinanceService {
     if (daysOverdue <= 60) return 'DAYS_31_60';
     if (daysOverdue <= 90) return 'DAYS_61_90';
     return 'DAYS_90_PLUS';
+  }
+
+  private incomeStatementAmount(
+    type: 'REVENUE' | 'EXPENSE',
+    debit: number,
+    credit: number,
+  ) {
+    return type === 'REVENUE'
+      ? this.round2(credit - debit)
+      : this.round2(debit - credit);
   }
 }

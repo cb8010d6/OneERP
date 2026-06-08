@@ -137,6 +137,89 @@ describe('FinanceService', () => {
     expect(service).toBeDefined();
   });
 
+  it('builds an income statement from posted revenue and expense accounts', async () => {
+    prisma.journalEntryLine.findMany.mockResolvedValue([
+      {
+        accountId: 'rev-1',
+        debit: 100,
+        credit: 1200,
+        account: {
+          code: '6001',
+          name: '主营业务收入',
+          type: 'REVENUE',
+        },
+      },
+      {
+        accountId: 'exp-1',
+        debit: 450,
+        credit: 20,
+        account: {
+          code: '6401',
+          name: '主营业务成本',
+          type: 'EXPENSE',
+        },
+      },
+      {
+        accountId: 'exp-1',
+        debit: 80,
+        credit: 0,
+        account: {
+          code: '6401',
+          name: '主营业务成本',
+          type: 'EXPENSE',
+        },
+      },
+    ]);
+
+    const result = await service.getIncomeStatement(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+    );
+
+    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
+      where: {
+        journalEntry: {
+          companyId: 'c1',
+          postingStatus: 'POSTED',
+          date: {
+            gte: new Date('2026-06-01T00:00:00.000Z'),
+            lte: new Date('2026-06-30T23:59:59.999Z'),
+          },
+        },
+        account: { type: { in: ['REVENUE', 'EXPENSE'] } },
+      },
+      include: { account: true },
+    });
+    expect(result).toEqual({
+      startDate: '2026-06-01T00:00:00.000Z',
+      endDate: '2026-06-30T23:59:59.999Z',
+      totalRevenue: 1100,
+      totalExpense: 510,
+      netIncome: 590,
+      rows: [
+        {
+          accountId: 'rev-1',
+          code: '6001',
+          name: '主营业务收入',
+          type: 'REVENUE',
+          debit: 100,
+          credit: 1200,
+          amount: 1100,
+        },
+        {
+          accountId: 'exp-1',
+          code: '6401',
+          name: '主营业务成本',
+          type: 'EXPENSE',
+          debit: 530,
+          credit: 20,
+          amount: 510,
+        },
+      ],
+    });
+  });
+
   it('reconciles inventory valuation with inventory general ledger balance', async () => {
     prisma.materialCost.findMany.mockResolvedValue([
       {

@@ -210,6 +210,21 @@ export class FinanceController {
     return this.financeService.getTrialBalance(companyId, startDate, endDate);
   }
 
+  @Get('income-statement')
+  @RequirePermissions(Permission.FinanceTrialBalanceRead)
+  @ApiOperation({ summary: '损益表（收入、费用与净利润）' })
+  async getIncomeStatement(
+    @CurrentCompany() companyId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.financeService.getIncomeStatement(
+      companyId,
+      startDate,
+      endDate,
+    );
+  }
+
   @Get('inventory-valuation')
   @RequirePermissions(Permission.FinanceRead)
   @ApiOperation({ summary: '库存估值与总账库存科目对账' })

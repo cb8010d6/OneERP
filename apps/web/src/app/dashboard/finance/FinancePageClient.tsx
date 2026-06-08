@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { DynamicView } from "@/components/core";
 import { DocumentDraftUploader } from "@/components/ai/DocumentDraftUploader";
 import { TrialBalanceView } from "./TrialBalanceView";
+import { IncomeStatementView } from "./IncomeStatementView";
 import { FinanceDlqCenter } from "./FinanceDlqCenter";
 import { FinanceActionsPanel } from "./FinanceActionsPanel";
 import { FinanceAccountMappingsPanel } from "./FinanceAccountMappingsPanel";
@@ -17,6 +18,7 @@ import { BankReconciliationPanel } from "./BankReconciliationPanel";
 import {
   FileText,
   BarChart3,
+  LineChart,
   AlertTriangle,
   CalendarClock,
   PackageSearch,
@@ -34,6 +36,7 @@ export default function FinancePageClient() {
     | "invoices"
     | "payables"
     | "trial-balance"
+    | "income-statement"
     | "aging"
     | "inventory"
     | "bank"
@@ -92,6 +95,18 @@ export default function FinancePageClient() {
           >
             <BanknoteArrowUp className="h-4 w-4" />
             {t("financePayablesTab")}
+          </button>
+          <button
+            onClick={() => setActiveTab("income-statement")}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === "income-statement"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700",
+            )}
+          >
+            <LineChart className="h-4 w-4" />
+            {t("financeIncomeStatementTab")}
           </button>
           <button
             onClick={() => setActiveTab("aging")}
@@ -198,6 +213,10 @@ export default function FinancePageClient() {
       ) : activeTab === "payables" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <PayablePaymentWorkbench />
+        </div>
+      ) : activeTab === "income-statement" ? (
+        <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+          <IncomeStatementView />
         </div>
       ) : activeTab === "aging" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
