@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../core/guards/jwt-auth.guard';
 import { TenantGuard } from '../core/guards/tenant.guard';
@@ -132,6 +140,30 @@ export class PurchaseController {
   @ApiOperation({ summary: '获取供应商付款列表' })
   async listSupplierPayments(@CurrentCompany() companyId: string) {
     return this.purchaseService.listSupplierPayments(companyId);
+  }
+
+  @Get('supplier-options')
+  @RequirePermissions(Permission.PurchaseRead)
+  @ApiOperation({ summary: '获取供应商下拉选项' })
+  async listSupplierOptions(@CurrentCompany() companyId: string) {
+    return this.purchaseService.listSupplierOptions(companyId);
+  }
+
+  @Get('supplier-statement')
+  @RequirePermissions(Permission.PurchaseRead)
+  @ApiOperation({ summary: '供应商对账单（应付、付款与扣款）' })
+  async getSupplierStatement(
+    @CurrentCompany() companyId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('supplierId') supplierId?: string,
+  ) {
+    return this.purchaseService.getSupplierStatement(
+      companyId,
+      startDate,
+      endDate,
+      supplierId,
+    );
   }
 
   @Get('open-payables')

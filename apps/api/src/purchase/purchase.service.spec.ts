@@ -27,6 +27,7 @@ function createService() {
   const prisma = {
     partner: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     material: {
       count: jest.fn(),
@@ -556,6 +557,152 @@ describe('PurchaseService', () => {
         }) as unknown,
       }),
     );
+  });
+
+  it('lists active supplier options', async () => {
+    const { service, prisma } = createService();
+    prisma.partner.findMany.mockResolvedValue([
+      { id: 'supplier-1', code: 'S001', name: '供应商A', type: 'SUPPLIER' },
+    ]);
+
+    const result = await service.listSupplierOptions('c1');
+
+    expect(prisma.partner.findMany).toHaveBeenCalledWith({
+      where: {
+        companyId: 'c1',
+        isActive: true,
+        type: { in: ['SUPPLIER', 'BOTH'] },
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        type: true,
+      },
+      orderBy: [{ name: 'asc' }, { code: 'asc' }],
+      take: 500,
+    });
+    expect(result).toEqual([
+      { id: 'supplier-1', code: 'S001', name: '供应商A', type: 'SUPPLIER' },
+    ]);
+  });
+
+  it('builds a supplier statement with opening and running balances', async () => {
+    const { service, prisma } = createService();
+    prisma.partner.findFirst.mockResolvedValue({ id: 'supplier-1' });
+    prisma.purchaseInvoice.findMany.mockResolvedValue([
+      {
+        id: 'pi-opening',
+        invoiceNo: 'PI-OPEN',
+        issuedDate: new Date('2026-05-20T00:00:00.000Z'),
+        amount: new Decimal(1000),
+        supplier: { id: 'supplier-1', code: 'S001', name: '供应商A' },
+        purchaseOrder: { purchaseNo: 'PO-OPEN' },
+      },
+      {
+        id: 'pi-1',
+        invoiceNo: 'PI-001',
+        issuedDate: new Date('2026-06-05T00:00:00.000Z'),
+        amount: new Decimal(600),
+        supplier: { id: 'supplier-1', code: 'S001', name: '供应商A' },
+        purchaseOrder: { purchaseNo: 'PO-001' },
+      },
+    ]);
+    prisma.supplierPayment.findMany.mockResolvedValue([
+      {
+        id: 'sp-opening',
+        paymentNo: 'SP-OPEN',
+        paymentDate: new Date('2026-05-25T00:00:00.000Z'),
+        amount: new Decimal(200),
+        method: 'BANK_TRANSFER',
+        note: null,
+        supplier: { id: 'supplier-1', code: 'S001', name: '供应商A' },
+      },
+      {
+        id: 'sp-1',
+        paymentNo: 'SP-001',
+        paymentDate: new Date('2026-06-10T00:00:00.000Z'),
+        amount: new Decimal(300),
+        method: 'BANK_TRANSFER',
+        note: '月结付款',
+        supplier: { id: 'supplier-1', code: 'S001', name: '供应商A' },
+      },
+    ]);
+    prisma.supplierCreditNote.findMany.mockResolvedValue([
+      {
+        id: 'scn-1',
+        creditNo: 'SCN-001',
+        creditDate: new Date('2026-06-12T00:00:00.000Z'),
+        amount: new Decimal(100),
+        supplier: { id: 'supplier-1', code: 'S001', name: '供应商A' },
+        purchaseInvoice: { invoiceNo: 'PI-001' },
+      },
+    ]);
+
+    const result = await service.getSupplierStatement(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+      'supplier-1',
+    );
+
+    expect(prisma.partner.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'supplier-1',
+        companyId: 'c1',
+        isActive: true,
+        type: { in: ['SUPPLIER', 'BOTH'] },
+      },
+      select: { id: true },
+    });
+    expect(prisma.purchaseInvoice.findMany).toHaveBeenCalledWith({
+      where: {
+        companyId: 'c1',
+        postingStatus: 'POSTED',
+        issuedDate: { lte: new Date('2026-06-30T23:59:59.999Z') },
+        supplierId: 'supplier-1',
+      },
+      include: {
+        supplier: true,
+        purchaseOrder: { select: { purchaseNo: true } },
+      },
+    });
+    expect(result.totalOpeningBalance).toBe(800);
+    expect(result.totalDebit).toBe(600);
+    expect(result.totalCredit).toBe(400);
+    expect(result.totalEndingBalance).toBe(1000);
+    expect(result.suppliers[0]).toMatchObject({
+      supplierId: 'supplier-1',
+      supplierCode: 'S001',
+      supplierName: '供应商A',
+      openingBalance: 800,
+      periodDebit: 600,
+      periodCredit: 400,
+      endingBalance: 1000,
+    });
+    expect(result.suppliers[0].lines).toEqual([
+      expect.objectContaining({
+        sourceType: 'PURCHASE_INVOICE',
+        documentNo: 'PI-001',
+        debit: 600,
+        credit: 0,
+        runningBalance: 1400,
+      }),
+      expect.objectContaining({
+        sourceType: 'SUPPLIER_PAYMENT',
+        documentNo: 'SP-001',
+        debit: 0,
+        credit: 300,
+        runningBalance: 1100,
+      }),
+      expect.objectContaining({
+        sourceType: 'SUPPLIER_CREDIT_NOTE',
+        documentNo: 'SCN-001',
+        debit: 0,
+        credit: 100,
+        runningBalance: 1000,
+      }),
+    ]);
   });
 
   it('lists only open payables with posted credits and payments applied', async () => {

@@ -44,6 +44,46 @@ type PurchaseOrderForMatch = {
   }>;
 };
 
+export interface SupplierOption {
+  id: string;
+  code: string | null;
+  name: string;
+  type: string;
+}
+
+export interface SupplierStatementLine {
+  sourceType: 'PURCHASE_INVOICE' | 'SUPPLIER_PAYMENT' | 'SUPPLIER_CREDIT_NOTE';
+  sourceId: string;
+  documentNo: string;
+  date: string;
+  description: string | null;
+  debit: number;
+  credit: number;
+  runningBalance: number;
+}
+
+export interface SupplierStatementPartner {
+  supplierId: string;
+  supplierCode: string | null;
+  supplierName: string;
+  openingBalance: number;
+  periodDebit: number;
+  periodCredit: number;
+  endingBalance: number;
+  lines: SupplierStatementLine[];
+}
+
+export interface SupplierStatementResult {
+  startDate: string | null;
+  endDate: string;
+  supplierId: string | null;
+  totalOpeningBalance: number;
+  totalDebit: number;
+  totalCredit: number;
+  totalEndingBalance: number;
+  suppliers: SupplierStatementPartner[];
+}
+
 @Injectable()
 export class PurchaseService {
   constructor(
@@ -495,6 +535,240 @@ export class PurchaseService {
       orderBy: { paymentDate: 'desc' },
       take: 100,
     });
+  }
+
+  async listSupplierOptions(companyId: string): Promise<SupplierOption[]> {
+    return this.prisma.partner.findMany({
+      where: {
+        companyId,
+        isActive: true,
+        type: { in: ['SUPPLIER', 'BOTH'] },
+      },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        type: true,
+      },
+      orderBy: [{ name: 'asc' }, { code: 'asc' }],
+      take: 500,
+    });
+  }
+
+  async getSupplierStatement(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+    supplierId?: string,
+  ): Promise<SupplierStatementResult> {
+    const parsedStartDate = this.parseStatementDate(startDate, 'startDate');
+    const parsedEndDate =
+      this.parseStatementDate(endDate, 'endDate') ?? new Date();
+
+    if (
+      parsedStartDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const normalizedSupplierId = supplierId?.trim() || undefined;
+    if (normalizedSupplierId) {
+      const supplier = await this.prisma.partner.findFirst({
+        where: {
+          id: normalizedSupplierId,
+          companyId,
+          isActive: true,
+          type: { in: ['SUPPLIER', 'BOTH'] },
+        },
+        select: { id: true },
+      });
+      if (!supplier) {
+        throw new BadRequestException('供应商不存在或已停用');
+      }
+    }
+
+    const [invoices, payments, creditNotes] = await Promise.all([
+      this.prisma.purchaseInvoice.findMany({
+        where: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          issuedDate: { lte: parsedEndDate },
+          ...(normalizedSupplierId ? { supplierId: normalizedSupplierId } : {}),
+        },
+        include: {
+          supplier: true,
+          purchaseOrder: { select: { purchaseNo: true } },
+        },
+      }),
+      this.prisma.supplierPayment.findMany({
+        where: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          paymentDate: { lte: parsedEndDate },
+          ...(normalizedSupplierId ? { supplierId: normalizedSupplierId } : {}),
+        },
+        include: {
+          supplier: true,
+        },
+      }),
+      this.prisma.supplierCreditNote.findMany({
+        where: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          creditDate: { lte: parsedEndDate },
+          ...(normalizedSupplierId ? { supplierId: normalizedSupplierId } : {}),
+        },
+        include: {
+          supplier: true,
+          purchaseInvoice: { select: { invoiceNo: true } },
+        },
+      }),
+    ]);
+
+    type DraftLine = Omit<SupplierStatementLine, 'runningBalance'> & {
+      supplierId: string;
+      supplierCode: string | null;
+      supplierName: string;
+      occurredAt: Date;
+    };
+
+    const draftLines: DraftLine[] = [
+      ...invoices.map((invoice) => ({
+        supplierId: invoice.supplier.id,
+        supplierCode: invoice.supplier.code,
+        supplierName: invoice.supplier.name,
+        sourceType: 'PURCHASE_INVOICE' as const,
+        sourceId: invoice.id,
+        documentNo: invoice.invoiceNo,
+        occurredAt: invoice.issuedDate,
+        date: invoice.issuedDate.toISOString(),
+        description: invoice.purchaseOrder.purchaseNo
+          ? `应付发票 / ${invoice.purchaseOrder.purchaseNo}`
+          : '应付发票',
+        debit: this.money(invoice.amount ?? 0).toNumber(),
+        credit: 0,
+      })),
+      ...payments.map((payment) => ({
+        supplierId: payment.supplier.id,
+        supplierCode: payment.supplier.code,
+        supplierName: payment.supplier.name,
+        sourceType: 'SUPPLIER_PAYMENT' as const,
+        sourceId: payment.id,
+        documentNo: payment.paymentNo,
+        occurredAt: payment.paymentDate,
+        date: payment.paymentDate.toISOString(),
+        description: payment.note
+          ? `供应商付款 / ${payment.method} / ${payment.note}`
+          : `供应商付款 / ${payment.method}`,
+        debit: 0,
+        credit: this.money(payment.amount ?? 0).toNumber(),
+      })),
+      ...creditNotes.map((creditNote) => ({
+        supplierId: creditNote.supplier.id,
+        supplierCode: creditNote.supplier.code,
+        supplierName: creditNote.supplier.name,
+        sourceType: 'SUPPLIER_CREDIT_NOTE' as const,
+        sourceId: creditNote.id,
+        documentNo: creditNote.creditNo,
+        occurredAt: creditNote.creditDate,
+        date: creditNote.creditDate.toISOString(),
+        description: creditNote.purchaseInvoice.invoiceNo
+          ? `供应商扣款 / ${creditNote.purchaseInvoice.invoiceNo}`
+          : '供应商扣款',
+        debit: 0,
+        credit: this.money(creditNote.amount ?? 0).toNumber(),
+      })),
+    ].sort(
+      (a, b) =>
+        a.supplierName.localeCompare(b.supplierName) ||
+        a.occurredAt.getTime() - b.occurredAt.getTime() ||
+        a.documentNo.localeCompare(b.documentNo),
+    );
+
+    const suppliersById = new Map<string, SupplierStatementPartner>();
+    for (const line of draftLines) {
+      const supplier = suppliersById.get(line.supplierId) ?? {
+        supplierId: line.supplierId,
+        supplierCode: line.supplierCode,
+        supplierName: line.supplierName,
+        openingBalance: 0,
+        periodDebit: 0,
+        periodCredit: 0,
+        endingBalance: 0,
+        lines: [],
+      };
+      suppliersById.set(line.supplierId, supplier);
+
+      const net = this.money(line.debit).minus(line.credit).toNumber();
+      if (
+        parsedStartDate &&
+        line.occurredAt.getTime() < parsedStartDate.getTime()
+      ) {
+        supplier.openingBalance = this.money(
+          this.money(supplier.openingBalance).plus(net),
+        ).toNumber();
+        supplier.endingBalance = supplier.openingBalance;
+        continue;
+      }
+
+      supplier.periodDebit = this.money(
+        this.money(supplier.periodDebit).plus(line.debit),
+      ).toNumber();
+      supplier.periodCredit = this.money(
+        this.money(supplier.periodCredit).plus(line.credit),
+      ).toNumber();
+      supplier.endingBalance = this.money(
+        this.money(supplier.endingBalance).plus(net),
+      ).toNumber();
+      supplier.lines.push({
+        sourceType: line.sourceType,
+        sourceId: line.sourceId,
+        documentNo: line.documentNo,
+        date: line.date,
+        description: line.description,
+        debit: line.debit,
+        credit: line.credit,
+        runningBalance: supplier.endingBalance,
+      });
+    }
+
+    const suppliers = [...suppliersById.values()]
+      .map((supplier) => ({
+        ...supplier,
+        endingBalance: this.money(
+          this.money(supplier.openingBalance)
+            .plus(supplier.periodDebit)
+            .minus(supplier.periodCredit),
+        ).toNumber(),
+      }))
+      .filter(
+        (supplier) =>
+          Math.abs(supplier.openingBalance) >= 0.01 ||
+          Math.abs(supplier.periodDebit) >= 0.01 ||
+          Math.abs(supplier.periodCredit) >= 0.01 ||
+          Math.abs(supplier.endingBalance) >= 0.01,
+      )
+      .sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate.toISOString(),
+      supplierId: normalizedSupplierId ?? null,
+      totalOpeningBalance: this.money(
+        suppliers.reduce((sum, supplier) => sum + supplier.openingBalance, 0),
+      ).toNumber(),
+      totalDebit: this.money(
+        suppliers.reduce((sum, supplier) => sum + supplier.periodDebit, 0),
+      ).toNumber(),
+      totalCredit: this.money(
+        suppliers.reduce((sum, supplier) => sum + supplier.periodCredit, 0),
+      ).toNumber(),
+      totalEndingBalance: this.money(
+        suppliers.reduce((sum, supplier) => sum + supplier.endingBalance, 0),
+      ).toNumber(),
+      suppliers,
+    };
   }
 
   async listOpenPayables(companyId: string) {
@@ -1124,6 +1398,22 @@ export class PurchaseService {
 
   private money(value: Decimal.Value) {
     return new Decimal(roundDecimal(value));
+  }
+
+  private parseStatementDate(
+    value: string | undefined,
+    fieldName: 'startDate' | 'endDate',
+  ) {
+    if (!value) return undefined;
+    const normalized =
+      fieldName === 'endDate' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T23:59:59.999Z`
+        : value;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${fieldName} 日期格式无效`);
+    }
+    return date;
   }
 
   private generateDocumentNo(prefix: string) {

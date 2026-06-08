@@ -12,6 +12,7 @@ import { FinanceDlqCenter } from "./FinanceDlqCenter";
 import { FinanceActionsPanel } from "./FinanceActionsPanel";
 import { FinanceAccountMappingsPanel } from "./FinanceAccountMappingsPanel";
 import { CustomerStatementView } from "./CustomerStatementView";
+import { SupplierStatementView } from "./SupplierStatementView";
 import { ReceivablePaymentWorkbench } from "./ReceivablePaymentWorkbench";
 import { PayablePaymentWorkbench } from "./PayablePaymentWorkbench";
 import { ReceivablesAgingView } from "./ReceivablesAgingView";
@@ -23,6 +24,7 @@ import {
   FileText,
   BookOpen,
   BarChart3,
+  Building2,
   LineChart,
   Scale,
   WalletCards,
@@ -43,6 +45,7 @@ export default function FinancePageClient() {
   const [activeTab, setActiveTab] = useState<
     | "invoices"
     | "customer-statement"
+    | "supplier-statement"
     | "payables"
     | "trial-balance"
     | "general-ledger"
@@ -95,6 +98,18 @@ export default function FinancePageClient() {
           >
             <Users className="h-4 w-4" />
             {t("financeCustomerStatementTab")}
+          </button>
+          <button
+            onClick={() => setActiveTab("supplier-statement")}
+            className={clsx(
+              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
+              activeTab === "supplier-statement"
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700",
+            )}
+          >
+            <Building2 className="h-4 w-4" />
+            {t("financeSupplierStatementTab")}
           </button>
           <button
             onClick={() => setActiveTab("trial-balance")}
@@ -269,6 +284,10 @@ export default function FinancePageClient() {
       ) : activeTab === "customer-statement" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
           <CustomerStatementView />
+        </div>
+      ) : activeTab === "supplier-statement" ? (
+        <div className="animate-in fade-in slide-in-from-right-2 duration-300">
+          <SupplierStatementView />
         </div>
       ) : activeTab === "trial-balance" ? (
         <div className="animate-in fade-in slide-in-from-right-2 duration-300">
