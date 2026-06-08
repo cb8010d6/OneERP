@@ -19,8 +19,14 @@ type MockPrisma = {
     findFirst: jest.Mock;
     findMany: jest.Mock;
   };
+  material: {
+    findMany: jest.Mock;
+  };
   bom: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
+  };
+  stockQuant: {
     findMany: jest.Mock;
   };
   $transaction: jest.Mock;
@@ -58,8 +64,14 @@ describe('ProductionService', () => {
       findFirst: jest.fn(),
       findMany: jest.fn(),
     },
+    material: {
+      findMany: jest.fn(),
+    },
     bom: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
+    },
+    stockQuant: {
       findMany: jest.fn(),
     },
     $transaction: jest.fn(),
@@ -91,7 +103,9 @@ describe('ProductionService', () => {
     );
     prisma.product.findFirst.mockResolvedValue(null);
     prisma.product.findMany.mockResolvedValue([]);
+    prisma.material.findMany.mockResolvedValue([]);
     prisma.bom.findMany.mockResolvedValue([]);
+    prisma.stockQuant.findMany.mockResolvedValue([]);
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
       inventoryService as unknown as ConstructorParameters<
@@ -270,6 +284,110 @@ describe('ProductionService', () => {
       expect(result.data).toEqual(workOrders);
       expect(result.total).toBe(1);
       expect(result.totalPages).toBe(1);
+    });
+  });
+
+  describe('getMaterialAvailability', () => {
+    it('summarizes open work order BOM requirements against internal stock', async () => {
+      prisma.workOrder.findMany.mockResolvedValue([
+        {
+          id: 'wo1',
+          workOrderNo: 'WO-001',
+          productId: 'product-1',
+          plannedQty: 10,
+          actualQty: 4,
+          status: 'IN_PROGRESS',
+          product: { id: 'product-1', sku: 'FG-1', name: '成品1' },
+          order: { orderNo: 'SO-001', partner: { name: '客户A' } },
+        },
+      ]);
+      prisma.bom.findFirst.mockResolvedValue({
+        id: 'bom-1',
+        lines: [{ materialId: 'raw-1', quantity: 2, scrapRate: 0.1 }],
+      });
+      prisma.material.findMany.mockResolvedValue([
+        {
+          id: 'raw-1',
+          sku: 'RM-1',
+          name: '原料1',
+          category: '原料',
+          unit: 'kg',
+        },
+      ]);
+      prisma.stockQuant.findMany.mockResolvedValue([
+        { materialId: 'raw-1', quantity: 10 },
+      ]);
+
+      const result = await service.getMaterialAvailability('c1');
+
+      expect(result.shortageCount).toBe(1);
+      expect(result.rows).toEqual([
+        expect.objectContaining({
+          materialId: 'raw-1',
+          sku: 'RM-1',
+          requiredQty: 13.2,
+          onHandQty: 10,
+          shortageQty: 3.2,
+          coveragePct: 75.76,
+          status: 'SHORTAGE',
+        }),
+      ]);
+      expect(result.rows[0]?.affectedWorkOrders).toEqual([
+        expect.objectContaining({
+          workOrderNo: 'WO-001',
+          openQty: 6,
+          requiredQty: 13.2,
+          customerName: '客户A',
+        }),
+      ]);
+      expect(prisma.stockQuant.findMany).toHaveBeenCalledWith({
+        where: {
+          materialId: { in: ['raw-1'] },
+          location: {
+            companyId: 'c1',
+            usage: 'INTERNAL',
+            isActive: true,
+          },
+        },
+        select: {
+          materialId: true,
+          quantity: true,
+        },
+      });
+    });
+
+    it('keeps missing BOM work orders visible instead of failing the whole report', async () => {
+      prisma.workOrder.findMany.mockResolvedValue([
+        {
+          id: 'wo-missing',
+          workOrderNo: 'WO-MISSING',
+          productId: 'product-missing',
+          plannedQty: 5,
+          actualQty: 0,
+          status: 'PENDING',
+          product: {
+            id: 'product-missing',
+            sku: 'FG-M',
+            name: '缺BOM成品',
+          },
+          order: null,
+        },
+      ]);
+      prisma.bom.findFirst.mockResolvedValue(null);
+
+      const result = await service.getMaterialAvailability('c1');
+
+      expect(result.rows).toEqual([]);
+      expect(result.missingBomWorkOrders).toEqual([
+        expect.objectContaining({
+          workOrderNo: 'WO-MISSING',
+          productSku: 'FG-M',
+          openQty: 5,
+          reason: '产品未配置默认 BOM，无法按报工扣减原料',
+        }),
+      ]);
+      expect(prisma.material.findMany).not.toHaveBeenCalled();
+      expect(prisma.stockQuant.findMany).not.toHaveBeenCalled();
     });
   });
 

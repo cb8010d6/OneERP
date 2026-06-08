@@ -36,6 +36,49 @@ interface BomRequirement {
   quantity: Decimal;
 }
 
+interface MaterialAvailabilitySource {
+  workOrderId: string;
+  workOrderNo: string;
+  productId: string;
+  productSku: string | null;
+  productName: string;
+  orderNo: string | null;
+  customerName: string | null;
+  openQty: number;
+  requiredQty: number;
+}
+
+export interface MaterialAvailabilityRow {
+  materialId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  requiredQty: number;
+  onHandQty: number;
+  shortageQty: number;
+  coveragePct: number;
+  status: 'AVAILABLE' | 'SHORTAGE';
+  affectedWorkOrders: MaterialAvailabilitySource[];
+}
+
+export interface MaterialAvailabilityMissingBom {
+  workOrderId: string;
+  workOrderNo: string;
+  productId: string;
+  productSku: string | null;
+  productName: string;
+  openQty: number;
+  reason: string;
+}
+
+export interface MaterialAvailabilityResult {
+  rows: MaterialAvailabilityRow[];
+  shortageCount: number;
+  totalOpenWorkOrders: number;
+  missingBomWorkOrders: MaterialAvailabilityMissingBom[];
+}
+
 export interface GenerateWorkOrdersResult {
   orderId: string;
   orderNo: string;
@@ -192,6 +235,180 @@ export class ProductionService {
     ]);
 
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  async getMaterialAvailability(
+    companyId: string,
+  ): Promise<MaterialAvailabilityResult> {
+    const workOrders = await this.prisma.workOrder.findMany({
+      where: {
+        companyId,
+        status: { in: ['PENDING', 'IN_PROGRESS'] },
+      },
+      include: {
+        product: {
+          select: { id: true, sku: true, name: true },
+        },
+        order: {
+          select: {
+            orderNo: true,
+            partner: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const requiredByMaterial = new Map<string, Decimal>();
+    const sourcesByMaterial = new Map<string, MaterialAvailabilitySource[]>();
+    const missingBomWorkOrders: MaterialAvailabilityMissingBom[] = [];
+
+    for (const workOrder of workOrders) {
+      const openQty = Math.max(
+        0,
+        Number(workOrder.plannedQty ?? 0) - Number(workOrder.actualQty ?? 0),
+      );
+      if (openQty <= 0) continue;
+
+      try {
+        const requirements = await this.resolveBomRequirements(
+          companyId,
+          workOrder.productId,
+          new Decimal(openQty),
+          new Set(),
+        );
+
+        for (const requirement of requirements) {
+          const current =
+            requiredByMaterial.get(requirement.materialId) ?? new Decimal(0);
+          requiredByMaterial.set(
+            requirement.materialId,
+            current.plus(requirement.quantity),
+          );
+
+          const sources = sourcesByMaterial.get(requirement.materialId) ?? [];
+          sources.push({
+            workOrderId: workOrder.id,
+            workOrderNo: workOrder.workOrderNo,
+            productId: workOrder.productId,
+            productSku: workOrder.product?.sku ?? null,
+            productName: workOrder.product?.name ?? workOrder.productId,
+            orderNo: workOrder.order?.orderNo ?? null,
+            customerName: workOrder.order?.partner?.name ?? null,
+            openQty: this.round2(openQty),
+            requiredQty: this.round2(requirement.quantity.toNumber()),
+          });
+          sourcesByMaterial.set(requirement.materialId, sources);
+        }
+      } catch (error) {
+        if (!(error instanceof BadRequestException)) {
+          throw error;
+        }
+        missingBomWorkOrders.push({
+          workOrderId: workOrder.id,
+          workOrderNo: workOrder.workOrderNo,
+          productId: workOrder.productId,
+          productSku: workOrder.product?.sku ?? null,
+          productName: workOrder.product?.name ?? workOrder.productId,
+          openQty: this.round2(openQty),
+          reason:
+            error instanceof Error && error.message
+              ? error.message
+              : '无法展开 BOM',
+        });
+      }
+    }
+
+    const materialIds = [...requiredByMaterial.keys()];
+    if (materialIds.length === 0) {
+      return {
+        rows: [],
+        shortageCount: 0,
+        totalOpenWorkOrders: workOrders.length,
+        missingBomWorkOrders,
+      };
+    }
+
+    const [materials, quants] = await Promise.all([
+      this.prisma.material.findMany({
+        where: {
+          id: { in: materialIds },
+          OR: [{ companyId }, { companyId: null }],
+        },
+        select: {
+          id: true,
+          sku: true,
+          name: true,
+          category: true,
+          unit: true,
+        },
+      }),
+      this.prisma.stockQuant.findMany({
+        where: {
+          materialId: { in: materialIds },
+          location: {
+            companyId,
+            usage: 'INTERNAL',
+            isActive: true,
+          },
+        },
+        select: {
+          materialId: true,
+          quantity: true,
+        },
+      }),
+    ]);
+
+    const materialMap = new Map(
+      materials.map((material) => [material.id, material]),
+    );
+    const onHandByMaterial = new Map<string, number>();
+    for (const quant of quants) {
+      const current = onHandByMaterial.get(quant.materialId) ?? 0;
+      onHandByMaterial.set(
+        quant.materialId,
+        this.round2(current + Number(quant.quantity ?? 0)),
+      );
+    }
+
+    const rows = materialIds
+      .map((materialId): MaterialAvailabilityRow => {
+        const material = materialMap.get(materialId);
+        const requiredQty = this.round2(
+          requiredByMaterial.get(materialId)?.toNumber() ?? 0,
+        );
+        const onHandQty = this.round2(onHandByMaterial.get(materialId) ?? 0);
+        const shortageQty = this.round2(Math.max(0, requiredQty - onHandQty));
+        return {
+          materialId,
+          sku: material?.sku ?? materialId,
+          name: material?.name ?? materialId,
+          category: material?.category ?? '-',
+          unit: material?.unit ?? '-',
+          requiredQty,
+          onHandQty,
+          shortageQty,
+          coveragePct:
+            requiredQty > 0
+              ? this.round2(Math.min(100, (onHandQty / requiredQty) * 100))
+              : 100,
+          status: shortageQty > 0 ? 'SHORTAGE' : 'AVAILABLE',
+          affectedWorkOrders: sourcesByMaterial.get(materialId) ?? [],
+        };
+      })
+      .sort((left, right) => {
+        if (right.shortageQty !== left.shortageQty) {
+          return right.shortageQty - left.shortageQty;
+        }
+        return right.requiredQty - left.requiredQty;
+      });
+
+    return {
+      rows,
+      shortageCount: rows.filter((row) => row.shortageQty > 0).length,
+      totalOpenWorkOrders: workOrders.length,
+      missingBomWorkOrders,
+    };
   }
 
   async submitWorkReport(
@@ -398,5 +615,9 @@ export class ProductionService {
       '0',
     )}${String(now.getDate()).padStart(2, '0')}`;
     return `WO-${date}-${String(now.getTime()).slice(-6)}`;
+  }
+
+  private round2(value: number) {
+    return Number(new Decimal(value).toDecimalPlaces(2).toString());
   }
 }

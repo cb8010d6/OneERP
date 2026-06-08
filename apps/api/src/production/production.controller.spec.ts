@@ -12,6 +12,7 @@ describe('ProductionController', () => {
     createWorkOrder: jest.fn(),
     generateWorkOrdersFromSalesOrder: jest.fn(),
     getWorkOrders: jest.fn(),
+    getMaterialAvailability: jest.fn(),
     submitWorkReport: jest.fn(),
   };
 
@@ -98,6 +99,25 @@ describe('ProductionController', () => {
         page: 1,
         limit: 20,
       });
+    });
+  });
+
+  describe('getMaterialAvailability', () => {
+    it('should return material availability analysis', async () => {
+      const expected = {
+        rows: [],
+        shortageCount: 0,
+        totalOpenWorkOrders: 0,
+        missingBomWorkOrders: [],
+      };
+      mockProductionService.getMaterialAvailability.mockResolvedValue(expected);
+
+      const result = await controller.getMaterialAvailability('c1');
+
+      expect(result).toEqual(expected);
+      expect(
+        mockProductionService.getMaterialAvailability,
+      ).toHaveBeenCalledWith('c1');
     });
   });
 

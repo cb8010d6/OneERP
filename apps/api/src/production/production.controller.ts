@@ -66,6 +66,13 @@ export class ProductionController {
     return this.productionService.getWorkOrders(companyId, pagination);
   }
 
+  @Get('material-availability')
+  @RequirePermissions(Permission.ProductionRead)
+  @ApiOperation({ summary: '获取未完成工单的物料可用性和短缺分析' })
+  async getMaterialAvailability(@CurrentCompany() companyId: string) {
+    return this.productionService.getMaterialAvailability(companyId);
+  }
+
   @Post('orders/:id/report')
   @RequirePermissions(Permission.ProductionPost)
   @ApiOperation({ summary: '提交报工/产量' })

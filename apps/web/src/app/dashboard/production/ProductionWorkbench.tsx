@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
+  Boxes,
   CheckCircle2,
   Factory,
   Loader2,
@@ -44,7 +46,54 @@ type ReportDraft = {
   batchNo: string;
 };
 
+type MaterialAvailabilitySource = {
+  workOrderId: string;
+  workOrderNo: string;
+  productSku?: string | null;
+  productName: string;
+  orderNo?: string | null;
+  customerName?: string | null;
+  openQty: number;
+  requiredQty: number;
+};
+
+type MaterialAvailabilityRow = {
+  materialId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  requiredQty: number;
+  onHandQty: number;
+  shortageQty: number;
+  coveragePct: number;
+  status: 'AVAILABLE' | 'SHORTAGE';
+  affectedWorkOrders: MaterialAvailabilitySource[];
+};
+
+type MaterialAvailabilityMissingBom = {
+  workOrderId: string;
+  workOrderNo: string;
+  productSku?: string | null;
+  productName: string;
+  openQty: number;
+  reason: string;
+};
+
+type MaterialAvailabilityData = {
+  rows: MaterialAvailabilityRow[];
+  shortageCount: number;
+  totalOpenWorkOrders: number;
+  missingBomWorkOrders: MaterialAvailabilityMissingBom[];
+};
+
 const statuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED'];
+const emptyMaterialAvailability: MaterialAvailabilityData = {
+  rows: [],
+  shortageCount: 0,
+  totalOpenWorkOrders: 0,
+  missingBomWorkOrders: [],
+};
 
 function statusLabel(status: string, t: ReturnType<typeof useI18n>['t']) {
   if (status === 'PENDING') return t('productionStatusPending');
@@ -59,6 +108,8 @@ export function ProductionWorkbench() {
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [selectedSalesOrderId, setSelectedSalesOrderId] = useState('');
   const [locations, setLocations] = useState<Location[]>([]);
+  const [materialAvailability, setMaterialAvailability] =
+    useState<MaterialAvailabilityData>(emptyMaterialAvailability);
   const [drafts, setDrafts] = useState<Record<string, ReportDraft>>({});
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
@@ -70,12 +121,17 @@ export function ProductionWorkbench() {
     try {
       setLoading(true);
       setError(null);
-      const [ordersResp, locationsResp] = await Promise.all([
+      const [ordersResp, locationsResp, availabilityResp] = await Promise.all([
         api.get('/production/orders', { params: { page: 1, limit: 100 } }),
         api.get('/inventory/locations'),
+        api.get('/production/material-availability'),
       ]);
       setOrders((ordersResp.data?.data as WorkOrder[]) ?? []);
       setLocations((locationsResp.data as Location[]) ?? []);
+      setMaterialAvailability(
+        (availabilityResp.data as MaterialAvailabilityData) ??
+          emptyMaterialAvailability,
+      );
       const salesResp = await api.get('/orders', {
         params: { page: 1, limit: 100 },
       });
@@ -256,6 +312,175 @@ export function ProductionWorkbench() {
             {t('productionGenerate')}
           </button>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Boxes className="h-4 w-4 text-slate-500" />
+              <h2 className="text-sm font-semibold text-slate-900">
+                {t('productionMaterialAvailability')}
+              </h2>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              {t('productionMaterialAvailabilityHint')}
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+            <div className="rounded-lg border border-slate-200 px-3 py-2">
+              <p className="font-semibold text-slate-900">
+                {materialAvailability.totalOpenWorkOrders}
+              </p>
+              <p className="text-slate-500">{t('productionOpenOrders')}</p>
+            </div>
+            <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
+              <p className="font-semibold text-red-700">
+                {materialAvailability.shortageCount}
+              </p>
+              <p className="text-red-600">{t('productionMaterialShortage')}</p>
+            </div>
+            <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+              <p className="font-semibold text-amber-700">
+                {materialAvailability.missingBomWorkOrders.length}
+              </p>
+              <p className="text-amber-700">
+                {t('productionMaterialMissingBom')}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {materialAvailability.missingBomWorkOrders.length > 0 ? (
+          <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-3">
+            <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-800">
+              <AlertTriangle className="h-4 w-4" />
+              {t('productionMaterialMissingBom')}
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {materialAvailability.missingBomWorkOrders.map((item) => (
+                <div
+                  key={item.workOrderId}
+                  className="rounded-md bg-white px-3 py-2 text-xs text-amber-900"
+                >
+                  <p className="font-mono font-semibold">{item.workOrderNo}</p>
+                  <p className="mt-1 truncate">
+                    {item.productSku ? `${item.productSku} · ` : ''}
+                    {item.productName} · {t('productionOpenQty')}:{' '}
+                    {item.openQty}
+                  </p>
+                  <p className="mt-1 text-amber-700">{item.reason}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {materialAvailability.rows.length > 0 ? (
+          <div className="mt-4 grid gap-3 xl:grid-cols-2">
+            {materialAvailability.rows.map((row) => (
+              <article
+                key={row.materialId}
+                className="rounded-lg border border-slate-200 p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">
+                      {row.sku} · {row.name}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                      {row.category} · {row.unit}
+                    </p>
+                  </div>
+                  <span
+                    className={
+                      row.status === 'SHORTAGE'
+                        ? 'rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700'
+                        : 'rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700'
+                    }
+                  >
+                    {row.status === 'SHORTAGE'
+                      ? t('productionMaterialShortage')
+                      : t('productionMaterialAllClear')}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-slate-500">
+                      {t('productionRequiredQty')}
+                    </p>
+                    <p className="font-semibold text-slate-900">
+                      {row.requiredQty}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">
+                      {t('productionOnHandQty')}
+                    </p>
+                    <p className="font-semibold text-slate-900">
+                      {row.onHandQty}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">
+                      {t('productionShortageQty')}
+                    </p>
+                    <p
+                      className={
+                        row.shortageQty > 0
+                          ? 'font-semibold text-red-700'
+                          : 'font-semibold text-emerald-700'
+                      }
+                    >
+                      {row.shortageQty}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span>{t('productionMaterialCoverage')}</span>
+                    <span>{row.coveragePct}%</span>
+                  </div>
+                  <div className="mt-1 h-2 rounded-full bg-slate-100">
+                    <div
+                      className={
+                        row.status === 'SHORTAGE'
+                          ? 'h-2 rounded-full bg-red-500'
+                          : 'h-2 rounded-full bg-emerald-500'
+                      }
+                      style={{ width: `${row.coveragePct}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3 space-y-1">
+                  <p className="text-xs font-medium text-slate-700">
+                    {t('productionMaterialAffectedOrders')}
+                  </p>
+                  {row.affectedWorkOrders.slice(0, 3).map((source) => (
+                    <div
+                      key={`${row.materialId}-${source.workOrderId}`}
+                      className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1 text-xs text-slate-600"
+                    >
+                      <span className="truncate">
+                        {source.workOrderNo} · {source.productName}
+                      </span>
+                      <span className="shrink-0">
+                        {t('productionRequiredQty')}: {source.requiredQty}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-400">
+            {t('productionMaterialNoDemand')}
+          </div>
+        )}
       </section>
 
       <div className="grid gap-4 xl:grid-cols-3">
