@@ -88,6 +88,37 @@ export interface BalanceSheetResult {
   rows: BalanceSheetRow[];
 }
 
+export type CashFlowCategory = 'OPERATING' | 'INVESTING' | 'FINANCING';
+
+export interface CashFlowRow {
+  journalEntryId: string;
+  entryNo: string;
+  date: string;
+  ref: string | null;
+  description: string | null;
+  accountCode: string;
+  accountName: string;
+  category: CashFlowCategory;
+  cashInflow: number;
+  cashOutflow: number;
+  netCashFlow: number;
+}
+
+export interface CashFlowResult {
+  startDate: string | null;
+  endDate: string;
+  beginningCash: number;
+  totalCashInflow: number;
+  totalCashOutflow: number;
+  operatingCashFlow: number;
+  investingCashFlow: number;
+  financingCashFlow: number;
+  netCashFlow: number;
+  endingCash: number;
+  cashAccountCodes: string[];
+  rows: CashFlowRow[];
+}
+
 export interface ReceivableAgingRow {
   invoiceId: string;
   invoiceNo: string;
@@ -1889,6 +1920,132 @@ export class FinanceService {
     };
   }
 
+  async getCashFlowStatement(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<CashFlowResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate =
+      this.parseTrialBalanceDate(endDate, 'endDate') ?? new Date();
+
+    if (
+      parsedStartDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const cashAccountCodes = [
+      ...new Set(
+        (
+          await Promise.all([
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'BANK',
+            ),
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'CASH',
+            ),
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'ALIPAY',
+            ),
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'WECHAT',
+            ),
+          ])
+        ).map((account) => account.accountCode),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: {
+        journalEntry: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          date: { lte: parsedEndDate },
+        },
+        account: { code: { in: cashAccountCodes } },
+      },
+      include: {
+        account: true,
+        journalEntry: true,
+      },
+      orderBy: [{ journalEntry: { date: 'asc' } }, { lineNo: 'asc' }],
+    });
+
+    let beginningCash = 0;
+    let totalCashInflow = 0;
+    let totalCashOutflow = 0;
+    const rows: CashFlowRow[] = [];
+
+    for (const line of lines) {
+      const cashInflow = this.round2(Number(line.debit ?? 0));
+      const cashOutflow = this.round2(Number(line.credit ?? 0));
+      const netCashFlow = this.round2(cashInflow - cashOutflow);
+      const lineDate = line.journalEntry.date;
+
+      if (parsedStartDate && lineDate.getTime() < parsedStartDate.getTime()) {
+        beginningCash = this.round2(beginningCash + netCashFlow);
+        continue;
+      }
+
+      totalCashInflow = this.round2(totalCashInflow + cashInflow);
+      totalCashOutflow = this.round2(totalCashOutflow + cashOutflow);
+      rows.push({
+        journalEntryId: line.journalEntryId,
+        entryNo: line.journalEntry.entryNo,
+        date: lineDate.toISOString(),
+        ref: line.journalEntry.ref,
+        description: line.journalEntry.description,
+        accountCode: line.account.code,
+        accountName: line.account.name,
+        category: this.cashFlowCategory(
+          line.journalEntry.ref,
+          line.journalEntry.description,
+        ),
+        cashInflow,
+        cashOutflow,
+        netCashFlow,
+      });
+    }
+
+    const operatingCashFlow = this.round2(
+      rows
+        .filter((row) => row.category === 'OPERATING')
+        .reduce((sum, row) => sum + row.netCashFlow, 0),
+    );
+    const investingCashFlow = this.round2(
+      rows
+        .filter((row) => row.category === 'INVESTING')
+        .reduce((sum, row) => sum + row.netCashFlow, 0),
+    );
+    const financingCashFlow = this.round2(
+      rows
+        .filter((row) => row.category === 'FINANCING')
+        .reduce((sum, row) => sum + row.netCashFlow, 0),
+    );
+    const netCashFlow = this.round2(totalCashInflow - totalCashOutflow);
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate.toISOString(),
+      beginningCash,
+      totalCashInflow,
+      totalCashOutflow,
+      operatingCashFlow,
+      investingCashFlow,
+      financingCashFlow,
+      netCashFlow,
+      endingCash: this.round2(beginningCash + netCashFlow),
+      cashAccountCodes,
+      rows,
+    };
+  }
+
   async getInventoryValuationReconciliation(
     companyId: string,
   ): Promise<InventoryValuationReconciliationResult> {
@@ -2318,5 +2475,30 @@ export class FinanceService {
     return type === 'ASSET'
       ? this.round2(debit - credit)
       : this.round2(credit - debit);
+  }
+
+  private cashFlowCategory(
+    ref: string | null | undefined,
+    description: string | null | undefined,
+  ): CashFlowCategory {
+    const text = `${ref ?? ''} ${description ?? ''}`.toUpperCase();
+    if (
+      text.includes('INVEST') ||
+      text.includes('投资') ||
+      text.includes('固定资产')
+    ) {
+      return 'INVESTING';
+    }
+    if (
+      text.includes('FINANC') ||
+      text.includes('LOAN') ||
+      text.includes('CAPITAL') ||
+      text.includes('融资') ||
+      text.includes('借款') ||
+      text.includes('资本')
+    ) {
+      return 'FINANCING';
+    }
+    return 'OPERATING';
   }
 }

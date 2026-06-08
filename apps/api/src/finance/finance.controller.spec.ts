@@ -25,6 +25,7 @@ describe('FinanceController', () => {
     postInvoice: jest.fn(),
     getIncomeStatement: jest.fn(),
     getBalanceSheet: jest.fn(),
+    getCashFlowStatement: jest.fn(),
     getReceivableAging: jest.fn(),
     getUnappliedPayments: jest.fn(),
   };
@@ -295,6 +296,26 @@ describe('FinanceController', () => {
       expect(result).toBe(expected);
       expect(mockFinanceService.getBalanceSheet).toHaveBeenCalledWith(
         'c1',
+        '2026-06-30',
+      );
+    });
+  });
+
+  describe('getCashFlowStatement', () => {
+    it('should return cash flow rows', async () => {
+      const expected = { totalCashInflow: 1000, totalCashOutflow: 300 };
+      mockFinanceService.getCashFlowStatement.mockResolvedValue(expected);
+
+      const result = await controller.getCashFlowStatement(
+        'c1',
+        '2026-06-01',
+        '2026-06-30',
+      );
+
+      expect(result).toBe(expected);
+      expect(mockFinanceService.getCashFlowStatement).toHaveBeenCalledWith(
+        'c1',
+        '2026-06-01',
         '2026-06-30',
       );
     });

@@ -312,6 +312,149 @@ describe('FinanceService', () => {
     });
   });
 
+  it('builds a cash flow statement from mapped cash accounts', async () => {
+    financeAccountMappingService.resolveLineAccount
+      .mockResolvedValueOnce({
+        accountCode: '1002',
+        accountName: '银行存款',
+        accountType: 'ASSET',
+      })
+      .mockResolvedValueOnce({
+        accountCode: '1001',
+        accountName: '库存现金',
+        accountType: 'ASSET',
+      })
+      .mockResolvedValueOnce({
+        accountCode: '101201',
+        accountName: '支付宝',
+        accountType: 'ASSET',
+      })
+      .mockResolvedValueOnce({
+        accountCode: '101202',
+        accountName: '微信支付',
+        accountType: 'ASSET',
+      });
+    prisma.journalEntryLine.findMany.mockResolvedValue([
+      {
+        journalEntryId: 'je-opening',
+        accountId: 'bank',
+        debit: 1000,
+        credit: 100,
+        lineNo: 1,
+        account: { code: '1002', name: '银行存款' },
+        journalEntry: {
+          entryNo: 'JE-OPEN',
+          date: new Date('2026-05-31T00:00:00.000Z'),
+          ref: 'OPEN',
+          description: '期初余额',
+        },
+      },
+      {
+        journalEntryId: 'je-pay',
+        accountId: 'bank',
+        debit: 500,
+        credit: 0,
+        lineNo: 1,
+        account: { code: '1002', name: '银行存款' },
+        journalEntry: {
+          entryNo: 'JE-PAY',
+          date: new Date('2026-06-05T00:00:00.000Z'),
+          ref: 'PAY-001',
+          description: '客户收款自动凭证',
+        },
+      },
+      {
+        journalEntryId: 'je-supplier',
+        accountId: 'bank',
+        debit: 0,
+        credit: 200,
+        lineNo: 1,
+        account: { code: '1002', name: '银行存款' },
+        journalEntry: {
+          entryNo: 'JE-SUP',
+          date: new Date('2026-06-08T00:00:00.000Z'),
+          ref: 'SUPPAY-001',
+          description: '供应商付款自动凭证',
+        },
+      },
+      {
+        journalEntryId: 'je-invest',
+        accountId: 'bank',
+        debit: 0,
+        credit: 300,
+        lineNo: 1,
+        account: { code: '1002', name: '银行存款' },
+        journalEntry: {
+          entryNo: 'JE-INVEST',
+          date: new Date('2026-06-10T00:00:00.000Z'),
+          ref: 'INVEST-001',
+          description: '固定资产投资',
+        },
+      },
+    ]);
+
+    const result = await service.getCashFlowStatement(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+    );
+
+    expect(
+      financeAccountMappingService.resolveLineAccount,
+    ).toHaveBeenCalledWith('c1', 'BANK');
+    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
+      where: {
+        journalEntry: {
+          companyId: 'c1',
+          postingStatus: 'POSTED',
+          date: { lte: new Date('2026-06-30T23:59:59.999Z') },
+        },
+        account: {
+          code: { in: ['1001', '1002', '101201', '101202'] },
+        },
+      },
+      include: {
+        account: true,
+        journalEntry: true,
+      },
+      orderBy: [{ journalEntry: { date: 'asc' } }, { lineNo: 'asc' }],
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        startDate: '2026-06-01T00:00:00.000Z',
+        endDate: '2026-06-30T23:59:59.999Z',
+        beginningCash: 900,
+        totalCashInflow: 500,
+        totalCashOutflow: 500,
+        operatingCashFlow: 300,
+        investingCashFlow: -300,
+        financingCashFlow: 0,
+        netCashFlow: 0,
+        endingCash: 900,
+        cashAccountCodes: ['1001', '1002', '101201', '101202'],
+      }),
+    );
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[0]).toEqual(
+      expect.objectContaining({
+        entryNo: 'JE-PAY',
+        category: 'OPERATING',
+        cashInflow: 500,
+        cashOutflow: 0,
+        netCashFlow: 500,
+      }),
+    );
+    expect(result.rows[2]).toEqual(
+      expect.objectContaining({
+        entryNo: 'JE-INVEST',
+        category: 'INVESTING',
+        cashInflow: 0,
+        cashOutflow: 300,
+        netCashFlow: -300,
+      }),
+    );
+  });
+
   it('reconciles inventory valuation with inventory general ledger balance', async () => {
     prisma.materialCost.findMany.mockResolvedValue([
       {

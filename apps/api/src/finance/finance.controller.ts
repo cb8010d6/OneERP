@@ -235,6 +235,21 @@ export class FinanceController {
     return this.financeService.getBalanceSheet(companyId, asOfDate);
   }
 
+  @Get('cash-flow')
+  @RequirePermissions(Permission.FinanceTrialBalanceRead)
+  @ApiOperation({ summary: '现金流量表（现金类科目期间流入流出）' })
+  async getCashFlowStatement(
+    @CurrentCompany() companyId: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return this.financeService.getCashFlowStatement(
+      companyId,
+      startDate,
+      endDate,
+    );
+  }
+
   @Get('inventory-valuation')
   @RequirePermissions(Permission.FinanceRead)
   @ApiOperation({ summary: '库存估值与总账库存科目对账' })
