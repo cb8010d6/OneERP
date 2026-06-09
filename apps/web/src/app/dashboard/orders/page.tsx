@@ -141,20 +141,36 @@ export default function OrdersPage() {
         <button
           type="button"
           onClick={() => router.push('/dashboard/sales')}
-          className="inline-flex items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          className="inline-flex w-full items-center justify-center rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 sm:w-auto"
         >
           新建销售订单
         </button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-4">
-        <SummaryCard label="订单数" value={summary.total} tone="text-slate-900" />
-        <SummaryCard label="存在缺口" value={summary.shortage} tone="text-red-700" />
-        <SummaryCard label="缺成品映射" value={summary.unmapped} tone="text-amber-700" />
-        <SummaryCard label="生产覆盖" value={summary.covered} tone="text-blue-700" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <SummaryCard
+          label="订单数"
+          value={summary.total}
+          tone="text-slate-900"
+        />
+        <SummaryCard
+          label="存在缺口"
+          value={summary.shortage}
+          tone="text-red-700"
+        />
+        <SummaryCard
+          label="缺成品映射"
+          value={summary.unmapped}
+          tone="text-amber-700"
+        />
+        <SummaryCard
+          label="生产覆盖"
+          value={summary.covered}
+          tone="text-blue-700"
+        />
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
         <div className="mb-4 grid gap-3 lg:grid-cols-[1fr_220px]">
           <label className="relative">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
@@ -189,8 +205,68 @@ export default function OrdersPage() {
             <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+          <>
+            <div className="space-y-3 md:hidden">
+              {orders.map((order) => {
+                const orderStatus = orderStatusMap[order.status] ?? {
+                  label: order.status,
+                  className: 'bg-slate-100 text-slate-700',
+                };
+                const fulfillment =
+                  order.fulfillmentSummary?.overallStatus ?? 'UNMAPPED';
+                const fulfillmentStatus = fulfillmentStatusMap[fulfillment];
+                return (
+                  <button
+                    key={order.id}
+                    type="button"
+                    onClick={() => router.push(`/dashboard/orders/${order.id}`)}
+                    className="w-full rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-sm font-semibold text-slate-900">
+                          {order.orderNo}
+                        </p>
+                        <p className="mt-1 truncate text-xs text-slate-500">
+                          {order.partner?.name || '-'}
+                        </p>
+                      </div>
+                      <OrderStatusBadge status={orderStatus} />
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <FulfillmentBadge status={fulfillment} />
+                      <div className="text-right">
+                        <p className="text-xs text-slate-500">缺口</p>
+                        <p
+                          className={`font-semibold ${fulfillmentStatus.tone}`}
+                        >
+                          {order.fulfillmentSummary?.totalShortageQty ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
+                      <div>
+                        <p className="text-slate-500">交付日期</p>
+                        <p className="mt-1 font-medium text-slate-800">
+                          {formatDate(order.expectedDate)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-slate-500">金额</p>
+                        <p className="mt-1 truncate font-semibold text-slate-900">
+                          {formatCurrency(order.totalAmount)}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs text-slate-500">
                 <tr>
                   <th className="rounded-l-lg px-4 py-3">订单</th>
@@ -224,24 +300,10 @@ export default function OrdersPage() {
                         {order.partner?.name || '-'}
                       </td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs font-medium ${orderStatus.className}`}
-                        >
-                          {orderStatus.label}
-                        </span>
+                        <OrderStatusBadge status={orderStatus} />
                       </td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${fulfillmentStatus.className}`}
-                        >
-                          {fulfillment === 'SHORTAGE' ||
-                          fulfillment === 'UNMAPPED' ? (
-                            <AlertTriangle className="h-3 w-3" />
-                          ) : (
-                            <PackageCheck className="h-3 w-3" />
-                          )}
-                          {fulfillmentStatus.label}
-                        </span>
+                        <FulfillmentBadge status={fulfillment} />
                       </td>
                       <td
                         className={`px-4 py-3 text-right font-semibold ${fulfillmentStatus.tone}`}
@@ -249,9 +311,7 @@ export default function OrdersPage() {
                         {order.fulfillmentSummary?.totalShortageQty ?? 0}
                       </td>
                       <td className="px-4 py-3 text-slate-600">
-                        {order.expectedDate
-                          ? new Date(order.expectedDate).toLocaleDateString()
-                          : '-'}
+                        {formatDate(order.expectedDate)}
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-slate-900">
                         {formatCurrency(order.totalAmount)}
@@ -260,17 +320,52 @@ export default function OrdersPage() {
                   );
                 })}
               </tbody>
-            </table>
+              </table>
+            </div>
             {orders.length === 0 ? (
               <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
                 暂无订单
               </div>
             ) : null}
-          </div>
+          </>
         )}
       </div>
     </div>
   );
+}
+
+function OrderStatusBadge({
+  status,
+}: {
+  status: { label: string; className: string };
+}) {
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${status.className}`}
+    >
+      {status.label}
+    </span>
+  );
+}
+
+function FulfillmentBadge({ status }: { status: FulfillmentStatus }) {
+  const fulfillmentStatus = fulfillmentStatusMap[status];
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${fulfillmentStatus.className}`}
+    >
+      {status === 'SHORTAGE' || status === 'UNMAPPED' ? (
+        <AlertTriangle className="h-3 w-3" />
+      ) : (
+        <PackageCheck className="h-3 w-3" />
+      )}
+      {fulfillmentStatus.label}
+    </span>
+  );
+}
+
+function formatDate(value?: string | null) {
+  return value ? new Date(value).toLocaleDateString() : '-';
 }
 
 function SummaryCard({

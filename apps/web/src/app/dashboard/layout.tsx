@@ -13,8 +13,10 @@ import {
   FileText,
   LayoutDashboard,
   LogOut,
+  Menu,
   PanelRight,
   Table,
+  X,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
@@ -43,6 +45,7 @@ export default function DashboardLayout({
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [rightOpen, setRightOpen] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const {
     user,
     token,
@@ -143,6 +146,7 @@ export default function DashboardLayout({
 
   useEffect(() => {
     if (!pathname) return;
+    setMobileNavOpen(false);
     const item = navItems.find((entry) => entry.href === pathname);
     openTab({
       id: pathname,
@@ -200,7 +204,13 @@ export default function DashboardLayout({
 
   const handleLogout = () => {
     logout();
+    setMobileNavOpen(false);
     router.push('/login');
+  };
+
+  const handleNavigate = (href: string) => {
+    setMobileNavOpen(false);
+    router.push(href);
   };
 
   const handleCompanyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -218,89 +228,123 @@ export default function DashboardLayout({
 
   if (!token || !user || !currentCompanyId) return null;
 
-  return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
-        <div className="h-16 flex items-center justify-center border-b border-gray-200">
-          <h1 className="text-xl font-bold text-blue-600">OneERP</h1>
-        </div>
+  const sidebarContent = (
+    <>
+      <div className="h-16 flex items-center justify-center border-b border-gray-200">
+        <h1 className="text-xl font-bold text-blue-600">OneERP</h1>
+      </div>
 
-        {/* Company Switcher */}
-        <div className="p-4 border-b border-gray-200">
-          <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
-            {t('currentCompany')}
-          </label>
-          <select
-            className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
-            value={currentCompanyId || ''}
-            onChange={handleCompanyChange}
-          >
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div className="p-4 border-b border-gray-200">
+        <label className="block text-xs font-medium text-gray-500 mb-1 uppercase">
+          {t('currentCompany')}
+        </label>
+        <select
+          className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
+          value={currentCompanyId || ''}
+          onChange={handleCompanyChange}
+        >
+          {companies.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+      </div>
 
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {visibleNavItems.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <button
-                key={item.href}
-                onClick={() => router.push(item.href)}
-                className={`w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
-                  isActive
-                    ? 'bg-blue-50 text-blue-700'
-                    : 'text-gray-700 hover:bg-gray-100'
-                }`}
-              >
-                <item.icon
-                  className={`mr-3 h-5 w-5 ${isActive ? 'text-blue-700' : 'text-gray-400'}`}
-                />
-                {item.label}
-              </button>
-            );
-          })}
-        </nav>
-
-        <div className="p-4 border-t border-gray-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
-                {(user?.name || user?.username || user?.email || 'U')
-                  .charAt(0)
-                  .toUpperCase()}
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">
-                  {user?.name || user?.username || user?.email || 'User'}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {currentCompany?.role || user?.role || 'Role'}
-                </p>
-              </div>
-            </div>
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        {visibleNavItems.map((item) => {
+          const isActive = pathname === item.href;
+          return (
             <button
-              onClick={handleLogout}
-              className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100"
+              key={item.href}
+              onClick={() => handleNavigate(item.href)}
+              className={`w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
+                isActive
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-700 hover:bg-gray-100'
+              }`}
             >
-              <LogOut className="h-5 w-5" />
+              <item.icon
+                className={`mr-3 h-5 w-5 ${isActive ? 'text-blue-700' : 'text-gray-400'}`}
+              />
+              {item.label}
             </button>
+          );
+        })}
+      </nav>
+
+      <div className="p-4 border-t border-gray-200">
+        <div className="flex items-center justify-between">
+          <div className="flex min-w-0 items-center space-x-3">
+            <div className="w-8 h-8 shrink-0 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold">
+              {(user?.name || user?.username || user?.email || 'U')
+                .charAt(0)
+                .toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-gray-900">
+                {user?.name || user?.username || user?.email || 'User'}
+              </p>
+              <p className="truncate text-xs text-gray-500">
+                {currentCompany?.role || user?.role || 'Role'}
+              </p>
+            </div>
           </div>
+          <button
+            onClick={handleLogout}
+            className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100"
+          >
+            <LogOut className="h-5 w-5" />
+          </button>
         </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex h-dvh overflow-hidden bg-gray-50">
+      <aside className="hidden w-64 shrink-0 bg-white border-r border-gray-200 lg:flex lg:flex-col">
+        {sidebarContent}
       </aside>
 
+      {mobileNavOpen ? (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/40"
+            aria-label="关闭导航"
+            onClick={() => setMobileNavOpen(false)}
+          />
+          <aside className="relative flex h-full w-[min(82vw,320px)] flex-col bg-white shadow-xl">
+            <button
+              type="button"
+              className="absolute right-3 top-3 rounded-md p-2 text-gray-500 hover:bg-gray-100"
+              aria-label="关闭导航"
+              onClick={() => setMobileNavOpen(false)}
+            >
+              <X className="h-5 w-5" />
+            </button>
+            {sidebarContent}
+          </aside>
+        </div>
+      ) : null}
+
       {/* Main Content */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="relative h-16 bg-white border-b border-gray-200 flex items-center px-8 shadow-sm justify-between">
-          <h2 className="text-lg font-semibold text-gray-800">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="relative h-14 sm:h-16 bg-white border-b border-gray-200 flex items-center gap-2 px-3 shadow-sm sm:px-6 lg:px-8">
+          <button
+            type="button"
+            className="rounded-md p-2 text-gray-600 hover:bg-gray-100 lg:hidden"
+            aria-label="打开导航"
+            onClick={() => setMobileNavOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-800 sm:text-lg">
             {navItems.find((i) => i.href === pathname)?.label ||
               t('navOverview')}
           </h2>
-          <div className="absolute left-1/2 -translate-x-1/2">
+          <div className="absolute left-1/2 hidden -translate-x-1/2 md:block">
             <CommandPalette />
           </div>
           <select
@@ -316,7 +360,7 @@ export default function DashboardLayout({
           </select>
           <button
             type="button"
-            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100"
+            className="hidden rounded-md p-1.5 text-gray-500 hover:bg-gray-100 xl:inline-flex"
             onClick={() => setRightOpen((prev) => !prev)}
             title={t('toggleSidePanel')}
           >
@@ -325,7 +369,9 @@ export default function DashboardLayout({
         </header>
         <WorkspaceTabs />
         <div className="flex min-h-0 flex-1">
-          <div className="flex-1 overflow-auto p-8">{children}</div>
+          <div className="min-w-0 flex-1 overflow-auto p-3 sm:p-5 lg:p-8">
+            {children}
+          </div>
 
           {rightOpen ? (
             <aside className="hidden w-72 border-l border-gray-200 bg-white p-4 xl:block">
