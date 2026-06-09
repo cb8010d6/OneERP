@@ -6,12 +6,14 @@ import {
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  CreatePurchaseOrderFromShortagesDto,
   CreateWorkOrderDto,
   CreateWorkReportDto,
   GenerateWorkOrdersFromOrderDto,
 } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { InventoryService } from '../inventory/inventory.service';
+import { PurchaseService } from '../purchase/purchase.service';
 
 export interface WorkOrderRecord {
   id: string;
@@ -57,6 +59,9 @@ export interface MaterialAvailabilityRow {
   requiredQty: number;
   onHandQty: number;
   shortageQty: number;
+  suggestedPurchaseQty: number;
+  unitPrice: number;
+  estimatedAmount: number;
   coveragePct: number;
   status: 'AVAILABLE' | 'SHORTAGE';
   affectedWorkOrders: MaterialAvailabilitySource[];
@@ -94,6 +99,7 @@ export class ProductionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
+    private readonly purchaseService: PurchaseService,
   ) {}
 
   async createWorkOrder(
@@ -341,6 +347,7 @@ export class ProductionService {
           name: true,
           category: true,
           unit: true,
+          unitPrice: true,
         },
       }),
       this.prisma.stockQuant.findMany({
@@ -379,6 +386,7 @@ export class ProductionService {
         );
         const onHandQty = this.round2(onHandByMaterial.get(materialId) ?? 0);
         const shortageQty = this.round2(Math.max(0, requiredQty - onHandQty));
+        const unitPrice = this.round2(Number(material?.unitPrice ?? 0));
         return {
           materialId,
           sku: material?.sku ?? materialId,
@@ -388,6 +396,9 @@ export class ProductionService {
           requiredQty,
           onHandQty,
           shortageQty,
+          suggestedPurchaseQty: shortageQty,
+          unitPrice,
+          estimatedAmount: this.round2(shortageQty * unitPrice),
           coveragePct:
             requiredQty > 0
               ? this.round2(Math.min(100, (onHandQty / requiredQty) * 100))
@@ -409,6 +420,42 @@ export class ProductionService {
       totalOpenWorkOrders: workOrders.length,
       missingBomWorkOrders,
     };
+  }
+
+  async createPurchaseOrderFromShortages(
+    companyId: string,
+    userId: string,
+    dto: CreatePurchaseOrderFromShortagesDto,
+  ) {
+    const availability = await this.getMaterialAvailability(companyId);
+    const selectedMaterialIds = new Set(
+      (dto.materialIds ?? []).map((id) => id.trim()).filter(Boolean),
+    );
+    const shortageRows = availability.rows.filter((row) => {
+      if (row.shortageQty <= 0) return false;
+      return (
+        selectedMaterialIds.size === 0 ||
+        selectedMaterialIds.has(row.materialId)
+      );
+    });
+
+    if (shortageRows.length === 0) {
+      throw new BadRequestException('当前没有可生成采购单的生产物料短缺');
+    }
+
+    return this.purchaseService.createPurchaseOrder(companyId, userId, {
+      supplierId: dto.supplierId,
+      expectedDate: dto.expectedDate,
+      notes:
+        dto.notes ??
+        `按生产物料短缺自动生成，涉及 ${shortageRows.length} 个物料`,
+      items: shortageRows.map((row) => ({
+        materialId: row.materialId,
+        quantity: row.suggestedPurchaseQty,
+        unitPrice: row.unitPrice,
+        note: `生产缺料：需求 ${row.requiredQty}，现存 ${row.onHandQty}，缺口 ${row.shortageQty}`,
+      })),
+    });
   }
 
   async submitWorkReport(

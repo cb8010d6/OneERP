@@ -9,6 +9,7 @@ import {
   Loader2,
   PackageCheck,
   PlusCircle,
+  ShoppingCart,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
@@ -36,6 +37,12 @@ type Location = {
   id: string;
   name: string;
   code?: string | null;
+};
+
+type SupplierOption = {
+  id: string;
+  code?: string | null;
+  name: string;
 };
 
 type ReportDraft = {
@@ -66,6 +73,9 @@ type MaterialAvailabilityRow = {
   requiredQty: number;
   onHandQty: number;
   shortageQty: number;
+  suggestedPurchaseQty: number;
+  unitPrice: number;
+  estimatedAmount: number;
   coveragePct: number;
   status: 'AVAILABLE' | 'SHORTAGE';
   affectedWorkOrders: MaterialAvailabilitySource[];
@@ -108,12 +118,15 @@ export function ProductionWorkbench() {
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [selectedSalesOrderId, setSelectedSalesOrderId] = useState('');
   const [locations, setLocations] = useState<Location[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState('');
   const [materialAvailability, setMaterialAvailability] =
     useState<MaterialAvailabilityData>(emptyMaterialAvailability);
   const [drafts, setDrafts] = useState<Record<string, ReportDraft>>({});
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [creatingPurchaseOrder, setCreatingPurchaseOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -121,11 +134,12 @@ export function ProductionWorkbench() {
     try {
       setLoading(true);
       setError(null);
-      const [ordersResp, locationsResp, availabilityResp] = await Promise.all([
-        api.get('/production/orders', { params: { page: 1, limit: 100 } }),
-        api.get('/inventory/locations'),
-        api.get('/production/material-availability'),
-      ]);
+      const [ordersResp, locationsResp, availabilityResp] =
+        await Promise.all([
+          api.get('/production/orders', { params: { page: 1, limit: 100 } }),
+          api.get('/inventory/locations'),
+          api.get('/production/material-availability'),
+        ]);
       setOrders((ordersResp.data?.data as WorkOrder[]) ?? []);
       setLocations((locationsResp.data as Location[]) ?? []);
       setMaterialAvailability(
@@ -140,6 +154,19 @@ export function ProductionWorkbench() {
       ).filter((order) => !['CANCELLED', 'COMPLETED'].includes(order.status));
       setSalesOrders(nextSalesOrders);
       setSelectedSalesOrderId((prev) => prev || nextSalesOrders[0]?.id || '');
+      try {
+        const suppliersResp = await api.get('/purchase/supplier-options');
+        const nextSuppliers = (suppliersResp.data as SupplierOption[]) ?? [];
+        setSuppliers(nextSuppliers);
+        setSelectedSupplierId((prev) =>
+          nextSuppliers.some((supplier) => supplier.id === prev)
+            ? prev
+            : nextSuppliers[0]?.id || '',
+        );
+      } catch {
+        setSuppliers([]);
+        setSelectedSupplierId('');
+      }
     } catch (reason) {
       const message =
         reason && typeof reason === 'object' && 'response' in reason
@@ -162,6 +189,14 @@ export function ProductionWorkbench() {
       items: orders.filter((order) => order.status === status),
     }));
   }, [orders]);
+
+  const shortageRows = useMemo(
+    () =>
+      materialAvailability.rows.filter(
+        (row) => row.status === 'SHORTAGE' && row.shortageQty > 0,
+      ),
+    [materialAvailability.rows],
+  );
 
   const readDraft = (id: string): ReportDraft =>
     drafts[id] ?? {
@@ -233,6 +268,38 @@ export function ProductionWorkbench() {
       setError(message || t('productionReportFailed'));
     } finally {
       setSubmittingId(null);
+    }
+  };
+
+  const createPurchaseOrderFromShortages = async () => {
+    if (!selectedSupplierId || shortageRows.length === 0) return;
+    try {
+      setCreatingPurchaseOrder(true);
+      setError(null);
+      setMessage(null);
+      const response = await api.post(
+        '/production/material-availability/purchase-order',
+        {
+          supplierId: selectedSupplierId,
+          materialIds: shortageRows.map((row) => row.materialId),
+        },
+      );
+      const purchaseNo = String(response.data?.purchaseNo ?? '');
+      setMessage(
+        purchaseNo
+          ? `${t('productionPurchaseOrderCreated')}: ${purchaseNo}`
+          : t('productionPurchaseOrderCreated'),
+      );
+      await load();
+    } catch (reason) {
+      const message =
+        reason && typeof reason === 'object' && 'response' in reason
+          ? (reason as { response?: { data?: { message?: string } } }).response
+              ?.data?.message
+          : undefined;
+      setError(message || t('productionPurchaseOrderCreateFailed'));
+    } finally {
+      setCreatingPurchaseOrder(false);
     }
   };
 
@@ -351,6 +418,46 @@ export function ProductionWorkbench() {
           </div>
         </div>
 
+        <div className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[1fr_auto]">
+          <div>
+            <label className="text-xs font-medium text-slate-600">
+              {t('productionProcurementSupplier')}
+            </label>
+            <select
+              value={selectedSupplierId}
+              onChange={(event) => setSelectedSupplierId(event.target.value)}
+              className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+            >
+              {suppliers.length === 0 ? (
+                <option value="">{t('productionNoSupplierOptions')}</option>
+              ) : null}
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.code ? `${supplier.code} · ` : ''}
+                  {supplier.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            onClick={() => void createPurchaseOrderFromShortages()}
+            disabled={
+              !selectedSupplierId ||
+              shortageRows.length === 0 ||
+              creatingPurchaseOrder
+            }
+            className="inline-flex items-center justify-center gap-2 self-end rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+          >
+            {creatingPurchaseOrder ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ShoppingCart className="h-4 w-4" />
+            )}
+            {t('productionCreatePurchaseOrder')}
+          </button>
+        </div>
+
         {materialAvailability.missingBomWorkOrders.length > 0 ? (
           <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-3">
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-800">
@@ -437,6 +544,27 @@ export function ProductionWorkbench() {
                     </p>
                   </div>
                 </div>
+
+                {row.status === 'SHORTAGE' ? (
+                  <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-red-50 px-3 py-2 text-xs">
+                    <div>
+                      <p className="text-red-600">
+                        {t('productionSuggestedPurchaseQty')}
+                      </p>
+                      <p className="font-semibold text-red-800">
+                        {row.suggestedPurchaseQty}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-red-600">
+                        {t('productionEstimatedAmount')}
+                      </p>
+                      <p className="font-semibold text-red-800">
+                        {row.estimatedAmount}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-3">
                   <div className="flex justify-between text-xs text-slate-500">

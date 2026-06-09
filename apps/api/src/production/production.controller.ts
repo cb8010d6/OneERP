@@ -15,6 +15,7 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
 import {
+  CreatePurchaseOrderFromShortagesDto,
   CreateWorkOrderDto,
   CreateWorkReportDto,
   GenerateWorkOrdersFromOrderDto,
@@ -71,6 +72,21 @@ export class ProductionController {
   @ApiOperation({ summary: '获取未完成工单的物料可用性和短缺分析' })
   async getMaterialAvailability(@CurrentCompany() companyId: string) {
     return this.productionService.getMaterialAvailability(companyId);
+  }
+
+  @Post('material-availability/purchase-order')
+  @RequirePermissions(Permission.ProductionRead, Permission.PurchaseCreate)
+  @ApiOperation({ summary: '按当前生产物料短缺生成采购单' })
+  async createPurchaseOrderFromShortages(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Body() dto: CreatePurchaseOrderFromShortagesDto,
+  ) {
+    return this.productionService.createPurchaseOrderFromShortages(
+      companyId,
+      user.id,
+      dto,
+    );
   }
 
   @Post('orders/:id/report')

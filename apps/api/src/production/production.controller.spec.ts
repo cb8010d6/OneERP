@@ -13,6 +13,7 @@ describe('ProductionController', () => {
     generateWorkOrdersFromSalesOrder: jest.fn(),
     getWorkOrders: jest.fn(),
     getMaterialAvailability: jest.fn(),
+    createPurchaseOrderFromShortages: jest.fn(),
     submitWorkReport: jest.fn(),
   };
 
@@ -118,6 +119,31 @@ describe('ProductionController', () => {
       expect(
         mockProductionService.getMaterialAvailability,
       ).toHaveBeenCalledWith('c1');
+    });
+  });
+
+  describe('createPurchaseOrderFromShortages', () => {
+    it('should create a purchase order from production shortages', async () => {
+      const expected = { id: 'po1', purchaseNo: 'PO-001' };
+      mockProductionService.createPurchaseOrderFromShortages.mockResolvedValue(
+        expected,
+      );
+      const dto = {
+        supplierId: 'supplier-1',
+        materialIds: ['raw-1'],
+        expectedDate: '2026-06-20',
+      };
+
+      const result = await controller.createPurchaseOrderFromShortages(
+        'c1',
+        { id: 'u1', email: 'test@example.com' },
+        dto,
+      );
+
+      expect(result).toEqual(expected);
+      expect(
+        mockProductionService.createPurchaseOrderFromShortages,
+      ).toHaveBeenCalledWith('c1', 'u1', dto);
     });
   });
 

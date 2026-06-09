@@ -1,10 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsArray,
   IsOptional,
   IsString,
   IsNotEmpty,
   IsNumber,
   IsBoolean,
+  IsDateString,
   Min,
 } from 'class-validator';
 
@@ -60,4 +62,29 @@ export class GenerateWorkOrdersFromOrderDto {
   @IsOptional()
   @IsBoolean()
   skipExisting?: boolean;
+}
+
+export class CreatePurchaseOrderFromShortagesDto {
+  @ApiProperty({ description: '供应商ID' })
+  @IsString()
+  @IsNotEmpty()
+  supplierId!: string;
+
+  @ApiPropertyOptional({
+    description: '只采购指定物料ID；为空时采购全部短缺物料',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  materialIds?: string[];
+
+  @ApiPropertyOptional({ description: '预计到货日期' })
+  @IsOptional()
+  @IsDateString()
+  expectedDate?: string;
+
+  @ApiPropertyOptional({ description: '采购备注' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

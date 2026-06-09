@@ -81,6 +81,10 @@ describe('ProductionService', () => {
     createStockMove: jest.fn(),
   };
 
+  const purchaseService = {
+    createPurchaseOrder: jest.fn(),
+  };
+
   const tx: MockTx = {
     workReport: {
       create: jest.fn(),
@@ -111,6 +115,9 @@ describe('ProductionService', () => {
       inventoryService as unknown as ConstructorParameters<
         typeof ProductionService
       >[1],
+      purchaseService as unknown as ConstructorParameters<
+        typeof ProductionService
+      >[2],
     );
   });
 
@@ -312,6 +319,7 @@ describe('ProductionService', () => {
           name: '原料1',
           category: '原料',
           unit: 'kg',
+          unitPrice: 8,
         },
       ]);
       prisma.stockQuant.findMany.mockResolvedValue([
@@ -328,6 +336,9 @@ describe('ProductionService', () => {
           requiredQty: 13.2,
           onHandQty: 10,
           shortageQty: 3.2,
+          suggestedPurchaseQty: 3.2,
+          unitPrice: 8,
+          estimatedAmount: 25.6,
           coveragePct: 75.76,
           status: 'SHORTAGE',
         }),
@@ -388,6 +399,99 @@ describe('ProductionService', () => {
       ]);
       expect(prisma.material.findMany).not.toHaveBeenCalled();
       expect(prisma.stockQuant.findMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createPurchaseOrderFromShortages', () => {
+    it('creates a purchase order from selected shortage rows', async () => {
+      const availability = {
+        rows: [
+          {
+            materialId: 'raw-1',
+            sku: 'RM-1',
+            name: '原料1',
+            category: '原料',
+            unit: 'kg',
+            requiredQty: 13.2,
+            onHandQty: 10,
+            shortageQty: 3.2,
+            suggestedPurchaseQty: 3.2,
+            unitPrice: 8,
+            estimatedAmount: 25.6,
+            coveragePct: 75.76,
+            status: 'SHORTAGE' as const,
+            affectedWorkOrders: [],
+          },
+          {
+            materialId: 'raw-2',
+            sku: 'RM-2',
+            name: '原料2',
+            category: '原料',
+            unit: 'pcs',
+            requiredQty: 4,
+            onHandQty: 4,
+            shortageQty: 0,
+            suggestedPurchaseQty: 0,
+            unitPrice: 2,
+            estimatedAmount: 0,
+            coveragePct: 100,
+            status: 'AVAILABLE' as const,
+            affectedWorkOrders: [],
+          },
+        ],
+        shortageCount: 1,
+        totalOpenWorkOrders: 1,
+        missingBomWorkOrders: [],
+      };
+      jest
+        .spyOn(service, 'getMaterialAvailability')
+        .mockResolvedValue(availability);
+      purchaseService.createPurchaseOrder.mockResolvedValue({ id: 'po-1' });
+
+      const result = await service.createPurchaseOrderFromShortages(
+        'c1',
+        'u1',
+        {
+          supplierId: 'supplier-1',
+          materialIds: ['raw-1'],
+          expectedDate: '2026-06-20',
+        },
+      );
+
+      expect(result).toEqual({ id: 'po-1' });
+      expect(purchaseService.createPurchaseOrder).toHaveBeenCalledWith(
+        'c1',
+        'u1',
+        {
+          supplierId: 'supplier-1',
+          expectedDate: '2026-06-20',
+          notes: '按生产物料短缺自动生成，涉及 1 个物料',
+          items: [
+            {
+              materialId: 'raw-1',
+              quantity: 3.2,
+              unitPrice: 8,
+              note: '生产缺料：需求 13.2，现存 10，缺口 3.2',
+            },
+          ],
+        },
+      );
+    });
+
+    it('rejects purchase order creation when there is no current shortage', async () => {
+      jest.spyOn(service, 'getMaterialAvailability').mockResolvedValue({
+        rows: [],
+        shortageCount: 0,
+        totalOpenWorkOrders: 0,
+        missingBomWorkOrders: [],
+      });
+
+      await expect(
+        service.createPurchaseOrderFromShortages('c1', 'u1', {
+          supplierId: 'supplier-1',
+        }),
+      ).rejects.toThrow('当前没有可生成采购单的生产物料短缺');
+      expect(purchaseService.createPurchaseOrder).not.toHaveBeenCalled();
     });
   });
 
