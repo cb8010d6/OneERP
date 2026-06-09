@@ -6,11 +6,49 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $root ".env"
 $templatePath = Join-Path $root ".env.quickstart"
+$requiredEnvKeys = @(
+  "POSTGRES_PASSWORD",
+  "JWT_SECRET",
+  "MINIO_SECRET_KEY",
+  "INIT_ADMIN_EMAIL",
+  "INIT_ADMIN_PASSWORD",
+  "CORS_ORIGINS"
+)
 
 function New-Secret([int]$bytes = 24) {
   $buffer = New-Object byte[] $bytes
   [System.Security.Cryptography.RandomNumberGenerator]::Fill($buffer)
   [Convert]::ToBase64String($buffer).TrimEnd("=") -replace "\+", "A" -replace "/", "B"
+}
+
+function Read-EnvFile([string]$Path) {
+  $map = @{}
+  if (!(Test-Path $Path)) {
+    return $map
+  }
+
+  Get-Content $Path | ForEach-Object {
+    if ($_ -match '^\s*#' -or $_ -notmatch '=') { return }
+    $parts = $_ -split '=', 2
+    $map[$parts[0].Trim()] = $parts[1].Trim().Trim('"').Trim("'")
+  }
+  return $map
+}
+
+function Assert-RequiredEnv([string]$Path) {
+  $envMap = Read-EnvFile $Path
+  $missing = @()
+  foreach ($key in $requiredEnvKeys) {
+    $value = [string]$envMap[$key]
+    if ($value.Trim() -eq "" -or $value -like "CHANGE_ME*") {
+      $missing += $key
+    }
+  }
+
+  if ($missing.Count -gt 0) {
+    $list = $missing -join ", "
+    throw ".env is missing required deployment values: $list. Fill them in .env, or remove .env and rerun scripts/quickstart.ps1 to generate local quickstart values."
+  }
 }
 
 if (!(Test-Path $envPath)) {
@@ -30,6 +68,9 @@ if (!(Test-Path $envPath)) {
 } else {
   Write-Host ".env already exists; keeping current values."
 }
+
+Assert-RequiredEnv $envPath
+Write-Host ".env required deployment values are present."
 
 $composeArgs = @("compose", "-f", "docker-compose.easy.yml", "up", "-d")
 if ($Rebuild) {

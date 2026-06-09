@@ -27,6 +27,7 @@ sh scripts/quickstart.sh --rebuild
 ```
 
 如果 `.env` 不存在，脚本会自动创建并生成本地密钥。
+如果 `.env` 已存在，脚本会在启动 Docker 前校验 `POSTGRES_PASSWORD`、`JWT_SECRET`、`MINIO_SECRET_KEY`、`INIT_ADMIN_EMAIL`、`INIT_ADMIN_PASSWORD`、`CORS_ORIGINS`；缺失、空值或 `CHANGE_ME*` 占位值会直接失败，避免 Compose 使用空配置继续启动。
 
 默认地址 / Default URLs:
 

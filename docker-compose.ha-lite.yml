@@ -37,7 +37,7 @@ services:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-oneerp}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-oneerp}
     volumes:
       - oneerp_pgdata:/var/lib/postgresql/data
@@ -66,7 +66,7 @@ services:
     image: minio/minio:latest
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-oneerp_minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     command: server /data --console-address ":9001"
     volumes:
       - oneerp_miniodata:/data
@@ -87,9 +87,9 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-oneerp}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-oneerp}
-      INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL}
-      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oneerp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-oneerp}
+      INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL:?INIT_ADMIN_EMAIL is required}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:?INIT_ADMIN_PASSWORD is required}
       INIT_ADMIN_NAME: ${INIT_ADMIN_NAME:-Administrator}
       INIT_COMPANY_NAME: ${INIT_COMPANY_NAME:-OneERP Company}
     command: >
@@ -118,16 +118,16 @@ services:
         condition: service_completed_successfully
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-oneerp}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-oneerp}
-      JWT_SECRET: ${JWT_SECRET}
-      CORS_ORIGINS: ${CORS_ORIGINS}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oneerp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-oneerp}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MINIO_ENDPOINT: minio
       MINIO_PORT: 9000
       MINIO_USE_SSL: "false"
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-oneerp_minio}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       AI_WRITE_ENABLED: ${AI_WRITE_ENABLED:-false}
