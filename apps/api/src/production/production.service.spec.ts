@@ -29,6 +29,9 @@ type MockPrisma = {
   stockQuant: {
     findMany: jest.Mock;
   };
+  purchaseOrderLine: {
+    findMany: jest.Mock;
+  };
   $transaction: jest.Mock;
 };
 
@@ -74,6 +77,9 @@ describe('ProductionService', () => {
     stockQuant: {
       findMany: jest.fn(),
     },
+    purchaseOrderLine: {
+      findMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -110,6 +116,7 @@ describe('ProductionService', () => {
     prisma.material.findMany.mockResolvedValue([]);
     prisma.bom.findMany.mockResolvedValue([]);
     prisma.stockQuant.findMany.mockResolvedValue([]);
+    prisma.purchaseOrderLine.findMany.mockResolvedValue([]);
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
       inventoryService as unknown as ConstructorParameters<
@@ -295,7 +302,7 @@ describe('ProductionService', () => {
   });
 
   describe('getMaterialAvailability', () => {
-    it('summarizes open work order BOM requirements against internal stock', async () => {
+    it('summarizes open work order BOM requirements against projected stock', async () => {
       prisma.workOrder.findMany.mockResolvedValue([
         {
           id: 'wo1',
@@ -325,6 +332,9 @@ describe('ProductionService', () => {
       prisma.stockQuant.findMany.mockResolvedValue([
         { materialId: 'raw-1', quantity: 10 },
       ]);
+      prisma.purchaseOrderLine.findMany.mockResolvedValue([
+        { materialId: 'raw-1', quantity: 12, receivedQty: 10 },
+      ]);
 
       const result = await service.getMaterialAvailability('c1');
 
@@ -335,11 +345,13 @@ describe('ProductionService', () => {
           sku: 'RM-1',
           requiredQty: 13.2,
           onHandQty: 10,
-          shortageQty: 3.2,
-          suggestedPurchaseQty: 3.2,
+          incomingQty: 2,
+          projectedQty: 12,
+          shortageQty: 1.2,
+          suggestedPurchaseQty: 1.2,
           unitPrice: 8,
-          estimatedAmount: 25.6,
-          coveragePct: 75.76,
+          estimatedAmount: 9.6,
+          coveragePct: 90.91,
           status: 'SHORTAGE',
         }),
       ]);
@@ -363,6 +375,20 @@ describe('ProductionService', () => {
         select: {
           materialId: true,
           quantity: true,
+        },
+      });
+      expect(prisma.purchaseOrderLine.findMany).toHaveBeenCalledWith({
+        where: {
+          materialId: { in: ['raw-1'] },
+          purchaseOrder: {
+            companyId: 'c1',
+            status: { in: ['DRAFT', 'ORDERED', 'PARTIAL_RECEIVED'] },
+          },
+        },
+        select: {
+          materialId: true,
+          quantity: true,
+          receivedQty: true,
         },
       });
     });
@@ -399,6 +425,7 @@ describe('ProductionService', () => {
       ]);
       expect(prisma.material.findMany).not.toHaveBeenCalled();
       expect(prisma.stockQuant.findMany).not.toHaveBeenCalled();
+      expect(prisma.purchaseOrderLine.findMany).not.toHaveBeenCalled();
     });
   });
 
@@ -414,11 +441,13 @@ describe('ProductionService', () => {
             unit: 'kg',
             requiredQty: 13.2,
             onHandQty: 10,
-            shortageQty: 3.2,
-            suggestedPurchaseQty: 3.2,
+            incomingQty: 2,
+            projectedQty: 12,
+            shortageQty: 1.2,
+            suggestedPurchaseQty: 1.2,
             unitPrice: 8,
-            estimatedAmount: 25.6,
-            coveragePct: 75.76,
+            estimatedAmount: 9.6,
+            coveragePct: 90.91,
             status: 'SHORTAGE' as const,
             affectedWorkOrders: [],
           },
@@ -430,6 +459,8 @@ describe('ProductionService', () => {
             unit: 'pcs',
             requiredQty: 4,
             onHandQty: 4,
+            incomingQty: 0,
+            projectedQty: 4,
             shortageQty: 0,
             suggestedPurchaseQty: 0,
             unitPrice: 2,
@@ -469,9 +500,9 @@ describe('ProductionService', () => {
           items: [
             {
               materialId: 'raw-1',
-              quantity: 3.2,
+              quantity: 1.2,
               unitPrice: 8,
-              note: '生产缺料：需求 13.2，现存 10，缺口 3.2',
+              note: '生产缺料：需求 13.2，现存 10，在途 2，缺口 1.2',
             },
           ],
         },

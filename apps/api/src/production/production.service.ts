@@ -58,6 +58,8 @@ export interface MaterialAvailabilityRow {
   unit: string;
   requiredQty: number;
   onHandQty: number;
+  incomingQty: number;
+  projectedQty: number;
   shortageQty: number;
   suggestedPurchaseQty: number;
   unitPrice: number;
@@ -335,7 +337,7 @@ export class ProductionService {
       };
     }
 
-    const [materials, quants] = await Promise.all([
+    const [materials, quants, purchaseLines] = await Promise.all([
       this.prisma.material.findMany({
         where: {
           id: { in: materialIds },
@@ -364,6 +366,20 @@ export class ProductionService {
           quantity: true,
         },
       }),
+      this.prisma.purchaseOrderLine.findMany({
+        where: {
+          materialId: { in: materialIds },
+          purchaseOrder: {
+            companyId,
+            status: { in: ['DRAFT', 'ORDERED', 'PARTIAL_RECEIVED'] },
+          },
+        },
+        select: {
+          materialId: true,
+          quantity: true,
+          receivedQty: true,
+        },
+      }),
     ]);
 
     const materialMap = new Map(
@@ -378,6 +394,19 @@ export class ProductionService {
       );
     }
 
+    const incomingByMaterial = new Map<string, number>();
+    for (const line of purchaseLines) {
+      const outstanding = Math.max(
+        0,
+        Number(line.quantity ?? 0) - Number(line.receivedQty ?? 0),
+      );
+      const current = incomingByMaterial.get(line.materialId) ?? 0;
+      incomingByMaterial.set(
+        line.materialId,
+        this.round2(current + outstanding),
+      );
+    }
+
     const rows = materialIds
       .map((materialId): MaterialAvailabilityRow => {
         const material = materialMap.get(materialId);
@@ -385,7 +414,13 @@ export class ProductionService {
           requiredByMaterial.get(materialId)?.toNumber() ?? 0,
         );
         const onHandQty = this.round2(onHandByMaterial.get(materialId) ?? 0);
-        const shortageQty = this.round2(Math.max(0, requiredQty - onHandQty));
+        const incomingQty = this.round2(
+          incomingByMaterial.get(materialId) ?? 0,
+        );
+        const projectedQty = this.round2(onHandQty + incomingQty);
+        const shortageQty = this.round2(
+          Math.max(0, requiredQty - projectedQty),
+        );
         const unitPrice = this.round2(Number(material?.unitPrice ?? 0));
         return {
           materialId,
@@ -395,13 +430,15 @@ export class ProductionService {
           unit: material?.unit ?? '-',
           requiredQty,
           onHandQty,
+          incomingQty,
+          projectedQty,
           shortageQty,
           suggestedPurchaseQty: shortageQty,
           unitPrice,
           estimatedAmount: this.round2(shortageQty * unitPrice),
           coveragePct:
             requiredQty > 0
-              ? this.round2(Math.min(100, (onHandQty / requiredQty) * 100))
+              ? this.round2(Math.min(100, (projectedQty / requiredQty) * 100))
               : 100,
           status: shortageQty > 0 ? 'SHORTAGE' : 'AVAILABLE',
           affectedWorkOrders: sourcesByMaterial.get(materialId) ?? [],
@@ -453,7 +490,7 @@ export class ProductionService {
         materialId: row.materialId,
         quantity: row.suggestedPurchaseQty,
         unitPrice: row.unitPrice,
-        note: `生产缺料：需求 ${row.requiredQty}，现存 ${row.onHandQty}，缺口 ${row.shortageQty}`,
+        note: `生产缺料：需求 ${row.requiredQty}，现存 ${row.onHandQty}，在途 ${row.incomingQty}，缺口 ${row.shortageQty}`,
       })),
     });
   }

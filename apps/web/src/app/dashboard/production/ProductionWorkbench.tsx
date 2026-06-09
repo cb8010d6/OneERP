@@ -72,6 +72,8 @@ type MaterialAvailabilityRow = {
   unit: string;
   requiredQty: number;
   onHandQty: number;
+  incomingQty: number;
+  projectedQty: number;
   shortageQty: number;
   suggestedPurchaseQty: number;
   unitPrice: number;
@@ -512,7 +514,7 @@ export function ProductionWorkbench() {
                   </span>
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                   <div>
                     <p className="text-slate-500">
                       {t('productionRequiredQty')}
@@ -527,6 +529,14 @@ export function ProductionWorkbench() {
                     </p>
                     <p className="font-semibold text-slate-900">
                       {row.onHandQty}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">
+                      {t('productionIncomingQty')}
+                    </p>
+                    <p className="font-semibold text-slate-900">
+                      {row.incomingQty}
                     </p>
                   </div>
                   <div>
@@ -569,7 +579,10 @@ export function ProductionWorkbench() {
                 <div className="mt-3">
                   <div className="flex justify-between text-xs text-slate-500">
                     <span>{t('productionMaterialCoverage')}</span>
-                    <span>{row.coveragePct}%</span>
+                    <span>
+                      {row.coveragePct}% · {t('productionProjectedQty')}{' '}
+                      {row.projectedQty}
+                    </span>
                   </div>
                   <div className="mt-1 h-2 rounded-full bg-slate-100">
                     <div
