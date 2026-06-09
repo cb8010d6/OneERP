@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type ComponentType, useMemo, useState } from "react";
 import { DynamicView } from "@/components/core";
 import { DocumentDraftUploader } from "@/components/ai/DocumentDraftUploader";
 import { TrialBalanceView } from "./TrialBalanceView";
@@ -39,25 +39,32 @@ import {
 import { clsx } from "clsx";
 import { useI18n } from "@/lib/i18n";
 
+type FinanceTab =
+  | "invoices"
+  | "customer-statement"
+  | "supplier-statement"
+  | "payables"
+  | "trial-balance"
+  | "general-ledger"
+  | "income-statement"
+  | "balance-sheet"
+  | "cash-flow"
+  | "aging"
+  | "inventory"
+  | "bank"
+  | "periods"
+  | "dlq";
+
+type FinanceTabItem = {
+  id: FinanceTab;
+  label: string;
+  Icon: ComponentType<{ className?: string }>;
+};
+
 export default function FinancePageClient() {
   const { t } = useI18n();
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
-  const [activeTab, setActiveTab] = useState<
-    | "invoices"
-    | "customer-statement"
-    | "supplier-statement"
-    | "payables"
-    | "trial-balance"
-    | "general-ledger"
-    | "income-statement"
-    | "balance-sheet"
-    | "cash-flow"
-    | "aging"
-    | "inventory"
-    | "bank"
-    | "periods"
-    | "dlq"
-  >("invoices");
+  const [activeTab, setActiveTab] = useState<FinanceTab>("invoices");
 
   const preview = useMemo(() => {
     if (!draft) return [] as Array<{ key: string; value: string }>;
@@ -70,179 +77,86 @@ export default function FinancePageClient() {
       }));
   }, [draft]);
 
+  const tabs = useMemo<FinanceTabItem[]>(
+    () => [
+      { id: "invoices", label: t("financeInvoices"), Icon: FileText },
+      {
+        id: "customer-statement",
+        label: t("financeCustomerStatementTab"),
+        Icon: Users,
+      },
+      {
+        id: "supplier-statement",
+        label: t("financeSupplierStatementTab"),
+        Icon: Building2,
+      },
+      { id: "payables", label: t("financePayablesTab"), Icon: BanknoteArrowUp },
+      {
+        id: "trial-balance",
+        label: t("financeTrialBalance"),
+        Icon: BarChart3,
+      },
+      {
+        id: "general-ledger",
+        label: t("financeGeneralLedgerTab"),
+        Icon: BookOpen,
+      },
+      {
+        id: "income-statement",
+        label: t("financeIncomeStatementTab"),
+        Icon: LineChart,
+      },
+      {
+        id: "balance-sheet",
+        label: t("financeBalanceSheetTab"),
+        Icon: Scale,
+      },
+      { id: "cash-flow", label: t("financeCashFlowTab"), Icon: WalletCards },
+      { id: "aging", label: t("financeAgingTab"), Icon: CalendarClock },
+      {
+        id: "inventory",
+        label: t("financeInventoryValuationTab"),
+        Icon: PackageSearch,
+      },
+      { id: "periods", label: t("financePeriodsTab"), Icon: LockKeyhole },
+      { id: "bank", label: t("financeBankReconciliationTab"), Icon: Landmark },
+      { id: "dlq", label: t("financeDlqTab"), Icon: AlertTriangle },
+    ],
+    [t],
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* 顶部标签页切换 */}
-      <div className="flex items-center justify-between">
-        <div className="flex flex-wrap items-center gap-1 rounded-lg bg-slate-100 p-1">
-          <button
-            onClick={() => setActiveTab("invoices")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "invoices"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <FileText className="h-4 w-4" />
-            {t("financeInvoices")}
-          </button>
-          <button
-            onClick={() => setActiveTab("customer-statement")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "customer-statement"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <Users className="h-4 w-4" />
-            {t("financeCustomerStatementTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("supplier-statement")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "supplier-statement"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <Building2 className="h-4 w-4" />
-            {t("financeSupplierStatementTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("trial-balance")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "trial-balance"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <BarChart3 className="h-4 w-4" />
-            {t("financeTrialBalance")}
-          </button>
-          <button
-            onClick={() => setActiveTab("general-ledger")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "general-ledger"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <BookOpen className="h-4 w-4" />
-            {t("financeGeneralLedgerTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("payables")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "payables"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <BanknoteArrowUp className="h-4 w-4" />
-            {t("financePayablesTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("income-statement")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "income-statement"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <LineChart className="h-4 w-4" />
-            {t("financeIncomeStatementTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("balance-sheet")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "balance-sheet"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <Scale className="h-4 w-4" />
-            {t("financeBalanceSheetTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("cash-flow")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "cash-flow"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <WalletCards className="h-4 w-4" />
-            {t("financeCashFlowTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("aging")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "aging"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <CalendarClock className="h-4 w-4" />
-            {t("financeAgingTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("inventory")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "inventory"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <PackageSearch className="h-4 w-4" />
-            {t("financeInventoryValuationTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("periods")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "periods"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <LockKeyhole className="h-4 w-4" />
-            {t("financePeriodsTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("bank")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "bank"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <Landmark className="h-4 w-4" />
-            {t("financeBankReconciliationTab")}
-          </button>
-          <button
-            onClick={() => setActiveTab("dlq")}
-            className={clsx(
-              "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all",
-              activeTab === "dlq"
-                ? "bg-white text-slate-900 shadow-sm"
-                : "text-slate-500 hover:text-slate-700",
-            )}
-          >
-            <AlertTriangle className="h-4 w-4" />
-            {t("financeDlqTab")}
-          </button>
+      <div className="min-w-0">
+        <select
+          value={activeTab}
+          onChange={(event) => setActiveTab(event.target.value as FinanceTab)}
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-100 sm:hidden"
+        >
+          {tabs.map((tab) => (
+            <option key={tab.id} value={tab.id}>
+              {tab.label}
+            </option>
+          ))}
+        </select>
+
+        <div className="hidden min-w-0 overflow-x-auto rounded-lg bg-slate-100 p-1 sm:flex sm:items-center sm:gap-1">
+          {tabs.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={clsx(
+                "flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-all lg:px-4",
+                activeTab === id
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700",
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">{label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
