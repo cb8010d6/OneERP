@@ -5,12 +5,17 @@ import { OrdersService } from './orders.service';
 type MockPrisma = {
   product: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
   };
   taxCode: {
     findFirst: jest.Mock;
   };
   order: {
     create: jest.Mock;
+    findFirst: jest.Mock;
+  };
+  stockQuant: {
+    findMany: jest.Mock;
   };
 };
 
@@ -18,12 +23,17 @@ describe('OrdersService', () => {
   const prisma: MockPrisma = {
     product: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     taxCode: {
       findFirst: jest.fn(),
     },
     order: {
       create: jest.fn(),
+      findFirst: jest.fn(),
+    },
+    stockQuant: {
+      findMany: jest.fn(),
     },
   };
 
@@ -122,6 +132,112 @@ describe('OrdersService', () => {
     );
     expect(result.status).toBe('PENDING_APPROVAL');
     expect(eventQueueService.publish).toHaveBeenCalled();
+  });
+
+  it('summarizes order fulfillment availability from stock and open work orders', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'order-1',
+      orderNo: 'ORD-001',
+      status: 'IN_PRODUCTION',
+      expectedDate: new Date('2026-06-20T00:00:00.000Z'),
+      items: [{ id: 'item-1', productId: 'prod-1', quantity: 10 }],
+      workOrders: [
+        {
+          productId: 'prod-1',
+          plannedQty: 8,
+          actualQty: 2,
+        },
+      ],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      {
+        id: 'prod-1',
+        sku: 'FG-1',
+        name: '成品1',
+        materialId: 'mat-fg-1',
+      },
+    ]);
+    prisma.stockQuant.findMany.mockResolvedValue([
+      { materialId: 'mat-fg-1', quantity: 5 },
+    ]);
+
+    const result = await service.getOrderFulfillmentAvailability(
+      'order-1',
+      'company-1',
+    );
+
+    expect(result).toEqual({
+      orderId: 'order-1',
+      orderNo: 'ORD-001',
+      status: 'IN_PRODUCTION',
+      expectedDate: '2026-06-20T00:00:00.000Z',
+      overallStatus: 'COVERED_BY_PRODUCTION',
+      lines: [
+        {
+          orderItemId: 'item-1',
+          productId: 'prod-1',
+          productSku: 'FG-1',
+          productName: '成品1',
+          materialId: 'mat-fg-1',
+          orderedQty: 10,
+          onHandQty: 5,
+          inProductionQty: 6,
+          projectedQty: 11,
+          shortageQty: 0,
+          status: 'COVERED_BY_PRODUCTION',
+        },
+      ],
+    });
+    expect(prisma.stockQuant.findMany).toHaveBeenCalledWith({
+      where: {
+        materialId: { in: ['mat-fg-1'] },
+        location: {
+          companyId: 'company-1',
+          usage: 'INTERNAL',
+          isActive: true,
+        },
+      },
+      select: {
+        materialId: true,
+        quantity: true,
+      },
+    });
+  });
+
+  it('marks fulfillment availability as unmapped when product has no finished material', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'order-2',
+      orderNo: 'ORD-002',
+      status: 'PENDING',
+      expectedDate: null,
+      items: [{ id: 'item-2', productId: 'prod-2', quantity: 3 }],
+      workOrders: [],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      {
+        id: 'prod-2',
+        sku: 'FG-2',
+        name: '未映射成品',
+        materialId: null,
+      },
+    ]);
+
+    const result = await service.getOrderFulfillmentAvailability(
+      'order-2',
+      'company-1',
+    );
+
+    expect(result.overallStatus).toBe('UNMAPPED');
+    expect(result.lines[0]).toEqual(
+      expect.objectContaining({
+        productId: 'prod-2',
+        materialId: null,
+        orderedQty: 3,
+        shortageQty: 3,
+        status: 'UNMAPPED',
+      }),
+    );
+    expect(prisma.stockQuant.findMany).not.toHaveBeenCalled();
   });
 
   it('keeps draft status when discount is at most 10%', async () => {

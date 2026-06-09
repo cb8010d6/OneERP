@@ -49,6 +49,22 @@ interface OrderDetail {
   }>;
 }
 
+interface FulfillmentAvailability {
+  overallStatus: 'READY' | 'COVERED_BY_PRODUCTION' | 'SHORTAGE' | 'UNMAPPED';
+  lines: Array<{
+    orderItemId: string;
+    productId: string;
+    productSku: string | null;
+    productName: string;
+    orderedQty: number;
+    onHandQty: number;
+    inProductionQty: number;
+    projectedQty: number;
+    shortageQty: number;
+    status: 'READY' | 'COVERED_BY_PRODUCTION' | 'SHORTAGE' | 'UNMAPPED';
+  }>;
+}
+
 const statusMap: Record<string, { label: string, color: string }> = {
   DRAFT: { label: '草稿', color: 'bg-gray-100 text-gray-800' },
   PENDING: { label: '待处理', color: 'bg-yellow-100 text-yellow-800' },
@@ -56,6 +72,19 @@ const statusMap: Record<string, { label: string, color: string }> = {
   SHIPPED: { label: '已发货', color: 'bg-indigo-100 text-indigo-800' },
   COMPLETED: { label: '已完成', color: 'bg-green-100 text-green-800' },
   CANCELLED: { label: '已取消', color: 'bg-red-100 text-red-800' },
+};
+
+const fulfillmentStatusMap: Record<
+  FulfillmentAvailability['overallStatus'],
+  { label: string; color: string }
+> = {
+  READY: { label: '现货可交', color: 'bg-green-100 text-green-800' },
+  COVERED_BY_PRODUCTION: {
+    label: '生产覆盖',
+    color: 'bg-blue-100 text-blue-800',
+  },
+  SHORTAGE: { label: '存在缺口', color: 'bg-red-100 text-red-800' },
+  UNMAPPED: { label: '缺成品映射', color: 'bg-amber-100 text-amber-800' },
 };
 
 function resolveOrderAction(from: string, to: string) {
@@ -72,6 +101,8 @@ export default function OrderDetailPage() {
   const router = useRouter();
   const { currentCompanyId } = useAuthStore();
   const [order, setOrder] = useState<OrderDetail | null>(null);
+  const [fulfillmentAvailability, setFulfillmentAvailability] =
+    useState<FulfillmentAvailability | null>(null);
   const [timeline, setTimeline] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -92,6 +123,23 @@ export default function OrderDetailPage() {
       fetchOrder();
     }
   }, [currentCompanyId, params.id, router]);
+
+  useEffect(() => {
+    const fetchFulfillmentAvailability = async () => {
+      try {
+        const res = await api.get(
+          `/orders/${params.id}/fulfillment-availability`,
+        );
+        setFulfillmentAvailability(res.data);
+      } catch {
+        setFulfillmentAvailability(null);
+      }
+    };
+
+    if (currentCompanyId && params.id) {
+      fetchFulfillmentAvailability();
+    }
+  }, [currentCompanyId, params.id]);
 
   useEffect(() => {
     const fetchTimeline = async () => {
@@ -136,6 +184,9 @@ export default function OrderDetailPage() {
   if (!order) return null;
 
   const currentStatusInfo = statusMap[order.status] || { label: order.status, color: 'bg-gray-100 text-gray-800' };
+  const fulfillmentStatusInfo = fulfillmentAvailability
+    ? fulfillmentStatusMap[fulfillmentAvailability.overallStatus]
+    : null;
 
   const relatedCards = (
     <>
@@ -313,6 +364,63 @@ export default function OrderDetailPage() {
               </div>
             )}
           </div>
+
+          {fulfillmentAvailability && fulfillmentStatusInfo && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center">
+                  <Package className="h-5 w-5 mr-2 text-gray-400" />
+                  交付可承诺
+                </h2>
+                <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${fulfillmentStatusInfo.color}`}>
+                  {fulfillmentStatusInfo.label}
+                </span>
+              </div>
+              <div className="space-y-3">
+                {fulfillmentAvailability.lines.map((line) => {
+                  const lineStatus = fulfillmentStatusMap[line.status];
+                  return (
+                    <div key={line.orderItemId} className="rounded-lg border border-gray-100 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-gray-900">
+                            {line.productSku ? `${line.productSku} · ` : ''}
+                            {line.productName}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            订购 {line.orderedQty} · 预计 {line.projectedQty}
+                          </p>
+                        </div>
+                        <span className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${lineStatus.color}`}>
+                          {lineStatus.label}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+                        <div>
+                          <p className="text-gray-500">现存</p>
+                          <p className="font-semibold text-gray-900">{line.onHandQty}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">生产中</p>
+                          <p className="font-semibold text-gray-900">{line.inProductionQty}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">预计</p>
+                          <p className="font-semibold text-gray-900">{line.projectedQty}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">缺口</p>
+                          <p className={line.shortageQty > 0 ? 'font-semibold text-red-700' : 'font-semibold text-green-700'}>
+                            {line.shortageQty}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Items */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">

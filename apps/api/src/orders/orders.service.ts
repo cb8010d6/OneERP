@@ -50,6 +50,29 @@ interface PreparedOrderItemsResult {
   approvalRequired: boolean;
 }
 
+export interface OrderFulfillmentAvailabilityLine {
+  orderItemId: string;
+  productId: string;
+  productSku: string | null;
+  productName: string;
+  materialId: string | null;
+  orderedQty: number;
+  onHandQty: number;
+  inProductionQty: number;
+  projectedQty: number;
+  shortageQty: number;
+  status: 'READY' | 'COVERED_BY_PRODUCTION' | 'SHORTAGE' | 'UNMAPPED';
+}
+
+export interface OrderFulfillmentAvailabilityResult {
+  orderId: string;
+  orderNo: string;
+  status: string;
+  expectedDate: string | null;
+  overallStatus: 'READY' | 'COVERED_BY_PRODUCTION' | 'SHORTAGE' | 'UNMAPPED';
+  lines: OrderFulfillmentAvailabilityLine[];
+}
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
@@ -467,6 +490,154 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException('该订单不存在或您无权查看');
     return order;
+  }
+
+  async getOrderFulfillmentAvailability(
+    orderId: string,
+    companyId: string,
+  ): Promise<OrderFulfillmentAvailabilityResult> {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      select: {
+        id: true,
+        orderNo: true,
+        status: true,
+        expectedDate: true,
+        items: {
+          select: {
+            id: true,
+            productId: true,
+            quantity: true,
+          },
+        },
+        workOrders: {
+          where: { status: { in: ['PENDING', 'IN_PROGRESS'] } },
+          select: {
+            productId: true,
+            plannedQty: true,
+            actualQty: true,
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('该订单不存在或您无权查看');
+    }
+
+    const productIds = [...new Set(order.items.map((item) => item.productId))];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, companyId, isActive: true },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        materialId: true,
+      },
+    });
+    const productMap = new Map(
+      products.map((product) => [product.id, product]),
+    );
+
+    const materialIds = [
+      ...new Set(
+        order.items
+          .map((item) => productMap.get(item.productId)?.materialId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+
+    const quants =
+      materialIds.length > 0
+        ? await this.prisma.stockQuant.findMany({
+            where: {
+              materialId: { in: materialIds },
+              location: {
+                companyId,
+                usage: 'INTERNAL',
+                isActive: true,
+              },
+            },
+            select: {
+              materialId: true,
+              quantity: true,
+            },
+          })
+        : [];
+
+    const onHandByMaterial = new Map<string, number>();
+    for (const quant of quants) {
+      const current = onHandByMaterial.get(quant.materialId) ?? 0;
+      onHandByMaterial.set(
+        quant.materialId,
+        this.round2(current + Number(quant.quantity ?? 0)),
+      );
+    }
+
+    const productionByProduct = new Map<string, number>();
+    for (const workOrder of order.workOrders) {
+      const openQty = Math.max(
+        0,
+        Number(workOrder.plannedQty ?? 0) - Number(workOrder.actualQty ?? 0),
+      );
+      const current = productionByProduct.get(workOrder.productId) ?? 0;
+      productionByProduct.set(
+        workOrder.productId,
+        this.round2(current + openQty),
+      );
+    }
+
+    const lines = order.items.map((item): OrderFulfillmentAvailabilityLine => {
+      const product = productMap.get(item.productId);
+      const orderedQty = this.round2(Number(item.quantity ?? 0));
+      const materialId = product?.materialId ?? null;
+      const onHandQty = materialId
+        ? this.round2(onHandByMaterial.get(materialId) ?? 0)
+        : 0;
+      const inProductionQty = this.round2(
+        productionByProduct.get(item.productId) ?? 0,
+      );
+      const projectedQty = this.round2(onHandQty + inProductionQty);
+      const shortageQty = this.round2(Math.max(0, orderedQty - projectedQty));
+      const status: OrderFulfillmentAvailabilityLine['status'] = !materialId
+        ? 'UNMAPPED'
+        : onHandQty >= orderedQty
+          ? 'READY'
+          : shortageQty <= 0
+            ? 'COVERED_BY_PRODUCTION'
+            : 'SHORTAGE';
+
+      return {
+        orderItemId: item.id,
+        productId: item.productId,
+        productSku: product?.sku ?? null,
+        productName: product?.name ?? item.productId,
+        materialId,
+        orderedQty,
+        onHandQty,
+        inProductionQty,
+        projectedQty,
+        shortageQty: materialId ? shortageQty : orderedQty,
+        status,
+      };
+    });
+
+    const overallStatus = lines.some((line) => line.status === 'UNMAPPED')
+      ? 'UNMAPPED'
+      : lines.some((line) => line.status === 'SHORTAGE')
+        ? 'SHORTAGE'
+        : lines.some((line) => line.status === 'COVERED_BY_PRODUCTION')
+          ? 'COVERED_BY_PRODUCTION'
+          : 'READY';
+
+    return {
+      orderId: order.id,
+      orderNo: order.orderNo,
+      status: order.status,
+      expectedDate: order.expectedDate?.toISOString() ?? null,
+      overallStatus,
+      lines,
+    };
   }
 
   async deleteOrder(orderId: string, companyId: string) {

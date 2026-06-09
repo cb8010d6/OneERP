@@ -93,6 +93,19 @@ export class OrdersController {
     return this.ordersService.getOrderTimeline(orderId, companyId);
   }
 
+  @Get(':id/fulfillment-availability')
+  @RequirePermissions('order:read')
+  @ApiOperation({ summary: '获取订单交付可承诺分析' })
+  async getOrderFulfillmentAvailability(
+    @Param('id') orderId: string,
+    @CurrentCompany() companyId: string,
+  ) {
+    return this.ordersService.getOrderFulfillmentAvailability(
+      orderId,
+      companyId,
+    );
+  }
+
   @Put(':id')
   @RequirePermissions('order:update')
   @ApiOperation({ summary: '更新订单头信息' })
