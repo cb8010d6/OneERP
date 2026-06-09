@@ -67,6 +67,18 @@ export interface MaterialAvailabilityRow {
   coveragePct: number;
   status: 'AVAILABLE' | 'SHORTAGE';
   affectedWorkOrders: MaterialAvailabilitySource[];
+  incomingSources: MaterialAvailabilityIncomingSource[];
+}
+
+export interface MaterialAvailabilityIncomingSource {
+  purchaseOrderId: string;
+  purchaseNo: string;
+  supplierName: string | null;
+  status: string;
+  expectedDate: string | null;
+  orderedQty: number;
+  receivedQty: number;
+  incomingQty: number;
 }
 
 export interface MaterialAvailabilityMissingBom {
@@ -378,6 +390,15 @@ export class ProductionService {
           materialId: true,
           quantity: true,
           receivedQty: true,
+          purchaseOrder: {
+            select: {
+              id: true,
+              purchaseNo: true,
+              status: true,
+              expectedDate: true,
+              supplier: { select: { name: true } },
+            },
+          },
         },
       }),
     ]);
@@ -395,16 +416,35 @@ export class ProductionService {
     }
 
     const incomingByMaterial = new Map<string, number>();
+    const incomingSourcesByMaterial = new Map<
+      string,
+      MaterialAvailabilityIncomingSource[]
+    >();
     for (const line of purchaseLines) {
       const outstanding = Math.max(
         0,
         Number(line.quantity ?? 0) - Number(line.receivedQty ?? 0),
       );
+      if (outstanding <= 0) continue;
       const current = incomingByMaterial.get(line.materialId) ?? 0;
       incomingByMaterial.set(
         line.materialId,
         this.round2(current + outstanding),
       );
+      const sources = incomingSourcesByMaterial.get(line.materialId) ?? [];
+      sources.push({
+        purchaseOrderId: line.purchaseOrder.id,
+        purchaseNo: line.purchaseOrder.purchaseNo,
+        supplierName: line.purchaseOrder.supplier?.name ?? null,
+        status: line.purchaseOrder.status,
+        expectedDate: line.purchaseOrder.expectedDate
+          ? line.purchaseOrder.expectedDate.toISOString()
+          : null,
+        orderedQty: this.round2(Number(line.quantity ?? 0)),
+        receivedQty: this.round2(Number(line.receivedQty ?? 0)),
+        incomingQty: this.round2(outstanding),
+      });
+      incomingSourcesByMaterial.set(line.materialId, sources);
     }
 
     const rows = materialIds
@@ -442,6 +482,7 @@ export class ProductionService {
               : 100,
           status: shortageQty > 0 ? 'SHORTAGE' : 'AVAILABLE',
           affectedWorkOrders: sourcesByMaterial.get(materialId) ?? [],
+          incomingSources: incomingSourcesByMaterial.get(materialId) ?? [],
         };
       })
       .sort((left, right) => {

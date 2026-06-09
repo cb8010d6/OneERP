@@ -64,6 +64,17 @@ type MaterialAvailabilitySource = {
   requiredQty: number;
 };
 
+type MaterialAvailabilityIncomingSource = {
+  purchaseOrderId: string;
+  purchaseNo: string;
+  supplierName?: string | null;
+  status: string;
+  expectedDate?: string | null;
+  orderedQty: number;
+  receivedQty: number;
+  incomingQty: number;
+};
+
 type MaterialAvailabilityRow = {
   materialId: string;
   sku: string;
@@ -81,6 +92,7 @@ type MaterialAvailabilityRow = {
   coveragePct: number;
   status: 'AVAILABLE' | 'SHORTAGE';
   affectedWorkOrders: MaterialAvailabilitySource[];
+  incomingSources: MaterialAvailabilityIncomingSource[];
 };
 
 type MaterialAvailabilityMissingBom = {
@@ -595,6 +607,28 @@ export function ProductionWorkbench() {
                     />
                   </div>
                 </div>
+
+                {row.incomingSources.length > 0 ? (
+                  <div className="mt-3 space-y-1">
+                    <p className="text-xs font-medium text-slate-700">
+                      {t('productionIncomingSources')}
+                    </p>
+                    {row.incomingSources.slice(0, 3).map((source) => (
+                      <div
+                        key={`${row.materialId}-${source.purchaseOrderId}`}
+                        className="flex items-center justify-between gap-2 rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-800"
+                      >
+                        <span className="truncate">
+                          {source.purchaseNo} · {source.supplierName || '-'} ·{' '}
+                          {source.status}
+                        </span>
+                        <span className="shrink-0">
+                          {t('productionIncomingQty')}: {source.incomingQty}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="mt-3 space-y-1">
                   <p className="text-xs font-medium text-slate-700">

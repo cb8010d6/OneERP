@@ -333,7 +333,18 @@ describe('ProductionService', () => {
         { materialId: 'raw-1', quantity: 10 },
       ]);
       prisma.purchaseOrderLine.findMany.mockResolvedValue([
-        { materialId: 'raw-1', quantity: 12, receivedQty: 10 },
+        {
+          materialId: 'raw-1',
+          quantity: 12,
+          receivedQty: 10,
+          purchaseOrder: {
+            id: 'po-1',
+            purchaseNo: 'PO-001',
+            status: 'ORDERED',
+            expectedDate: new Date('2026-06-20T00:00:00.000Z'),
+            supplier: { name: '供应商A' },
+          },
+        },
       ]);
 
       const result = await service.getMaterialAvailability('c1');
@@ -353,6 +364,18 @@ describe('ProductionService', () => {
           estimatedAmount: 9.6,
           coveragePct: 90.91,
           status: 'SHORTAGE',
+          incomingSources: [
+            {
+              purchaseOrderId: 'po-1',
+              purchaseNo: 'PO-001',
+              supplierName: '供应商A',
+              status: 'ORDERED',
+              expectedDate: '2026-06-20T00:00:00.000Z',
+              orderedQty: 12,
+              receivedQty: 10,
+              incomingQty: 2,
+            },
+          ],
         }),
       ]);
       expect(result.rows[0]?.affectedWorkOrders).toEqual([
@@ -389,6 +412,15 @@ describe('ProductionService', () => {
           materialId: true,
           quantity: true,
           receivedQty: true,
+          purchaseOrder: {
+            select: {
+              id: true,
+              purchaseNo: true,
+              status: true,
+              expectedDate: true,
+              supplier: { select: { name: true } },
+            },
+          },
         },
       });
     });
@@ -450,6 +482,7 @@ describe('ProductionService', () => {
             coveragePct: 90.91,
             status: 'SHORTAGE' as const,
             affectedWorkOrders: [],
+            incomingSources: [],
           },
           {
             materialId: 'raw-2',
@@ -468,6 +501,7 @@ describe('ProductionService', () => {
             coveragePct: 100,
             status: 'AVAILABLE' as const,
             affectedWorkOrders: [],
+            incomingSources: [],
           },
         ],
         shortageCount: 1,
