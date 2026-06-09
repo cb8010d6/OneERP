@@ -50,6 +50,12 @@ interface PreparedOrderItemsResult {
   approvalRequired: boolean;
 }
 
+type OrderFulfillmentStatus =
+  | 'READY'
+  | 'COVERED_BY_PRODUCTION'
+  | 'SHORTAGE'
+  | 'UNMAPPED';
+
 export interface OrderFulfillmentAvailabilityLine {
   orderItemId: string;
   productId: string;
@@ -61,7 +67,7 @@ export interface OrderFulfillmentAvailabilityLine {
   inProductionQty: number;
   projectedQty: number;
   shortageQty: number;
-  status: 'READY' | 'COVERED_BY_PRODUCTION' | 'SHORTAGE' | 'UNMAPPED';
+  status: OrderFulfillmentStatus;
 }
 
 export interface OrderFulfillmentAvailabilityResult {
@@ -69,8 +75,16 @@ export interface OrderFulfillmentAvailabilityResult {
   orderNo: string;
   status: string;
   expectedDate: string | null;
-  overallStatus: 'READY' | 'COVERED_BY_PRODUCTION' | 'SHORTAGE' | 'UNMAPPED';
+  overallStatus: OrderFulfillmentStatus;
   lines: OrderFulfillmentAvailabilityLine[];
+}
+
+export interface OrderFulfillmentSummary {
+  overallStatus: OrderFulfillmentStatus;
+  lineCount: number;
+  shortageLineCount: number;
+  unmappedLineCount: number;
+  totalShortageQty: number;
 }
 
 @Injectable()
@@ -462,6 +476,21 @@ export class OrdersService {
         include: {
           partner: true,
           salesPerson: { select: { id: true, name: true } },
+          items: {
+            select: {
+              id: true,
+              productId: true,
+              quantity: true,
+            },
+          },
+          workOrders: {
+            where: { status: { in: ['PENDING', 'IN_PROGRESS'] } },
+            select: {
+              productId: true,
+              plannedQty: true,
+              actualQty: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
@@ -470,7 +499,70 @@ export class OrdersService {
       this.prisma.order.count({ where }),
     ]);
 
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    const productIds = [
+      ...new Set(
+        data.flatMap((order) => order.items.map((item) => item.productId)),
+      ),
+    ];
+    const products =
+      productIds.length > 0
+        ? await this.prisma.product.findMany({
+            where: { id: { in: productIds }, companyId, isActive: true },
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              materialId: true,
+            },
+          })
+        : [];
+    const productMap = new Map(
+      products.map((product) => [product.id, product]),
+    );
+    const materialIds = [
+      ...new Set(
+        products
+          .map((product) => product.materialId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const quants =
+      materialIds.length > 0
+        ? await this.prisma.stockQuant.findMany({
+            where: {
+              materialId: { in: materialIds },
+              location: {
+                companyId,
+                usage: 'INTERNAL',
+                isActive: true,
+              },
+            },
+            select: {
+              materialId: true,
+              quantity: true,
+            },
+          })
+        : [];
+    const onHandByMaterial = this.sumOnHandByMaterial(quants);
+
+    return {
+      data: data.map((order) => {
+        const lines = this.buildFulfillmentLines(
+          order.items,
+          order.workOrders,
+          productMap,
+          onHandByMaterial,
+        );
+        return {
+          ...order,
+          fulfillmentSummary: this.summarizeFulfillment(lines),
+        };
+      }),
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async getOrderById(orderId: string, companyId: string) {
@@ -565,6 +657,28 @@ export class OrdersService {
           })
         : [];
 
+    const onHandByMaterial = this.sumOnHandByMaterial(quants);
+    const lines = this.buildFulfillmentLines(
+      order.items,
+      order.workOrders,
+      productMap,
+      onHandByMaterial,
+    );
+    const summary = this.summarizeFulfillment(lines);
+
+    return {
+      orderId: order.id,
+      orderNo: order.orderNo,
+      status: order.status,
+      expectedDate: order.expectedDate?.toISOString() ?? null,
+      overallStatus: summary.overallStatus,
+      lines,
+    };
+  }
+
+  private sumOnHandByMaterial(
+    quants: Array<{ materialId: string; quantity: unknown }>,
+  ) {
     const onHandByMaterial = new Map<string, number>();
     for (const quant of quants) {
       const current = onHandByMaterial.get(quant.materialId) ?? 0;
@@ -573,9 +687,29 @@ export class OrdersService {
         this.round2(current + Number(quant.quantity ?? 0)),
       );
     }
+    return onHandByMaterial;
+  }
 
+  private buildFulfillmentLines(
+    items: Array<{ id: string; productId: string; quantity: unknown }>,
+    workOrders: Array<{
+      productId: string;
+      plannedQty: unknown;
+      actualQty: unknown;
+    }>,
+    productMap: Map<
+      string,
+      {
+        id: string;
+        sku: string | null;
+        name: string;
+        materialId: string | null;
+      }
+    >,
+    onHandByMaterial: Map<string, number>,
+  ): OrderFulfillmentAvailabilityLine[] {
     const productionByProduct = new Map<string, number>();
-    for (const workOrder of order.workOrders) {
+    for (const workOrder of workOrders) {
       const openQty = Math.max(
         0,
         Number(workOrder.plannedQty ?? 0) - Number(workOrder.actualQty ?? 0),
@@ -587,7 +721,7 @@ export class OrdersService {
       );
     }
 
-    const lines = order.items.map((item): OrderFulfillmentAvailabilityLine => {
+    return items.map((item): OrderFulfillmentAvailabilityLine => {
       const product = productMap.get(item.productId);
       const orderedQty = this.round2(Number(item.quantity ?? 0));
       const materialId = product?.materialId ?? null;
@@ -599,7 +733,7 @@ export class OrdersService {
       );
       const projectedQty = this.round2(onHandQty + inProductionQty);
       const shortageQty = this.round2(Math.max(0, orderedQty - projectedQty));
-      const status: OrderFulfillmentAvailabilityLine['status'] = !materialId
+      const status: OrderFulfillmentStatus = !materialId
         ? 'UNMAPPED'
         : onHandQty >= orderedQty
           ? 'READY'
@@ -621,7 +755,11 @@ export class OrdersService {
         status,
       };
     });
+  }
 
+  private summarizeFulfillment(
+    lines: OrderFulfillmentAvailabilityLine[],
+  ): OrderFulfillmentSummary {
     const overallStatus = lines.some((line) => line.status === 'UNMAPPED')
       ? 'UNMAPPED'
       : lines.some((line) => line.status === 'SHORTAGE')
@@ -631,12 +769,15 @@ export class OrdersService {
           : 'READY';
 
     return {
-      orderId: order.id,
-      orderNo: order.orderNo,
-      status: order.status,
-      expectedDate: order.expectedDate?.toISOString() ?? null,
       overallStatus,
-      lines,
+      lineCount: lines.length,
+      shortageLineCount: lines.filter((line) => line.status === 'SHORTAGE')
+        .length,
+      unmappedLineCount: lines.filter((line) => line.status === 'UNMAPPED')
+        .length,
+      totalShortageQty: this.round2(
+        lines.reduce((sum, line) => sum + line.shortageQty, 0),
+      ),
     };
   }
 

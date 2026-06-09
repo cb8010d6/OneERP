@@ -13,6 +13,8 @@ type MockPrisma = {
   order: {
     create: jest.Mock;
     findFirst: jest.Mock;
+    findMany: jest.Mock;
+    count: jest.Mock;
   };
   stockQuant: {
     findMany: jest.Mock;
@@ -31,6 +33,8 @@ describe('OrdersService', () => {
     order: {
       create: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
     },
     stockQuant: {
       findMany: jest.fn(),
@@ -238,6 +242,50 @@ describe('OrdersService', () => {
       }),
     );
     expect(prisma.stockQuant.findMany).not.toHaveBeenCalled();
+  });
+
+  it('adds fulfillment summary to order list rows', async () => {
+    prisma.order.findMany = jest.fn().mockResolvedValue([
+      {
+        id: 'order-list-1',
+        orderNo: 'ORD-LIST-1',
+        status: 'PENDING',
+        items: [{ id: 'item-list-1', productId: 'prod-list-1', quantity: 6 }],
+        workOrders: [],
+        partner: { name: '客户A' },
+        salesPerson: { id: 'user-1', name: '销售A' },
+      },
+    ]);
+    prisma.order.count = jest.fn().mockResolvedValue(1);
+    prisma.product.findMany.mockResolvedValue([
+      {
+        id: 'prod-list-1',
+        sku: 'FG-L1',
+        name: '列表成品',
+        materialId: 'mat-list-1',
+      },
+    ]);
+    prisma.stockQuant.findMany.mockResolvedValue([
+      { materialId: 'mat-list-1', quantity: 2 },
+    ]);
+
+    const result = await service.getOrdersByCompany('company-1', {
+      page: 1,
+      limit: 20,
+    });
+
+    expect(result.data[0]).toEqual(
+      expect.objectContaining({
+        id: 'order-list-1',
+        fulfillmentSummary: {
+          overallStatus: 'SHORTAGE',
+          lineCount: 1,
+          shortageLineCount: 1,
+          unmappedLineCount: 0,
+          totalShortageQty: 4,
+        },
+      }),
+    );
   });
 
   it('keeps draft status when discount is at most 10%', async () => {
