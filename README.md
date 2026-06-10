@@ -1,5 +1,7 @@
 # OneERP
 
+[中文](./README.md) | [English](./README.en.md)
+
 <p align="center">
 	<img src="./docs/image/logo-placeholder.svg" alt="Enterprise ERP Logo" width="160" />
 </p>
