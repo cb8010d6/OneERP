@@ -12,8 +12,6 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Local maintenance scripts
-    "**/run_fix*.js",
   ]),
   {
     files: ["**/*.{ts,tsx,js,jsx}"],
