@@ -3,7 +3,7 @@
 [中文](./README.md) | [English](./README.en.md)
 
 <p align="center">
-	<img src="./docs/image/logo-placeholder.svg" alt="Enterprise ERP Logo" width="160" />
+	<img src="./docs/image/oneerp-logo.svg" alt="OneERP Logo" width="180" />
 </p>
 
 <p align="center">
@@ -56,14 +56,17 @@ English summary: OneERP is an AI-native ERP for manufacturing and supply-chain t
 | 多端规划 | Web + Mobile(Expo) + Desktop(Tauri) | Web 为主 | Web 为主 |
 | 自定义成本 | 中低（Schema + Metadata） | 中 | 中 |
 
-## 功能截图（占位）
+## 产品截图
 
-> 请把真实截图放到 `docs/image/screenshots/`，并替换以下占位链接。
+真实产品截图尚未提交到仓库。对外正式发布前，必须补齐以下截图并经过人工复核，避免 GitHub 首页展示临时内容：
 
-- 仪表盘总览：`docs/image/screenshots/dashboard.png`
-- 销售订单工作台：`docs/image/screenshots/sales-order.png`
-- 库存台账：`docs/image/screenshots/inventory-ledger.png`
-- AI 命令栏：`docs/image/screenshots/ai-command.png`
+- Dashboard 总览
+- 销售订单工作台
+- 库存台账与出入库流水
+- 财务凭证、试算平衡或应收应付页面
+- AI Command Bar / Chat2Dash 只读分析页面
+
+截图补齐前，不应把本仓库描述为“生产就绪”或用于公开获客落地页。
 
 ## 5 分钟快速启动
 

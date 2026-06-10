@@ -46,9 +46,15 @@ OneERP is not just another admin dashboard with many forms. The goal is a busine
 
 ## Screenshots
 
-Real product screenshots are still pending. The Chinese README currently tracks the expected screenshot locations under `docs/image/screenshots/`.
+Real product screenshots are still pending. Before a public launch, add and manually review screenshots for:
 
-Before public launch, replace the placeholders with real Dashboard, Sales Order, Inventory, Finance, and AI screenshots.
+- Dashboard overview
+- Sales order workspace
+- Inventory ledger and stock movements
+- Finance vouchers, trial balance, or receivable/payable pages
+- AI Command Bar or Chat2Dash read-only analysis
+
+Until these screenshots are available, this repository should not be marketed as production-ready or used as a public customer landing page.
 
 ## Quickstart
 
