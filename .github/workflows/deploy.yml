@@ -5,24 +5,20 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      deploy_api:
-        description: "Deploy API"
+      deploy:
+        description: "Run SSH deployment after publishing images"
         required: false
-        default: "true"
-        type: boolean
-      deploy_web:
-        description: "Deploy Web"
-        required: false
-        default: "true"
+        default: false
         type: boolean
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/oneerp
+  IMAGE_TAG: latest
 
 jobs:
-  # ---- Build & Push API Docker Image ----
   build-api:
+    name: Build API image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,7 +38,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for API
+      - name: Extract API metadata
         id: meta-api
         uses: docker/metadata-action@v5
         with:
@@ -52,19 +48,20 @@ jobs:
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and Push API Image
+      - name: Build and push API image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/api/Dockerfile
+          target: production
           push: true
           tags: ${{ steps.meta-api.outputs.tags }}
           labels: ${{ steps.meta-api.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---- Build & Push Web Docker Image ----
-  build-web:
+  build-api-migrate:
+    name: Build API migration image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -84,7 +81,50 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata for Web
+      - name: Extract API migration metadata
+        id: meta-api-migrate
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api-migrate
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push API migration image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          target: builder
+          push: true
+          tags: ${{ steps.meta-api-migrate.outputs.tags }}
+          labels: ${{ steps.meta-api-migrate.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-web:
+    name: Build Web image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Web metadata
         id: meta-web
         uses: docker/metadata-action@v5
         with:
@@ -94,68 +134,92 @@ jobs:
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and Push Web Image
+      - name: Build and push Web image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: apps/web/Dockerfile
+          target: production
           push: true
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ---- Deploy to Server (placeholder — customize for your infra) ----
   deploy:
-    needs: [build-api, build-web]
+    name: Deploy over SSH
+    needs: [build-api, build-api-migrate, build-web]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (vars.DEPLOY_ENABLED == 'true' || (github.event_name == 'workflow_dispatch' && inputs.deploy == true))
 
     environment:
       name: production
       url: ${{ vars.APP_URL }}
 
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      GHCR_USERNAME: ${{ vars.GHCR_USERNAME || github.actor }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # ---- Option A: Deploy via SSH (uncomment and configure) ----
-      # - name: Deploy to server via SSH
-      #   uses: appleboy/ssh-action@v1
-      #   with:
-      #     host: ${{ secrets.DEPLOY_HOST }}
-      #     username: ${{ secrets.DEPLOY_USER }}
-      #     key: ${{ secrets.DEPLOY_SSH_KEY }}
-      #     script: |
-      #       cd /opt/oneerp
-      #       docker compose pull
-      #       docker compose up -d --remove-orphans
-      #       docker image prune -f
-
-      # ---- Option B: Deploy via Docker Compose on self-hosted runner ----
-      # - name: Deploy with Docker Compose
-      #   run: |
-      #     docker compose -f docker-compose.prod.yml pull
-      #     docker compose -f docker-compose.prod.yml up -d --remove-orphans
-      #     docker image prune -f
-
-      - name: Deployment placeholder
+      - name: Validate deployment configuration
+        shell: bash
         run: |
-          echo "::notice::Deploy step is configured as a placeholder."
-          echo "To enable automatic deployment, uncomment one of the options above."
-          echo ""
-          echo "Required secrets for SSH deployment:"
-          echo "  - DEPLOY_HOST: Server IP or hostname"
-          echo "  - DEPLOY_USER: SSH username"
-          echo "  - DEPLOY_SSH_KEY: SSH private key"
-          echo ""
-          echo "Published images:"
-          echo "  - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-api:latest"
-          echo "  - ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-web:latest"
+          set -euo pipefail
+          missing=()
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_PATH; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '::error::Missing deployment configuration: %s\n' "${missing[*]}"
+            printf 'Configure repository secrets DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and variable DEPLOY_PATH.\n'
+            exit 1
+          fi
+
+      - name: Install SSH key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/oneerp_deploy
+          chmod 600 ~/.ssh/oneerp_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync production compose file
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          scp -i ~/.ssh/oneerp_deploy docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
+
+      - name: Login remote Docker to GHCR
+        if: env.GHCR_TOKEN != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker login '$REGISTRY' -u '$GHCR_USERNAME' --password-stdin"
+
+      - name: Deploy with Docker Compose
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' REGISTRY='$REGISTRY' IMAGE_PREFIX='$IMAGE_PREFIX' IMAGE_TAG='$IMAGE_TAG' bash -se" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          export REGISTRY IMAGE_PREFIX IMAGE_TAG
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker compose -f docker-compose.prod.yml ps
+          docker image prune -f
+          REMOTE

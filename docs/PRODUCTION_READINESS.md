@@ -19,6 +19,7 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - [ ] 待部署精确 commit 上 `npm run validate` 通过。
 - [ ] 干净服务器上 `docker compose -f docker-compose.ha-lite.yml up -d --build` 成功。
 - [ ] `docker compose -f docker-compose.ha-lite.yml config` 通过。
+- [ ] 如使用镜像部署，`docker compose -f docker-compose.prod.yml config` 在生产 `.env` 下通过。
 - [ ] `scripts/deploy-check.*` 通过。
 - [ ] `scripts/prod-smoke.*` 通过，核心登录、订单、库存、发票接口无 500。
 - [ ] `scripts/staff-permission-smoke.*` 通过，员工只读和越权拒绝均可验证。
@@ -41,6 +42,28 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - [ ] 至少完成一次凭证过账与冲销场景测试。
 - [ ] 财务测试后试算平衡借贷相等。
 - [ ] 收货、调拨、发货后，库存流水与预期实物数量一致。
+
+## 镜像生产部署 / Image-Based Production Deployment
+
+`docker-compose.prod.yml` 面向已发布到 GHCR 的镜像部署，不在服务器上构建源码。生产服务器必须准备受控 `.env`，至少包含：
+
+- `IMAGE_PREFIX`：镜像前缀，例如 `your-org/oneerp`，对应 `ghcr.io/your-org/oneerp-api`、`oneerp-api-migrate`、`oneerp-web`。
+- `IMAGE_TAG`：默认 `latest`；需要精确回滚时可使用发布镜像 tag。
+- `POSTGRES_PASSWORD`、`JWT_SECRET`、`MINIO_SECRET_KEY`、`INIT_ADMIN_EMAIL`、`INIT_ADMIN_PASSWORD`、`CORS_ORIGINS`。
+- `NEXT_PUBLIC_API_BASE_URL`：默认 `/api/proxy`；跨域部署时必须改成真实 API 入口。
+
+GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、Web 三个镜像。只有满足以下任一条件时才会执行远端部署：
+
+- repository variable `DEPLOY_ENABLED=true` 且 push 到 `main`。
+- 手动运行 workflow，并勾选 `deploy`。
+
+启用 SSH 部署前必须配置：
+
+- repository secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`。
+- repository variable：`DEPLOY_PATH`，指向服务器上的 OneERP 部署目录。
+- 如果 GHCR package 是私有的，配置 `GHCR_TOKEN`；否则需提前在服务器上完成 `docker login ghcr.io`。
+
+远端部署目录必须保留生产 `.env`；workflow 会在部署前同步当前 commit 的 `docker-compose.prod.yml`。部署后继续执行 `scripts/deploy-check.*`、`scripts/prod-smoke.*`、`scripts/business-acceptance.*`。
 
 ## P1：强烈建议 / Strongly Recommended
 

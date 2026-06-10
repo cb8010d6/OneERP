@@ -8,6 +8,8 @@ Chinese is the source of truth. English labels are provided for bilingual review
 - [ ] 已部署精确发布 commit：`________________`。
 - [ ] 发布 commit 上 `npm run validate` 已通过。
 - [ ] `docker compose -f docker-compose.ha-lite.yml config` 已通过。
+- [ ] 如使用镜像部署，`docker compose -f docker-compose.prod.yml config` 已在生产 `.env` 下通过。
+- [ ] 如启用 GitHub Deploy，`DEPLOY_ENABLED`、SSH secrets、`DEPLOY_PATH` 和 GHCR 拉取权限已复核。
 - [ ] `scripts/deploy-check.*` 已通过。
 - [ ] `scripts/prod-smoke.*` 已通过，登录、订单、库存、发票页面/API 可用。
 - [ ] `scripts/staff-permission-smoke.*` 已通过，员工登录和无权限写操作拒绝均可用。
