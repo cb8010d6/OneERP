@@ -145,11 +145,11 @@ export function AISettingsPanel() {
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-3xl space-y-5 sm:space-y-6">
       <div>
         <div className="flex items-center gap-2 border-b pb-2">
           <Bot className="h-5 w-5 text-blue-600" />
-          <h3 className="text-lg font-bold text-gray-900">
+          <h3 className="min-w-0 truncate text-base font-bold text-gray-900 sm:text-lg">
             {t('settingsAiTitle')}
           </h3>
         </div>
@@ -167,7 +167,7 @@ export function AISettingsPanel() {
         </div>
       ) : null}
 
-      <div className="grid gap-5 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 md:gap-5">
         <label className="space-y-1">
           <span className="text-sm font-medium text-gray-700">
             {t('settingsAiProvider')}
@@ -240,7 +240,7 @@ export function AISettingsPanel() {
       </datalist>
 
       <div className="grid gap-3 md:grid-cols-2">
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-start gap-2 text-sm text-gray-700">
           <input
             type="checkbox"
             checked={form.useProForSql}
@@ -250,11 +250,11 @@ export function AISettingsPanel() {
                 useProForSql: event.target.checked,
               }))
             }
-            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600"
           />
-          {t('settingsAiUseProSql')}
+          <span className="min-w-0">{t('settingsAiUseProSql')}</span>
         </label>
-        <label className="flex items-center gap-2 text-sm text-gray-700">
+        <label className="flex items-start gap-2 text-sm text-gray-700">
           <input
             type="checkbox"
             checked={form.useProForDocuments}
@@ -264,19 +264,19 @@ export function AISettingsPanel() {
                 useProForDocuments: event.target.checked,
               }))
             }
-            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600"
           />
-          {t('settingsAiUseProDocs')}
+          <span className="min-w-0">{t('settingsAiUseProDocs')}</span>
         </label>
       </div>
 
       <div className="space-y-3 border-t pt-5">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
           <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
             <KeyRound className="h-4 w-4 text-gray-500" />
             {t('settingsAiApiKey')}
           </div>
-          <span className="text-xs text-gray-500">
+          <span className="min-w-0 break-all text-xs text-gray-500 sm:text-right">
             {settings?.hasApiKey
               ? `${t('settingsAiCurrentKey')}: ${
                   settings.apiKeyPreview || settings.apiKeySource
@@ -303,9 +303,9 @@ export function AISettingsPanel() {
               setClearApiKey(event.target.checked);
               if (event.target.checked) setApiKey('');
             }}
-            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+            className="h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600"
           />
-          {t('settingsAiClearKey')}
+          <span className="min-w-0">{t('settingsAiClearKey')}</span>
         </label>
         <p className="text-xs text-gray-500">{t('settingsAiSecurityHint')}</p>
       </div>
@@ -322,12 +322,12 @@ export function AISettingsPanel() {
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-3">
+      <div className="grid gap-3 sm:flex sm:flex-wrap">
         <button
           type="button"
           onClick={testConnection}
           disabled={testing || saving}
-          className="inline-flex items-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
         >
           {testing ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -340,7 +340,7 @@ export function AISettingsPanel() {
           type="button"
           onClick={save}
           disabled={saving || testing}
-          className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex w-full items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
         >
           {saving ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />

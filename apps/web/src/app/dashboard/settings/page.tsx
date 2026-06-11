@@ -34,52 +34,63 @@ export default function SettingsPage() {
     }
   }, [currentCompanyId, companies]);
 
+  const tabButtonClass = (tab: typeof activeTab) =>
+    `flex shrink-0 items-center whitespace-nowrap px-4 py-3 text-sm font-medium sm:px-6 sm:py-4 ${
+      activeTab === tab
+        ? 'border-b-2 border-blue-600 bg-white text-blue-600'
+        : 'text-gray-500 hover:text-gray-700'
+    }`;
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="truncate text-xl font-bold text-gray-900 sm:text-2xl">
             {t('settingsTitle')}
           </h2>
           <p className="text-sm text-gray-500 mt-1">{t('settingsSubtitle')}</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="flex overflow-x-auto border-b border-gray-200 bg-gray-50">
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`px-6 py-4 text-sm font-medium flex items-center ${activeTab === 'users' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Users className="h-4 w-4 mr-2" /> {t('settingsUsers')}
-          </button>
-          <button
-            onClick={() => setActiveTab('departments')}
-            className={`px-6 py-4 text-sm font-medium flex items-center ${activeTab === 'departments' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Building2 className="h-4 w-4 mr-2" /> {t('settingsDepartments')}
-          </button>
-          <button
-            onClick={() => setActiveTab('info')}
-            className={`px-6 py-4 text-sm font-medium flex items-center ${activeTab === 'info' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Settings className="h-4 w-4 mr-2" /> {t('settingsCompany')}
-          </button>
-          <button
-            onClick={() => setActiveTab('customFields')}
-            className={`px-6 py-4 text-sm font-medium flex items-center ${activeTab === 'customFields' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Settings className="h-4 w-4 mr-2" /> {t('settingsCustomFields')}
-          </button>
-          <button
-            onClick={() => setActiveTab('ai')}
-            className={`px-6 py-4 text-sm font-medium flex items-center whitespace-nowrap ${activeTab === 'ai' ? 'bg-white text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
-          >
-            <Bot className="h-4 w-4 mr-2" /> {t('settingsAI')}
-          </button>
+      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm sm:rounded-xl">
+        <div className="overflow-x-auto border-b border-gray-200 bg-gray-50">
+          <div className="flex min-w-max">
+            <button
+              onClick={() => setActiveTab('users')}
+              className={tabButtonClass('users')}
+            >
+              <Users className="h-4 w-4 mr-2" /> {t('settingsUsers')}
+            </button>
+            <button
+              onClick={() => setActiveTab('departments')}
+              className={tabButtonClass('departments')}
+            >
+              <Building2 className="h-4 w-4 mr-2" />{' '}
+              {t('settingsDepartments')}
+            </button>
+            <button
+              onClick={() => setActiveTab('info')}
+              className={tabButtonClass('info')}
+            >
+              <Settings className="h-4 w-4 mr-2" /> {t('settingsCompany')}
+            </button>
+            <button
+              onClick={() => setActiveTab('customFields')}
+              className={tabButtonClass('customFields')}
+            >
+              <Settings className="h-4 w-4 mr-2" />{' '}
+              {t('settingsCustomFields')}
+            </button>
+            <button
+              onClick={() => setActiveTab('ai')}
+              className={tabButtonClass('ai')}
+            >
+              <Bot className="h-4 w-4 mr-2" /> {t('settingsAI')}
+            </button>
+          </div>
         </div>
 
-        <div className="p-6">
+        <div className="p-4 sm:p-6">
           {activeTab === 'users' && <EmployeeManagement />}
 
           {activeTab === 'departments' && (
@@ -95,7 +106,7 @@ export default function SettingsPage() {
                 <h3 className="text-lg font-bold mb-2 text-gray-900 border-b pb-2">
                   {t('settingsCompanyInfo')}
                 </h3>
-                <div className="grid grid-cols-2 gap-6 mt-4">
+                <div className="grid gap-4 mt-4 sm:grid-cols-2 sm:gap-6">
                   <div className="space-y-1">
                     <label className="text-sm font-medium text-gray-600">
                       {t('settingsActiveOrg')} (ID: {company?.id})
@@ -124,12 +135,12 @@ export default function SettingsPage() {
                 <h3 className="text-lg font-bold mb-2 text-gray-900 border-b pb-2">
                   {t('settingsPdaTitle')}
                 </h3>
-                <div className="bg-yellow-50 text-yellow-800 p-4 rounded-lg flex items-start border border-yellow-200">
-                  <p className="text-sm">
+                <div className="flex items-start rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
+                  <p className="min-w-0 text-sm">
                     {t('settingsPdaHint')}
                     <br />
                     <br />
-                    <code>http://{localIp}:8000/api</code>
+                    <code className="break-all">http://{localIp}:8000/api</code>
                   </p>
                 </div>
               </div>
