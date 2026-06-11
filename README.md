@@ -205,6 +205,7 @@ flowchart LR
 
 - [RELEASES.md](./RELEASES.md)
 - [docs/architecture/STANDARDS.md](./docs/architecture/STANDARDS.md)
+- [docs/AI_PROVIDER_SETUP.md](./docs/AI_PROVIDER_SETUP.md)
 - [docs/plans/PROJECT_PLAN_AND_STATUS.md](./docs/plans/PROJECT_PLAN_AND_STATUS.md)
 - [docs/plans/PROJECT_PLAN.md](./docs/plans/PROJECT_PLAN.md)
 - [docs/plans/EXECUTION_PLAN.md](./docs/plans/EXECUTION_PLAN.md)

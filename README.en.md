@@ -232,6 +232,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for more details.
 
 - [RELEASES.md](./RELEASES.md)
 - [Architecture Standards](./docs/architecture/STANDARDS.md)
+- [AI Provider Setup](./docs/AI_PROVIDER_SETUP.md)
 - [Project Plan and Status](./docs/plans/PROJECT_PLAN_AND_STATUS.md)
 - [AI Instructions](./docs/AI_INSTRUCTIONS.md)
 - [Production Readiness](./docs/PRODUCTION_READINESS.md)
