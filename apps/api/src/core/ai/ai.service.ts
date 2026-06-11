@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -48,6 +48,10 @@ interface CommandPreviewPayload {
 
 @Injectable()
 export class AIService {
+  private readonly logger = new Logger(AIService.name);
+
+  private static readonly CHAT2SQL_ROW_LIMIT = 500;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly crudService: CrudService,
@@ -392,8 +396,19 @@ export class AIService {
     }
 
     const checkedSql = this.validateReadOnlySql(sql);
+    const enforcedSql = this.enforceRowLimit(
+      checkedSql,
+      AIService.CHAT2SQL_ROW_LIMIT,
+    );
+
+    const startedAt = Date.now();
     const rows: Array<Record<string, unknown>> =
-      await this.prisma.$queryRawUnsafe(checkedSql, companyId);
+      await this.prisma.$queryRawUnsafe(enforcedSql, companyId);
+    const elapsedMs = Date.now() - startedAt;
+
+    this.logger.log(
+      `Chat2SQL companyId=${companyId} rows=${rows.length} ms=${elapsedMs} input=${input.slice(0, 80)}`,
+    );
 
     const chartSuggestion = this.suggestChart(rows);
     const explanation = this.explainReadSql(checkedSql, rows.length);
@@ -405,6 +420,7 @@ export class AIService {
       rows,
       chartSuggestion,
       rowCount: rows.length,
+      elapsedMs,
       export: {
         format: 'csv',
         fileName: `chat2sql-${Date.now()}.csv`,
@@ -932,6 +948,8 @@ Rules:
 2) MUST include filter: "companyId" = $1.
 3) Use JOINs for cross-table queries (e.g., to filter by Partner Name).
 4) No CTE, no semicolon, no DDL/DML.
+5) Do NOT use LIMIT in generated SQL (system enforces a row cap automatically).
+6) Do NOT use EXPLAIN, ANALYZE, pg_sleep, or any system/admin functions.
     `.trim();
   }
 
@@ -951,14 +969,46 @@ Rules:
       'alter',
       'create',
       'truncate',
+      'grant',
+      'revoke',
       ';',
       'with ',
       'pg_',
       'information_schema',
+      'pg_catalog',
+      'pg_sleep',
+      'pg_stat',
+      'union',
+      'copy ',
+      'call ',
+      'do ',
+      'lo_import',
+      'lo_export',
+      'dblink',
+      'exec ',
+      'execute ',
+      'explain ',
+      'analyze ',
+      'set ',
+      'reset ',
+      'show ',
+      'vacuum ',
+      'declare ',
+      'cursor',
+      'fetch ',
+      'move ',
+      'listen',
+      'notify',
+      'lock ',
+      'unlock',
     ];
 
     if (forbidden.some((keyword) => lowered.includes(keyword))) {
       throw new BadRequestException('检测到不安全 SQL 关键字');
+    }
+
+    if (/[;][\s]*[a-z]/i.test(normalized)) {
+      throw new BadRequestException('检测到多语句注入');
     }
 
     const hasCompanyFilter =
@@ -969,6 +1019,23 @@ Rules:
     }
 
     return normalized;
+  }
+
+  private enforceRowLimit(sql: string, limit: number): string {
+    const limitMatch = sql.match(/\blimit\s+(\d+)(?:\s+offset\s+\d+)?\s*$/i);
+    if (limitMatch) {
+      const requestedLimit = Number(limitMatch[1]);
+      if (requestedLimit > limit) {
+        throw new BadRequestException(`查询 LIMIT 不能超过 ${limit}`);
+      }
+      return sql;
+    }
+
+    if (/\blimit\b/i.test(sql)) {
+      throw new BadRequestException('查询 LIMIT 语法不受支持');
+    }
+
+    return `${sql} LIMIT ${limit}`;
   }
 
   private suggestChart(rows: Array<Record<string, unknown>>) {
@@ -1010,6 +1077,8 @@ Rules:
         '仅允许单条 SELECT 语句',
         '禁止 DDL/DML、CTE、系统表和多语句',
         '必须包含 companyId 参数过滤',
+        `自动限制返回上限 ${AIService.CHAT2SQL_ROW_LIMIT} 行`,
+        '禁止 pg_sleep、EXPLAIN、ANALYZE 等探测函数',
       ],
     };
   }

@@ -150,11 +150,141 @@ describe('AIService', () => {
     const result = (await service.chat2sql('订单状态分布', 'c1')) as {
       explanation: { summary: string; filters: string[] };
       export: { content: string };
+      rowCount: number;
+      elapsedMs: number;
     };
 
     expect(result.explanation.summary).toContain('1 行');
     expect(result.explanation.filters).toContain('已按当前公司 companyId 过滤');
     expect(result.export.content).toContain('"status","count"');
     expect(result.export.content).toContain('"DRAFT","2"');
+    expect(result.rowCount).toBe(1);
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('rejects SQL with dangerous keywords', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select * from "Order" where "companyId" = $1; drop table "Order"',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '检测到不安全 SQL 关键字',
+    );
+  });
+
+  it('rejects SQL without companyId filter', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue('select * from "Order"');
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '查询必须包含 companyId 过滤',
+    );
+  });
+
+  it('rejects multi-statement injection', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select * from "Order" where "companyId" = $1; delete from "Order"',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '检测到不安全 SQL 关键字',
+    );
+  });
+
+  it('rejects non-SELECT statements', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'update "Order" set status = \'CLOSED\' where "companyId" = $1',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '只允许 SELECT 查询',
+    );
+  });
+
+  it('enforces row limit when SQL has no LIMIT clause', async () => {
+    const { service, prisma, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select "id", "status" from "Order" where "companyId" = $1',
+    );
+    prisma.$queryRawUnsafe.mockResolvedValue([]);
+
+    await service.chat2sql('test', 'c1');
+
+    const calls = prisma.$queryRawUnsafe.mock.calls as Array<[string, string]>;
+    const calledSql = calls[0]?.[0];
+    expect(calledSql).toContain('LIMIT 500');
+  });
+
+  it('preserves existing LIMIT clause', async () => {
+    const { service, prisma, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select "id" from "Order" where "companyId" = $1 limit 10',
+    );
+    prisma.$queryRawUnsafe.mockResolvedValue([]);
+
+    await service.chat2sql('test', 'c1');
+
+    const calls = prisma.$queryRawUnsafe.mock.calls as Array<[string, string]>;
+    const calledSql = calls[0]?.[0];
+    expect(calledSql).toContain('limit 10');
+    expect(calledSql).not.toContain('LIMIT 500');
+  });
+
+  it('rejects UNION queries', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select "id" from "Order" where "companyId" = $1 union select "id" from "User" where "companyId" = $1',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '检测到不安全 SQL 关键字',
+    );
+  });
+
+  it('rejects LIMIT above the enforced row cap', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select "id" from "Order" where "companyId" = $1 limit 100000',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '查询 LIMIT 不能超过 500',
+    );
+  });
+
+  it('rejects unsupported LIMIT syntax', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select "id" from "Order" where "companyId" = $1 limit all',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '查询 LIMIT 语法不受支持',
+    );
+  });
+
+  it('rejects pg_sleep injection', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'select pg_sleep(60), * from "Order" where "companyId" = $1',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '检测到不安全 SQL 关键字',
+    );
+  });
+
+  it('rejects explain/analyze probing', async () => {
+    const { service, llmAdapterService } = createService();
+    llmAdapterService.resolveReadSql.mockResolvedValue(
+      'explain select * from "Order" where "companyId" = $1',
+    );
+
+    await expect(service.chat2sql('test', 'c1')).rejects.toThrow(
+      '只允许 SELECT 查询',
+    );
   });
 });
