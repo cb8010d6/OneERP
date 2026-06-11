@@ -23,9 +23,11 @@ import { AIModule } from './core/ai/ai.module';
 import { AuditModule } from './core/audit/audit.module';
 import { TenantContextMiddleware } from './core/middlewares/tenant-context.middleware';
 import { KyselyModule } from './core/prisma/kysely.module';
+import { ConfigValidationModule } from './core/config/config-validation.module';
 
 @Module({
   imports: [
+    ConfigValidationModule,
     EventEmitterModule.forRoot(),
     ScheduleModule.forRoot(),
     AppCacheModule,

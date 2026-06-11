@@ -58,6 +58,7 @@ target/
 
 # Local helper artifacts
 *.local
+scratch/
 backups/
 deploy-check-report.json
 prod-smoke-report.json

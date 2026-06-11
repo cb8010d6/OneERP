@@ -899,10 +899,10 @@ export class AIService {
   }
 
   private sign(body: string) {
-    const secret =
-      process.env.AI_PREVIEW_SECRET ||
-      process.env.JWT_SECRET ||
-      'oneerp-local-ai-preview-secret';
+    const secret = process.env.AI_PREVIEW_SECRET || process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('AI_PREVIEW_SECRET or JWT_SECRET must be configured');
+    }
     return createHmac('sha256', secret).update(body).digest('base64url');
   }
 

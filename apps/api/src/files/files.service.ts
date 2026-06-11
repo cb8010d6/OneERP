@@ -17,8 +17,8 @@ export class FilesService {
       endPoint: process.env.MINIO_ENDPOINT || '127.0.0.1',
       port: parseInt(process.env.MINIO_PORT || '9000'),
       useSSL: process.env.MINIO_USE_SSL === 'true',
-      accessKey: process.env.MINIO_ACCESS_KEY || 'minio_admin',
-      secretKey: process.env.MINIO_SECRET_KEY || 'minio_password',
+      accessKey: process.env.MINIO_ACCESS_KEY,
+      secretKey: process.env.MINIO_SECRET_KEY,
     });
 
     void this.initBucket();
