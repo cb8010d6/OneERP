@@ -51,9 +51,12 @@ if ([string]$envMap["AI_WRITE_ENABLED"] -eq "true") {
 }
 
 if (Test-Path $composePath) {
-  $composeText = Get-Content $composePath -Raw
+  $composeLines = Get-Content $composePath
   foreach ($port in @("5432", "6379", "9000", "9001")) {
-    if ($composeText -match ":\s*$port`"" -or $composeText -match "${port}:$port") {
+    $portMapping = $composeLines | Where-Object {
+      $_ -match "^\s*-\s*['`"]?[^#]*:$port(['`"]?\s*(#.*)?)?$"
+    } | Select-Object -First 1
+    if ($portMapping) {
       Add-Finding "P0" "public-port-$port" "Do not expose DB/Redis/MinIO ports in production"
     }
   }

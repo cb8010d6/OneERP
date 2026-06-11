@@ -41,7 +41,7 @@ esac
 
 if [ -f "$ROOT/$COMPOSE_FILE" ]; then
   for port in 5432 6379 9000 9001; do
-    if grep -Eq ":[[:space:]]*$port\"|$port:$port" "$ROOT/$COMPOSE_FILE"; then
+    if grep -Eq "^[[:space:]]*-[[:space:]]*['\"]?[^#]*:$port(['\"]?[[:space:]]*(#.*)?)?$" "$ROOT/$COMPOSE_FILE"; then
       finding P0 "public-port-$port" "Do not expose DB/Redis/MinIO ports in production"
     fi
   done
