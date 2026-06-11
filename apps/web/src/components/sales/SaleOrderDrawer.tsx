@@ -464,15 +464,89 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     SHIPPED: '完成订单',
   };
 
+  const toggleMobileLineSelection = (lineId: string) => {
+    setSelectedLineIds((prev) =>
+      prev.includes(lineId)
+        ? prev.filter((id) => id !== lineId)
+        : [...prev, lineId],
+    );
+  };
+
+  const renderMobileLineCards = () => (
+    <div className="space-y-3 md:hidden">
+      {lines.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+          暂无商品明细
+        </div>
+      ) : (
+        lines.map((line) => {
+          const product = productMap.get(line.productId);
+          const unitPrice = resolveLinePrice(line);
+          const lineSubtotal = line.quantity * unitPrice;
+          const selected = selectedLineIds.includes(line.id);
+          return (
+            <div
+              key={line.id}
+              className={`rounded-xl border bg-white p-3 shadow-sm ${
+                selected ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <label className="flex min-w-0 items-start gap-2">
+                  {isEditable ? (
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleMobileLineSelection(line.id)}
+                      className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600"
+                    />
+                  ) : null}
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-slate-900">
+                      {product
+                        ? `${product.sku || line.productCode} · ${product.name || line.description}`
+                        : line.description || line.productCode || '未选择产品'}
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-slate-500">
+                      {line.productId || '请选择产品'}
+                    </span>
+                  </span>
+                </label>
+                <span className="shrink-0 rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+                  x {line.quantity}
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
+                <div>
+                  <p className="text-slate-500">参考售价</p>
+                  <p className="mt-1 font-mono font-medium text-slate-800">
+                    {formatMoney(unitPrice)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-slate-500">小计</p>
+                  <p className="mt-1 font-mono font-semibold text-slate-900">
+                    {formatMoney(lineSubtotal)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
   const renderActions = () => (
-    <div className="flex items-center gap-3">
+    <div className="grid w-full gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
       {(status === 'DRAFT' || status === 'SUBMITTED') ? (
         <>
           <button 
             type="button" 
             disabled={!canSaveDraft}
             onClick={saveOrder}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gray-100 text-gray-700 font-medium text-sm hover:bg-gray-200 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Save className="h-4 w-4" />
             {saving ? '保存中...' : '保存草稿'}
@@ -481,7 +555,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
             type="button" 
             disabled={transitioning || !orderId}
             onClick={runWorkflowTransition}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 transition shadow-sm shadow-blue-200"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:opacity-70"
           >
             <CheckCircle2 className="h-4 w-4" />
             {transitioning ? '流转中...' : (nextActionLabel[status] || '执行流转')}
@@ -492,7 +566,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           type="button"
           disabled={transitioning}
           onClick={runWorkflowTransition}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 transition shadow-sm shadow-blue-200 disabled:opacity-70"
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:opacity-70"
         >
           <CheckCircle2 className="h-4 w-4" />
           {transitioning ? '流转中...' : nextActionLabel[status]}
@@ -521,72 +595,77 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           <Loader2 className="h-4 w-4 animate-spin" /> 正在加载订单详情...
         </div>
       ) : (
-      <div className="flex flex-col h-full bg-slate-50/50 -mx-5 -my-4 p-5">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4 rounded-2xl bg-white p-5 border border-slate-200/60 shadow-sm">
-          <div className="flex flex-col gap-1 w-full max-w-sm">
-            <h2 className="text-2xl font-black tracking-tight text-slate-900">
+      <div className="flex h-full flex-col bg-slate-50/50 -mx-5 -my-4 p-3 sm:p-5">
+        <div className="mb-4 flex flex-col gap-4 rounded-xl border border-slate-200/60 bg-white p-4 shadow-sm sm:mb-6 sm:flex-row sm:items-start sm:justify-between sm:rounded-2xl sm:p-5">
+          <div className="flex min-w-0 flex-col gap-1 sm:max-w-sm">
+            <h2 className="truncate text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
               {orderNo}
             </h2>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
               <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tracking-wide ${
                 status === 'DRAFT' || status === 'SUBMITTED' ? 'bg-slate-100 text-slate-600' : 'bg-green-100 text-green-700'
               }`}>
                 {status}
               </span>
-              <span className="text-sm text-slate-500">客户: {partnerName || '未选择'}</span>
+              <span className="min-w-0 truncate text-sm text-slate-500">客户: {partnerName || '未选择'}</span>
             </div>
           </div>
           {renderActions()}
         </div>
 
-        <div className="flex gap-1 border-b border-slate-200 mb-5">
-          {[
-            { id: 'LINES', label: '商品明细', icon: Layers },
-            { id: 'INFO', label: '开票与物流', icon: Info },
-            { id: 'CHATTER', label: '操作台账', icon: Activity }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id as TabType)}
-              className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id 
-                  ? 'border-blue-600 text-blue-700' 
-                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-              }`}
-            >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
-            </button>
-          ))}
+        <div className="mb-4 overflow-x-auto border-b border-slate-200 sm:mb-5">
+          <div className="flex min-w-max gap-1">
+            {[
+              { id: 'LINES', label: '商品明细', icon: Layers },
+              { id: 'INFO', label: '开票与物流', icon: Info },
+              { id: 'CHATTER', label: '操作台账', icon: Activity }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as TabType)}
+                className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors sm:px-5 ${
+                  activeTab === tab.id
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800'
+                }`}
+              >
+                <tab.icon className="h-4 w-4" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto">
           {activeTab === 'LINES' && (
              <div className="flex flex-col h-full gap-4">
                 {isEditable && (
-                  <div className="flex justify-between items-center bg-blue-50/50 border border-blue-100 p-3 rounded-xl">
-                    <p className="text-xs text-blue-800 flex items-center gap-2">
-                       <span className="text-lg">i</span> 双击单元格可编辑，产品列支持下拉选择真实物料。
+                  <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="flex items-start gap-2 text-xs text-blue-800">
+                       <span className="text-lg leading-none">i</span>
+                       <span>桌面端可双击单元格编辑；手机端先查看明细，复杂编辑建议切到桌面。</span>
                     </p>
-                    <div className="flex items-center gap-2">
+                    <div className="grid gap-2 sm:flex sm:items-center">
                       <button
                         onClick={handleDeleteSelectedLines}
-                        className="text-xs font-semibold text-rose-600 hover:text-rose-700 px-3 py-1 rounded bg-rose-100/60 hover:bg-rose-100 transition"
+                        className="rounded bg-rose-100/60 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 hover:text-rose-700"
                       >
                         删除选中 ({selectedLineIds.length})
                       </button>
                       <button 
                         onClick={handleAddLine}
-                        className="text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1 rounded bg-blue-100/50 hover:bg-blue-100 transition"
+                        className="rounded bg-blue-100/50 px-3 py-1.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-100 hover:text-blue-800"
                       >
                         + 新增空行
                       </button>
                     </div>
                   </div>
                 )}
-                
-                <div className="bg-white rounded-xl border border-slate-200/60 shadow-sm p-2 flex-1">
+
+                {renderMobileLineCards()}
+
+                <div className="hidden flex-1 rounded-xl border border-slate-200/60 bg-white p-2 shadow-sm md:block">
                   <DataGrid 
                     columns={columns} 
                     data={lines} 
@@ -603,8 +682,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
                   </div>
                 ) : null}
 
-                <div className="flex justify-end mt-2">
-                  <div className="w-80 bg-white rounded-xl border border-slate-200/60 shadow-sm p-5 space-y-3">
+                <div className="mt-2 flex justify-end">
+                  <div className="w-full rounded-xl border border-slate-200/60 bg-white p-4 shadow-sm sm:w-80 sm:p-5 space-y-3">
                      <div className="flex justify-between items-center text-sm text-slate-600">
                         <span>小计 (Subtotal)</span>
                         <span className="font-mono">{formatMoney(subtotal)}</span>
@@ -624,8 +703,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           )}
 
           {activeTab === 'INFO' && (
-            <div className="grid grid-cols-2 gap-6 bg-white p-6 rounded-2xl border border-slate-200/60">
-               <div className="space-y-4 border-r border-slate-100 pr-6">
+            <div className="grid gap-5 rounded-xl border border-slate-200/60 bg-white p-4 sm:rounded-2xl sm:p-6 md:grid-cols-2 md:gap-6">
+               <div className="space-y-4 md:border-r md:border-slate-100 md:pr-6">
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-2">客户与发票</h3>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">选中客户</label>
@@ -656,7 +735,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
                     </select>
                   </div>
                </div>
-               <div className="space-y-4 pl-2">
+               <div className="space-y-4 md:pl-2">
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-2">排程与其他</h3>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">交货日期 (Expected Date)</label>
@@ -684,7 +763,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           )}
 
           {activeTab === 'CHATTER' && (
-             <div className="bg-white p-6 rounded-2xl border border-slate-200/60 max-w-3xl">
+             <div className="max-w-3xl rounded-xl border border-slate-200/60 bg-white p-4 sm:rounded-2xl sm:p-6">
                 {timeline.length === 0 ? (
                   <div className="text-sm text-slate-500">暂无台账记录。</div>
                 ) : (
