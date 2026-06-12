@@ -1,5 +1,5 @@
 import axios, { AxiosError, AxiosHeaders } from 'axios';
-import { useAuthStore } from '../store/authStore';
+import { useAuthStore, getCsrfTokenFromCookie } from '../store/authStore';
 
 declare module 'axios' {
   export interface InternalAxiosRequestConfig {
@@ -35,32 +35,39 @@ function sanitizePaginationInUrl(url?: string): string | undefined {
   }
 }
 
-const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
+const baseURL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
 
 const api = axios.create({
   baseURL,
   timeout: 10000,
+  withCredentials: true,
 });
 
 let refreshPromise: Promise<string | null> | null = null;
 
-async function refreshAccessToken() {
-  const state = useAuthStore.getState();
-  if (!state.refreshToken) {
-    return null;
-  }
+async function refreshAccessToken(): Promise<string | null> {
+  const csrf = getCsrfTokenFromCookie();
+  if (!csrf) return null;
 
-  const response = await axios.post(`${baseURL.replace(/\/$/, '')}/auth/refresh`, {
-    refreshToken: state.refreshToken,
-  });
-  const { accessToken, refreshToken, user, companies } = response.data as {
+  const response = await axios.post(
+    `${baseURL.replace(/\/$/, '')}/auth/refresh`,
+    {},
+    { withCredentials: true, headers: { 'x-csrf-token': csrf } },
+  );
+  const { accessToken, user, companies } = response.data as {
     accessToken: string;
-    refreshToken: string;
-    user: Parameters<typeof state.setAuth>[1];
-    companies: Parameters<typeof state.setAuth>[2];
+    user: { id: string; email?: string; name?: string };
+    companies: Array<{ id: string; name: string; role: string; permissions?: string[] }>;
   };
-  state.setAuth(accessToken, user, companies, refreshToken);
+  useAuthStore.getState().setAuth(accessToken, user, companies);
   return accessToken;
+}
+
+function navigateToLogin() {
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login';
+  }
 }
 
 api.interceptors.request.use(
@@ -87,11 +94,16 @@ api.interceptors.request.use(
       headers.set('x-company-id', companyId);
     }
 
-    if (!isAuthRequest && (!token || !companyId)) {
-      useAuthStore.getState().logout();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+    const method = (config.method ?? 'get').toLowerCase();
+    if (['post', 'put', 'patch', 'delete'].includes(method)) {
+      const csrf = getCsrfTokenFromCookie();
+      if (csrf) {
+        headers.set('x-csrf-token', csrf);
       }
+    }
+
+    if (!isAuthRequest && (!token || !companyId)) {
+      void useAuthStore.getState().logout().then(navigateToLogin);
       return Promise.reject(
         new AxiosError(
           '缺少有效登录态或公司上下文，已阻止请求。',
@@ -111,10 +123,12 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalConfig = error.config;
+
     if (error.response?.status === 401) {
-      const isRefreshRequest = String(originalConfig?.url ?? '').includes('/auth/refresh');
-      const hasRefreshToken = !!useAuthStore.getState().refreshToken;
-      if (originalConfig && !originalConfig._retry && hasRefreshToken && !isRefreshRequest) {
+      const isRefreshRequest = String(originalConfig?.url ?? '').includes(
+        '/auth/refresh',
+      );
+      if (originalConfig && !originalConfig._retry && !isRefreshRequest) {
         originalConfig._retry = true;
         try {
           refreshPromise = refreshPromise ?? refreshAccessToken();
@@ -131,10 +145,7 @@ api.interceptors.response.use(
         }
       }
 
-      useAuthStore.getState().logout();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+      void useAuthStore.getState().logout().then(navigateToLogin);
     }
 
     if (error.response?.status === 403) {
@@ -146,10 +157,7 @@ api.interceptors.response.use(
         message.includes('尚未登录');
 
       if (isTenantOrAuthContextError) {
-        useAuthStore.getState().logout();
-        if (typeof window !== 'undefined') {
-          window.location.href = '/login';
-        }
+        void useAuthStore.getState().logout().then(navigateToLogin);
       }
     }
 

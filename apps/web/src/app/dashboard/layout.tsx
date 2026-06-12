@@ -18,7 +18,7 @@ import {
   Table,
   X,
 } from 'lucide-react';
-import { useAuthStore } from '../../store/authStore';
+import { useAuthStore, isJwtTokenLikelyValid } from '../../store/authStore';
 import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
 import { useWorkspaceTabsStore } from '../../store/workspaceTabsStore';
@@ -54,6 +54,7 @@ export default function DashboardLayout({
     setCurrentCompany,
     refreshPermissions,
     logout,
+    restoreSession,
   } = useAuthStore();
   const { openTab, activateTab, closeTab, activePath } =
     useWorkspaceTabsStore();
@@ -132,17 +133,30 @@ export default function DashboardLayout({
   }, []);
 
   useEffect(() => {
-    if (mounted && (!token || !user || !currentCompanyId)) {
-      router.push('/login');
-    }
-  }, [mounted, token, user, currentCompanyId, router]);
+    if (!mounted) return;
 
-  useEffect(() => {
-    if (!mounted || !token || !currentCompanyId) return;
-    void refreshPermissions().catch(() => {
-      router.push('/login');
+    if (token && user && currentCompanyId && isJwtTokenLikelyValid(token)) {
+      void refreshPermissions().catch(() => {
+        router.push('/login');
+      });
+      return;
+    }
+
+    let cancelled = false;
+    restoreSession().then((restored) => {
+      if (cancelled) return;
+      if (!restored) {
+        router.push('/login');
+        return;
+      }
+      void refreshPermissions().catch(() => {
+        if (!cancelled) router.push('/login');
+      });
     });
-  }, [mounted, token, currentCompanyId, refreshPermissions, router]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mounted, token, user, currentCompanyId, restoreSession, refreshPermissions, router]);
 
   useEffect(() => {
     if (!pathname) return;
@@ -202,8 +216,8 @@ export default function DashboardLayout({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [router]);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     setMobileNavOpen(false);
     router.push('/login');
   };

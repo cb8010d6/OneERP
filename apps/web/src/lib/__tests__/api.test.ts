@@ -5,67 +5,55 @@
  *  1. sanitizePaginationInUrl 对非法分页参数的修正
  *  2. 请求拦截器自动注入 Authorization / x-company-id
  *  3. 无 token 时拦截器阻止非 auth 请求
- *  4. 响应拦截器在 401 时清除状态
+ *  4. 响应拦截器在 401 时尝试 refresh 再 logout
+ *  5. 写请求自动注入 x-csrf-token
  */
 
-/* ------------------------------------------------------------------ */
-/*  先 mock 掉 axios 模块，避免真实网络请求                            */
-/* ------------------------------------------------------------------ */
-
 const mockGetState = jest.fn();
-const mockSetState = jest.fn();
-const mockLogout = jest.fn();
+const mockLogout = jest.fn().mockResolvedValue(undefined);
 const mockSetCurrentCompany = jest.fn();
+const mockGetCsrfTokenFromCookie = jest.fn().mockReturnValue('');
 
 jest.mock('../../store/authStore', () => ({
   useAuthStore: {
     getState: mockGetState,
-    setState: mockSetState,
   },
+  getCsrfTokenFromCookie: mockGetCsrfTokenFromCookie,
 }));
 
-/* ------------------------------------------------------------------ */
-/*  动态导入 api 模块，让 mock 生效                                     */
-/* ------------------------------------------------------------------ */
-
-// We import sanitizePaginationInUrl indirectly through api internals.
-// Since it's not exported, we test it via the interceptor behavior.
-// For the pure function test, we'll extract it from source.
-
-describe('sanitizePaginationInUrl (via interceptor)', () => {
+describe('api.ts interceptors', () => {
   let api: typeof import('../api').default;
 
   beforeEach(async () => {
     jest.resetModules();
     jest.clearAllMocks();
     api = (await import('../api')).default;
-    // 默认 auth 状态：有 token + 公司
     mockGetState.mockReturnValue({
-      token: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
+      token:
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
       user: { id: 'u1', username: 'test', role: 'admin' },
       companies: [{ id: 'c1', name: 'TestCo', role: 'owner' }],
       currentCompanyId: 'c1',
       setCurrentCompany: mockSetCurrentCompany,
       logout: mockLogout,
     });
+    mockGetCsrfTokenFromCookie.mockReturnValue('');
   });
 
-  it('sanitizePaginationInUrl 修正非法 page < 1', () => {
-    // 通过 api interceptor 间接验证：sanitized URL 不会带非法 page
-    // 直接测试 sanitizePaginationInUrl 的逻辑
-    // 该函数在 api.ts 内部定义，不可直接导出
-    // 我们通过检查 interceptor 处理后的 config.url 来验证
-
-    // 使用 api 拦截器验证: 先注册一个 adapter 捕获 config
-    // 添加一个 mock adapter 来捕获最终的请求配置
+  it('修正非法 page < 1 和 limit > 100', () => {
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
       capturedConfig = config;
-      return Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      });
     };
 
     return api.get('/v1/resource/test?page=0&limit=200').then(() => {
-      // page=0 应被修正为 1, limit=200 应被修正为 20
       expect(capturedConfig.url).toContain('page=1');
       expect(capturedConfig.url).toContain('limit=20');
     });
@@ -75,7 +63,13 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
       capturedConfig = config;
-      return Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      });
     };
 
     return api.get('/v1/resource/test?page=3&limit=50').then(() => {
@@ -84,26 +78,21 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
     });
   });
 
-  it('请求拦截器注入 Authorization header', () => {
+  it('注入 Authorization 和 x-company-id', () => {
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
       capturedConfig = config;
-      return Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      });
     };
 
     return api.get('/v1/resource/test').then(() => {
       expect(capturedConfig.headers.Authorization).toContain('Bearer ');
-    });
-  });
-
-  it('请求拦截器注入 x-company-id header', () => {
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
-      capturedConfig = config;
-      return Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
-    };
-
-    return api.get('/v1/resource/test').then(() => {
       expect(capturedConfig.headers['x-company-id']).toBe('c1');
     });
   });
@@ -112,7 +101,13 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
     let capturedConfig: any = null;
     api.defaults.adapter = (config: any) => {
       capturedConfig = config;
-      return Promise.resolve({ data: {}, status: 200, statusText: 'OK', headers: {}, config });
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      });
     };
 
     return api.get('/auth/login').then(() => {
@@ -120,7 +115,7 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
     });
   });
 
-  it('无 token 时非 auth 请求被拒绝', () => {
+  it('无 token 时非 auth 请求被拒绝并调用 logout', () => {
     mockGetState.mockReturnValue({
       token: null,
       user: null,
@@ -136,6 +131,44 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
     });
   });
 
+  it('写请求注入 x-csrf-token header', () => {
+    mockGetCsrfTokenFromCookie.mockReturnValue('test-csrf-token');
+    let capturedConfig: any = null;
+    api.defaults.adapter = (config: any) => {
+      capturedConfig = config;
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      });
+    };
+
+    return api.post('/v1/resource/test', {}).then(() => {
+      expect(capturedConfig.headers['x-csrf-token']).toBe('test-csrf-token');
+    });
+  });
+
+  it('GET 请求不注入 x-csrf-token', () => {
+    mockGetCsrfTokenFromCookie.mockReturnValue('test-csrf-token');
+    let capturedConfig: any = null;
+    api.defaults.adapter = (config: any) => {
+      capturedConfig = config;
+      return Promise.resolve({
+        data: {},
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      });
+    };
+
+    return api.get('/v1/resource/test').then(() => {
+      expect(capturedConfig.headers['x-csrf-token']).toBeUndefined();
+    });
+  });
+
   it('401 响应触发 logout', () => {
     api.defaults.adapter = () =>
       Promise.reject({
@@ -145,15 +178,17 @@ describe('sanitizePaginationInUrl (via interceptor)', () => {
         toJSON: () => ({}),
       });
 
-    // 模拟 window.location
     const originalLocation = window.location;
     delete (window as any).location;
     (window as any).location = { href: '' };
 
-    return api.get('/v1/resource/test').catch(() => {
-      expect(mockLogout).toHaveBeenCalled();
-      // restore
-      (window as any).location = originalLocation;
-    });
+    return api
+      .get('/v1/resource/test')
+      .catch(() => {
+        expect(mockLogout).toHaveBeenCalled();
+      })
+      .finally(() => {
+        (window as any).location = originalLocation;
+      });
   });
 });

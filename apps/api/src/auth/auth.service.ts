@@ -79,9 +79,20 @@ export class AuthService {
 
     const tokenHash = this.hashToken(refreshToken);
     const cacheKey = this.refreshCacheKey(userId, tokenHash);
-    const cached = await this.cacheManager.get(cacheKey);
+    const cached = await this.cacheManager.get<{
+      userId: string;
+      issuedAt: string;
+      gen?: number;
+    }>(cacheKey);
     if (!cached) {
       throw new UnauthorizedException('刷新令牌无效或已过期');
+    }
+
+    const genKey = `auth:session-gen:${userId}`;
+    const currentGen = await this.cacheManager.get<number>(genKey);
+    if (currentGen && cached.gen !== undefined && cached.gen < currentGen) {
+      await this.cacheManager.del(cacheKey);
+      throw new UnauthorizedException('会话已被撤销，请重新登录');
     }
 
     const user = await this.usersService.findByIdWithCompanies(userId);
@@ -112,6 +123,12 @@ export class AuthService {
         this.refreshCacheKey(userId, this.hashToken(refreshToken)),
       );
     }
+    return { success: true };
+  }
+
+  async logoutAll(userId: string) {
+    const genKey = `auth:session-gen:${userId}`;
+    await this.cacheManager.set(genKey, Date.now(), 7 * 24 * 60 * 60 * 1000);
     return { success: true };
   }
 
@@ -222,9 +239,11 @@ export class AuthService {
 
   private async issueRefreshToken(userId: string) {
     const token = `${userId}.${randomBytes(48).toString('base64url')}`;
+    const genKey = `auth:session-gen:${userId}`;
+    const gen = (await this.cacheManager.get<number>(genKey)) ?? 0;
     await this.cacheManager.set(
       this.refreshCacheKey(userId, this.hashToken(token)),
-      { userId, issuedAt: new Date().toISOString() },
+      { userId, issuedAt: new Date().toISOString(), gen },
       AuthService.REFRESH_TOKEN_TTL_MS,
     );
     return token;

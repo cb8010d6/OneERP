@@ -45,8 +45,8 @@ export default function AcceptInvitePage() {
         password,
         name: name || undefined,
       });
-      const { accessToken, refreshToken, user, companies } = response.data;
-      setAuth(accessToken, user, companies, refreshToken);
+      const { accessToken, user, companies } = response.data;
+      setAuth(accessToken, user, companies);
       router.push('/dashboard');
     } catch (reason: any) {
       setError(reason?.response?.data?.message || t('inviteFailed'));
