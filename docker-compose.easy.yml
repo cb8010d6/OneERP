@@ -2,16 +2,22 @@
 # Usage:
 #   docker compose -f docker-compose.easy.yml up -d --build
 
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
 services:
   db:
+    <<: *common
     image: postgres:15-alpine
-    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-oneerp}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-oneerp}
-    ports:
-      - "${DB_PORT:-5432}:5432"
     volumes:
       - oneerp_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -19,13 +25,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   redis:
+    <<: *common
     image: redis:7-alpine
-    restart: unless-stopped
-    command: redis-server --appendonly yes
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes --save 60 1000
     volumes:
       - oneerp_redisdata:/data
     healthcheck:
@@ -33,17 +38,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 10s
 
   minio:
-    image: minio/minio:latest
-    restart: unless-stopped
+    <<: *common
+    image: minio/minio:RELEASE.2024-01-18T00-31-37Z
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-oneerp_minio}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     command: server /data --console-address ":9001"
-    ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - oneerp_miniodata:/data
     healthcheck:
@@ -51,6 +54,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      start_period: 20s
 
   migrate:
     build:
@@ -115,6 +119,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
+      start_period: 30s
 
   web:
     build:
@@ -136,6 +141,18 @@ services:
       API_BASE_URL: http://api:8000
     ports:
       - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
 volumes:
   oneerp_pgdata:
