@@ -7,6 +7,7 @@ import { FinanceAccountMappingService } from './finance-account-mapping.service'
 import { FinanceDlqService } from './finance-dlq.service';
 import { FinanceBridgeListener } from './finance-bridge.listener';
 import { AccountingPeriodService } from './accounting-period.service';
+import { FinanceReportsService } from './finance-reports.service';
 import { EventQueueModule } from '../core/events/event-queue.module';
 import { PermissionsGuard } from '../core/guards/permissions.guard';
 
@@ -20,6 +21,7 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
     FinanceDlqService,
     AccountingPeriodService,
     FinanceBridgeListener,
+    FinanceReportsService,
     PermissionsGuard,
   ],
   exports: [
@@ -27,6 +29,7 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
     FinanceAccountMappingService,
     FinanceDlqService,
     AccountingPeriodService,
+    FinanceReportsService,
   ],
 })
 export class FinanceModule {}

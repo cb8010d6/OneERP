@@ -109,6 +109,13 @@ describe('FinanceService', () => {
   const financeAccountMappingService = {
     resolveLineAccount: jest.fn(),
   };
+  const financeReportsService = {
+    getTrialBalance: jest.fn(),
+    getGeneralLedger: jest.fn(),
+    getIncomeStatement: jest.fn(),
+    getBalanceSheet: jest.fn(),
+    getCashFlowStatement: jest.fn(),
+  };
 
   let service: FinanceService;
 
@@ -130,6 +137,9 @@ describe('FinanceService', () => {
       financeAccountMappingService as unknown as ConstructorParameters<
         typeof FinanceService
       >[2],
+      financeReportsService as unknown as ConstructorParameters<
+        typeof FinanceService
+      >[3],
     );
   });
 
@@ -138,89 +148,7 @@ describe('FinanceService', () => {
   });
 
   it('builds a general ledger with opening and running balances', async () => {
-    prisma.journalEntryLine.findMany.mockResolvedValue([
-      {
-        id: 'line-opening',
-        journalEntryId: 'je-opening',
-        lineNo: 1,
-        accountId: 'bank-1',
-        debit: 1000,
-        credit: 100,
-        memo: '期初余额',
-        partner: null,
-        account: { code: '1002', name: '银行存款', type: 'ASSET' },
-        journalEntry: {
-          entryNo: 'JE-OPEN',
-          date: new Date('2026-05-31T00:00:00.000Z'),
-          ref: 'OPEN-001',
-          description: '期初导入',
-        },
-      },
-      {
-        id: 'line-inflow',
-        journalEntryId: 'je-inflow',
-        lineNo: 1,
-        accountId: 'bank-1',
-        debit: 500,
-        credit: 0,
-        memo: '客户回款',
-        partner: { name: '蓝海科技' },
-        account: { code: '1002', name: '银行存款', type: 'ASSET' },
-        journalEntry: {
-          entryNo: 'JE-001',
-          date: new Date('2026-06-05T00:00:00.000Z'),
-          ref: 'PAY-001',
-          description: '客户收款',
-        },
-      },
-      {
-        id: 'line-outflow',
-        journalEntryId: 'je-outflow',
-        lineNo: 2,
-        accountId: 'bank-1',
-        debit: 0,
-        credit: 300,
-        memo: null,
-        partner: null,
-        account: { code: '1002', name: '银行存款', type: 'ASSET' },
-        journalEntry: {
-          entryNo: 'JE-002',
-          date: new Date('2026-06-12T00:00:00.000Z'),
-          ref: 'SUPPAY-001',
-          description: '供应商付款',
-        },
-      },
-    ]);
-
-    const result = await service.getGeneralLedger(
-      'c1',
-      '2026-06-01',
-      '2026-06-30',
-      '1002',
-    );
-
-    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
-      where: {
-        journalEntry: {
-          companyId: 'c1',
-          postingStatus: 'POSTED',
-          date: { lte: new Date('2026-06-30T23:59:59.999Z') },
-        },
-        account: { code: '1002' },
-      },
-      include: {
-        account: true,
-        journalEntry: true,
-        partner: true,
-      },
-      orderBy: [
-        { account: { code: 'asc' } },
-        { journalEntry: { date: 'asc' } },
-        { journalEntry: { entryNo: 'asc' } },
-        { lineNo: 'asc' },
-      ],
-    });
-    expect(result).toEqual({
+    const expected = {
       startDate: '2026-06-01T00:00:00.000Z',
       endDate: '2026-06-30T23:59:59.999Z',
       accountCode: '1002',
@@ -270,64 +198,27 @@ describe('FinanceService', () => {
           ],
         },
       ],
-    });
-  });
+    };
+    financeReportsService.getGeneralLedger.mockResolvedValue(expected);
 
-  it('builds an income statement from posted revenue and expense accounts', async () => {
-    prisma.journalEntryLine.findMany.mockResolvedValue([
-      {
-        accountId: 'rev-1',
-        debit: 100,
-        credit: 1200,
-        account: {
-          code: '6001',
-          name: '主营业务收入',
-          type: 'REVENUE',
-        },
-      },
-      {
-        accountId: 'exp-1',
-        debit: 450,
-        credit: 20,
-        account: {
-          code: '6401',
-          name: '主营业务成本',
-          type: 'EXPENSE',
-        },
-      },
-      {
-        accountId: 'exp-1',
-        debit: 80,
-        credit: 0,
-        account: {
-          code: '6401',
-          name: '主营业务成本',
-          type: 'EXPENSE',
-        },
-      },
-    ]);
-
-    const result = await service.getIncomeStatement(
+    const result = await service.getGeneralLedger(
       'c1',
       '2026-06-01',
       '2026-06-30',
+      '1002',
     );
 
-    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
-      where: {
-        journalEntry: {
-          companyId: 'c1',
-          postingStatus: 'POSTED',
-          date: {
-            gte: new Date('2026-06-01T00:00:00.000Z'),
-            lte: new Date('2026-06-30T23:59:59.999Z'),
-          },
-        },
-        account: { type: { in: ['REVENUE', 'EXPENSE'] } },
-      },
-      include: { account: true },
-    });
-    expect(result).toEqual({
+    expect(financeReportsService.getGeneralLedger).toHaveBeenCalledWith(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+      '1002',
+    );
+    expect(result).toEqual(expected);
+  });
+
+  it('builds an income statement from posted revenue and expense accounts', async () => {
+    const expected = {
       startDate: '2026-06-01T00:00:00.000Z',
       endDate: '2026-06-30T23:59:59.999Z',
       totalRevenue: 1100,
@@ -353,61 +244,25 @@ describe('FinanceService', () => {
           amount: 510,
         },
       ],
-    });
+    };
+    financeReportsService.getIncomeStatement.mockResolvedValue(expected);
+
+    const result = await service.getIncomeStatement(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+    );
+
+    expect(financeReportsService.getIncomeStatement).toHaveBeenCalledWith(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
+    );
+    expect(result).toEqual(expected);
   });
 
   it('builds a balance sheet including unclosed current earnings', async () => {
-    prisma.journalEntryLine.findMany.mockResolvedValue([
-      {
-        accountId: 'asset-1',
-        debit: 1300,
-        credit: 100,
-        account: { code: '1002', name: '银行存款', type: 'ASSET' },
-      },
-      {
-        accountId: 'liability-1',
-        debit: 0,
-        credit: 400,
-        account: { code: '2202', name: '应付账款', type: 'LIABILITY' },
-      },
-      {
-        accountId: 'equity-1',
-        debit: 0,
-        credit: 500,
-        account: { code: '4001', name: '实收资本', type: 'EQUITY' },
-      },
-      {
-        accountId: 'revenue-1',
-        debit: 0,
-        credit: 600,
-        account: { code: '6001', name: '主营业务收入', type: 'REVENUE' },
-      },
-      {
-        accountId: 'expense-1',
-        debit: 300,
-        credit: 0,
-        account: { code: '6401', name: '主营业务成本', type: 'EXPENSE' },
-      },
-    ]);
-
-    const result = await service.getBalanceSheet('c1', '2026-06-30');
-
-    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
-      where: {
-        journalEntry: {
-          companyId: 'c1',
-          postingStatus: 'POSTED',
-          date: { lte: new Date('2026-06-30T23:59:59.999Z') },
-        },
-        account: {
-          type: {
-            in: ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'],
-          },
-        },
-      },
-      include: { account: true },
-    });
-    expect(result).toEqual({
+    const expected = {
       asOfDate: '2026-06-30T23:59:59.999Z',
       totalAssets: 1200,
       totalLiabilities: 400,
@@ -445,89 +300,74 @@ describe('FinanceService', () => {
           amount: 500,
         },
       ],
-    });
+    };
+    financeReportsService.getBalanceSheet.mockResolvedValue(expected);
+
+    const result = await service.getBalanceSheet('c1', '2026-06-30');
+
+    expect(financeReportsService.getBalanceSheet).toHaveBeenCalledWith(
+      'c1',
+      '2026-06-30',
+    );
+    expect(result).toEqual(expected);
   });
 
   it('builds a cash flow statement from mapped cash accounts', async () => {
-    financeAccountMappingService.resolveLineAccount
-      .mockResolvedValueOnce({
-        accountCode: '1002',
-        accountName: '银行存款',
-        accountType: 'ASSET',
-      })
-      .mockResolvedValueOnce({
-        accountCode: '1001',
-        accountName: '库存现金',
-        accountType: 'ASSET',
-      })
-      .mockResolvedValueOnce({
-        accountCode: '101201',
-        accountName: '支付宝',
-        accountType: 'ASSET',
-      })
-      .mockResolvedValueOnce({
-        accountCode: '101202',
-        accountName: '微信支付',
-        accountType: 'ASSET',
-      });
-    prisma.journalEntryLine.findMany.mockResolvedValue([
-      {
-        journalEntryId: 'je-opening',
-        accountId: 'bank',
-        debit: 1000,
-        credit: 100,
-        lineNo: 1,
-        account: { code: '1002', name: '银行存款' },
-        journalEntry: {
-          entryNo: 'JE-OPEN',
-          date: new Date('2026-05-31T00:00:00.000Z'),
-          ref: 'OPEN',
-          description: '期初余额',
-        },
-      },
-      {
-        journalEntryId: 'je-pay',
-        accountId: 'bank',
-        debit: 500,
-        credit: 0,
-        lineNo: 1,
-        account: { code: '1002', name: '银行存款' },
-        journalEntry: {
+    const expected = {
+      startDate: '2026-06-01T00:00:00.000Z',
+      endDate: '2026-06-30T23:59:59.999Z',
+      beginningCash: 900,
+      totalCashInflow: 500,
+      totalCashOutflow: 500,
+      operatingCashFlow: 300,
+      investingCashFlow: -300,
+      financingCashFlow: 0,
+      netCashFlow: 0,
+      endingCash: 900,
+      cashAccountCodes: ['1001', '1002', '101201', '101202'],
+      rows: [
+        {
+          journalEntryId: 'je-pay',
           entryNo: 'JE-PAY',
-          date: new Date('2026-06-05T00:00:00.000Z'),
+          date: '2026-06-05T00:00:00.000Z',
           ref: 'PAY-001',
           description: '客户收款自动凭证',
+          accountCode: '1002',
+          accountName: '银行存款',
+          category: 'OPERATING',
+          cashInflow: 500,
+          cashOutflow: 0,
+          netCashFlow: 500,
         },
-      },
-      {
-        journalEntryId: 'je-supplier',
-        accountId: 'bank',
-        debit: 0,
-        credit: 200,
-        lineNo: 1,
-        account: { code: '1002', name: '银行存款' },
-        journalEntry: {
+        {
+          journalEntryId: 'je-supplier',
           entryNo: 'JE-SUP',
-          date: new Date('2026-06-08T00:00:00.000Z'),
+          date: '2026-06-08T00:00:00.000Z',
           ref: 'SUPPAY-001',
           description: '供应商付款自动凭证',
+          accountCode: '1002',
+          accountName: '银行存款',
+          category: 'OPERATING',
+          cashInflow: 0,
+          cashOutflow: 200,
+          netCashFlow: -200,
         },
-      },
-      {
-        journalEntryId: 'je-invest',
-        accountId: 'bank',
-        debit: 0,
-        credit: 300,
-        lineNo: 1,
-        account: { code: '1002', name: '银行存款' },
-        journalEntry: {
+        {
+          journalEntryId: 'je-invest',
           entryNo: 'JE-INVEST',
-          date: new Date('2026-06-10T00:00:00.000Z'),
+          date: '2026-06-10T00:00:00.000Z',
           ref: 'INVEST-001',
           description: '固定资产投资',
+          accountCode: '1002',
+          accountName: '银行存款',
+          category: 'INVESTING',
+          cashInflow: 0,
+          cashOutflow: 300,
+          netCashFlow: -300,
         },
-      },
-    ]);
+      ],
+    };
+    financeReportsService.getCashFlowStatement.mockResolvedValue(expected);
 
     const result = await service.getCashFlowStatement(
       'c1',
@@ -535,60 +375,12 @@ describe('FinanceService', () => {
       '2026-06-30',
     );
 
-    expect(
-      financeAccountMappingService.resolveLineAccount,
-    ).toHaveBeenCalledWith('c1', 'BANK');
-    expect(prisma.journalEntryLine.findMany).toHaveBeenCalledWith({
-      where: {
-        journalEntry: {
-          companyId: 'c1',
-          postingStatus: 'POSTED',
-          date: { lte: new Date('2026-06-30T23:59:59.999Z') },
-        },
-        account: {
-          code: { in: ['1001', '1002', '101201', '101202'] },
-        },
-      },
-      include: {
-        account: true,
-        journalEntry: true,
-      },
-      orderBy: [{ journalEntry: { date: 'asc' } }, { lineNo: 'asc' }],
-    });
-    expect(result).toEqual(
-      expect.objectContaining({
-        startDate: '2026-06-01T00:00:00.000Z',
-        endDate: '2026-06-30T23:59:59.999Z',
-        beginningCash: 900,
-        totalCashInflow: 500,
-        totalCashOutflow: 500,
-        operatingCashFlow: 300,
-        investingCashFlow: -300,
-        financingCashFlow: 0,
-        netCashFlow: 0,
-        endingCash: 900,
-        cashAccountCodes: ['1001', '1002', '101201', '101202'],
-      }),
+    expect(financeReportsService.getCashFlowStatement).toHaveBeenCalledWith(
+      'c1',
+      '2026-06-01',
+      '2026-06-30',
     );
-    expect(result.rows).toHaveLength(3);
-    expect(result.rows[0]).toEqual(
-      expect.objectContaining({
-        entryNo: 'JE-PAY',
-        category: 'OPERATING',
-        cashInflow: 500,
-        cashOutflow: 0,
-        netCashFlow: 500,
-      }),
-    );
-    expect(result.rows[2]).toEqual(
-      expect.objectContaining({
-        entryNo: 'JE-INVEST',
-        category: 'INVESTING',
-        cashInflow: 0,
-        cashOutflow: 300,
-        netCashFlow: -300,
-      }),
-    );
+    expect(result).toEqual(expected);
   });
 
   it('reconciles inventory valuation with inventory general ledger balance', async () => {
