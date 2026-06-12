@@ -28,6 +28,8 @@ import {
 import { AISettingsDto } from './dto/ai-settings.dto';
 import { AIService } from './ai.service';
 import { AISettingsService } from './ai-settings.service';
+import { validateUpload } from '../../files/upload-validation';
+import { multerUploadOptions } from '../../files/multer-options';
 
 interface CurrentUserPayload {
   id: string;
@@ -126,12 +128,13 @@ export class AIController {
 
   @Post('documents/parse')
   @RequirePermissions(Permission.AiRead)
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', multerUploadOptions))
   @ApiOperation({ summary: '多模态单据解析（Draft）' })
   parseDocument(
     @UploadedFile() file: UploadedDocument | undefined,
     @CurrentCompany() companyId: string,
   ) {
+    validateUpload(file);
     return this.aiService.parseDocumentDraft(file, companyId);
   }
 }

@@ -25,6 +25,8 @@ import { CurrentUser } from '../core/decorators/current-user.decorator';
 import { RequirePermissions } from '../core/decorators/permissions.decorator';
 import { Permission } from '../core/permissions/permissions';
 import type { JwtUserPayload } from '../core/http/request.types';
+import { validateUpload } from './upload-validation';
+import { multerUploadOptions } from './multer-options';
 
 @ApiTags('文件库 (Files)')
 @ApiBearerAuth()
@@ -48,13 +50,14 @@ export class FilesController {
       },
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(FileInterceptor('file', multerUploadOptions))
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
     @CurrentCompany() companyId: string,
     @CurrentUser() user: JwtUserPayload,
     @Query('folder') folder?: string,
   ) {
+    validateUpload(file);
     return this.filesService.uploadFile(file, companyId, user.id, folder);
   }
 
