@@ -2002,43 +2002,41 @@ export class FinanceService {
       journalEntryWhere.date = dateFilter;
     }
 
-    const lines = await this.prisma.journalEntryLine.findMany({
+    const aggregated = await this.prisma.journalEntryLine.groupBy({
+      by: ['accountId'],
       where: { journalEntry: journalEntryWhere },
-      include: { account: true },
+      _sum: { debit: true, credit: true },
     });
 
-    const rowsByAccount = new Map<string, TrialBalanceRow>();
+    const accountIds = aggregated.map((r) => r.accountId);
+    const accounts = await this.prisma.account.findMany({
+      where: { id: { in: accountIds } },
+      select: { id: true, code: true, name: true, type: true },
+    });
+    const accountMap = new Map(accounts.map((a) => [a.id, a]));
+
     let totalDebit = 0;
     let totalCredit = 0;
 
-    for (const line of lines) {
-      const debit = this.round2(Number(line.debit ?? 0));
-      const credit = this.round2(Number(line.credit ?? 0));
-      totalDebit = this.round2(totalDebit + debit);
-      totalCredit = this.round2(totalCredit + credit);
+    const rows: TrialBalanceRow[] = aggregated
+      .map((r) => {
+        const debit = this.round2(Number(r._sum.debit ?? 0));
+        const credit = this.round2(Number(r._sum.credit ?? 0));
+        totalDebit = this.round2(totalDebit + debit);
+        totalCredit = this.round2(totalCredit + credit);
+        const account = accountMap.get(r.accountId)!;
+        return {
+          accountId: r.accountId,
+          code: account.code,
+          name: account.name,
+          type: account.type,
+          debit,
+          credit,
+          balance: this.round2(debit - credit),
+        };
+      })
+      .sort((a, b) => a.code.localeCompare(b.code));
 
-      const existing = rowsByAccount.get(line.accountId);
-      if (existing) {
-        existing.debit = this.round2(existing.debit + debit);
-        existing.credit = this.round2(existing.credit + credit);
-        existing.balance = this.round2(existing.debit - existing.credit);
-        continue;
-      }
-
-      rowsByAccount.set(line.accountId, {
-        accountId: line.accountId,
-        code: line.account.code,
-        name: line.account.name,
-        type: line.account.type,
-        debit,
-        credit,
-        balance: this.round2(debit - credit),
-      });
-    }
-
-    const rows = [...rowsByAccount.values()].sort((a, b) =>
-      a.code.localeCompare(b.code),
-    );
     const difference = this.round2(totalDebit - totalCredit);
 
     return {
