@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import { roundDecimal } from '../core/utils/decimal';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreatePurchaseOrderFromShortagesDto,
@@ -315,8 +316,8 @@ export class ProductionService {
             productName: workOrder.product?.name ?? workOrder.productId,
             orderNo: workOrder.order?.orderNo ?? null,
             customerName: workOrder.order?.partner?.name ?? null,
-            openQty: this.round2(openQty),
-            requiredQty: this.round2(requirement.quantity.toNumber()),
+            openQty: roundDecimal(openQty),
+            requiredQty: roundDecimal(requirement.quantity.toNumber()),
           });
           sourcesByMaterial.set(requirement.materialId, sources);
         }
@@ -330,7 +331,7 @@ export class ProductionService {
           productId: workOrder.productId,
           productSku: workOrder.product?.sku ?? null,
           productName: workOrder.product?.name ?? workOrder.productId,
-          openQty: this.round2(openQty),
+          openQty: roundDecimal(openQty),
           reason:
             error instanceof Error && error.message
               ? error.message
@@ -411,7 +412,7 @@ export class ProductionService {
       const current = onHandByMaterial.get(quant.materialId) ?? 0;
       onHandByMaterial.set(
         quant.materialId,
-        this.round2(current + Number(quant.quantity ?? 0)),
+        roundDecimal(current + Number(quant.quantity ?? 0)),
       );
     }
 
@@ -429,7 +430,7 @@ export class ProductionService {
       const current = incomingByMaterial.get(line.materialId) ?? 0;
       incomingByMaterial.set(
         line.materialId,
-        this.round2(current + outstanding),
+        roundDecimal(current + outstanding),
       );
       const sources = incomingSourcesByMaterial.get(line.materialId) ?? [];
       sources.push({
@@ -440,9 +441,9 @@ export class ProductionService {
         expectedDate: line.purchaseOrder.expectedDate
           ? line.purchaseOrder.expectedDate.toISOString()
           : null,
-        orderedQty: this.round2(Number(line.quantity ?? 0)),
-        receivedQty: this.round2(Number(line.receivedQty ?? 0)),
-        incomingQty: this.round2(outstanding),
+        orderedQty: roundDecimal(Number(line.quantity ?? 0)),
+        receivedQty: roundDecimal(Number(line.receivedQty ?? 0)),
+        incomingQty: roundDecimal(outstanding),
       });
       incomingSourcesByMaterial.set(line.materialId, sources);
     }
@@ -450,18 +451,18 @@ export class ProductionService {
     const rows = materialIds
       .map((materialId): MaterialAvailabilityRow => {
         const material = materialMap.get(materialId);
-        const requiredQty = this.round2(
+        const requiredQty = roundDecimal(
           requiredByMaterial.get(materialId)?.toNumber() ?? 0,
         );
-        const onHandQty = this.round2(onHandByMaterial.get(materialId) ?? 0);
-        const incomingQty = this.round2(
+        const onHandQty = roundDecimal(onHandByMaterial.get(materialId) ?? 0);
+        const incomingQty = roundDecimal(
           incomingByMaterial.get(materialId) ?? 0,
         );
-        const projectedQty = this.round2(onHandQty + incomingQty);
-        const shortageQty = this.round2(
+        const projectedQty = roundDecimal(onHandQty + incomingQty);
+        const shortageQty = roundDecimal(
           Math.max(0, requiredQty - projectedQty),
         );
-        const unitPrice = this.round2(Number(material?.unitPrice ?? 0));
+        const unitPrice = roundDecimal(Number(material?.unitPrice ?? 0));
         return {
           materialId,
           sku: material?.sku ?? materialId,
@@ -475,10 +476,10 @@ export class ProductionService {
           shortageQty,
           suggestedPurchaseQty: shortageQty,
           unitPrice,
-          estimatedAmount: this.round2(shortageQty * unitPrice),
+          estimatedAmount: roundDecimal(shortageQty * unitPrice),
           coveragePct:
             requiredQty > 0
-              ? this.round2(Math.min(100, (projectedQty / requiredQty) * 100))
+              ? roundDecimal(Math.min(100, (projectedQty / requiredQty) * 100))
               : 100,
           status: shortageQty > 0 ? 'SHORTAGE' : 'AVAILABLE',
           affectedWorkOrders: sourcesByMaterial.get(materialId) ?? [],
@@ -740,9 +741,5 @@ export class ProductionService {
       '0',
     )}${String(now.getDate()).padStart(2, '0')}`;
     return `WO-${date}-${String(now.getTime()).slice(-6)}`;
-  }
-
-  private round2(value: number) {
-    return Number(new Decimal(value).toDecimalPlaces(2).toString());
   }
 }

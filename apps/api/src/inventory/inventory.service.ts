@@ -194,7 +194,7 @@ export class InventoryService {
       const current = onHandByMaterial.get(quant.materialId) ?? 0;
       onHandByMaterial.set(
         quant.materialId,
-        this.round2(current + Number(quant.quantity ?? 0)),
+        roundDecimal(current + Number(quant.quantity ?? 0)),
       );
     }
 
@@ -207,24 +207,24 @@ export class InventoryService {
       const current = incomingByMaterial.get(line.materialId) ?? 0;
       incomingByMaterial.set(
         line.materialId,
-        this.round2(current + outstanding),
+        roundDecimal(current + outstanding),
       );
     }
 
     const rows = materials
       .map((material): ReplenishmentSuggestionRow | null => {
-        const minStock = this.round2(Number(material.minStock ?? 0));
+        const minStock = roundDecimal(Number(material.minStock ?? 0));
         if (minStock <= 0) return null;
 
-        const onHandQty = this.round2(onHandByMaterial.get(material.id) ?? 0);
-        const incomingQty = this.round2(
+        const onHandQty = roundDecimal(onHandByMaterial.get(material.id) ?? 0);
+        const incomingQty = roundDecimal(
           incomingByMaterial.get(material.id) ?? 0,
         );
-        const projectedQty = this.round2(onHandQty + incomingQty);
-        const shortageQty = this.round2(Math.max(0, minStock - projectedQty));
+        const projectedQty = roundDecimal(onHandQty + incomingQty);
+        const shortageQty = roundDecimal(Math.max(0, minStock - projectedQty));
         if (shortageQty <= 0) return null;
 
-        const unitPrice = this.round2(Number(material.unitPrice ?? 0));
+        const unitPrice = roundDecimal(Number(material.unitPrice ?? 0));
         return {
           materialId: material.id,
           sku: material.sku,
@@ -238,7 +238,7 @@ export class InventoryService {
           shortageQty,
           suggestedPurchaseQty: shortageQty,
           unitPrice,
-          estimatedAmount: this.round2(shortageQty * unitPrice),
+          estimatedAmount: roundDecimal(shortageQty * unitPrice),
           severity: onHandQty <= 0 ? 'OUT_OF_STOCK' : 'SHORTAGE',
         };
       })
@@ -252,10 +252,10 @@ export class InventoryService {
 
     return {
       totalSuggestions: rows.length,
-      totalShortageQty: this.round2(
+      totalShortageQty: roundDecimal(
         rows.reduce((sum, row) => sum + row.shortageQty, 0),
       ),
-      totalEstimatedAmount: this.round2(
+      totalEstimatedAmount: roundDecimal(
         rows.reduce((sum, row) => sum + row.estimatedAmount, 0),
       ),
       rows,
@@ -379,7 +379,7 @@ export class InventoryService {
       );
     }
 
-    const totalOrdered = this.round2(
+    const totalOrdered = roundDecimal(
       order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
     );
 
@@ -440,7 +440,7 @@ export class InventoryService {
         shippedQuantityByProductId.get(product.id) ?? 0;
       const remainingQuantity = Math.max(
         0,
-        this.round2(orderedQuantity - alreadyShippedQuantity),
+        roundDecimal(orderedQuantity - alreadyShippedQuantity),
       );
 
       if (remainingQuantity <= 0) {
@@ -452,7 +452,7 @@ export class InventoryService {
         continue;
       }
 
-      const quantityRequestedThisRound = this.round2(
+      const quantityRequestedThisRound = roundDecimal(
         Math.min(requestedQuantity, remainingQuantity),
       );
 
@@ -507,7 +507,7 @@ export class InventoryService {
           return nextTransactions;
         });
 
-        const quantityToShip = this.round2(
+        const quantityToShip = roundDecimal(
           lineTransactions.reduce(
             (sum, allocation) => sum + Number(allocation.quantity ?? 0),
             0,
@@ -531,7 +531,7 @@ export class InventoryService {
           materialId: product.materialId,
           requestedQuantity,
           quantity: quantityToShip,
-          remainingQuantity: this.round2(
+          remainingQuantity: roundDecimal(
             Math.max(0, quantityRequestedThisRound - quantityToShip),
           ),
           sourceLocationId:
@@ -546,7 +546,7 @@ export class InventoryService {
         const currentShipped = shippedQuantityByProductId.get(product.id) ?? 0;
         shippedQuantityByProductId.set(
           product.id,
-          this.round2(currentShipped + quantityToShip),
+          roundDecimal(currentShipped + quantityToShip),
         );
       } catch (error) {
         skippedLines.push({
@@ -557,7 +557,7 @@ export class InventoryService {
       }
     }
 
-    const totalShipped = this.round2(
+    const totalShipped = roundDecimal(
       [...shippedQuantityByProductId.values()].reduce(
         (sum, quantity) => sum + Number(quantity ?? 0),
         0,
@@ -709,7 +709,7 @@ export class InventoryService {
         netQty,
         batchCount: Number(row.batchCount ?? 0),
         averageCost,
-        inventoryValue: this.round2(netQty * averageCost),
+        inventoryValue: roundDecimal(netQty * averageCost),
         isLow: minStock > 0 && netQty <= minStock,
       };
     });
@@ -1330,18 +1330,18 @@ export class InventoryService {
       locationName: string | null;
     }> = [];
 
-    let remaining = this.round2(requestedQuantity);
+    let remaining = roundDecimal(requestedQuantity);
     for (const candidate of candidates) {
       if (remaining <= 0) {
         break;
       }
 
-      const availableQuantity = this.round2(Number(candidate.quantity ?? 0));
+      const availableQuantity = roundDecimal(Number(candidate.quantity ?? 0));
       if (availableQuantity <= 0) {
         continue;
       }
 
-      const quantity = this.round2(Math.min(remaining, availableQuantity));
+      const quantity = roundDecimal(Math.min(remaining, availableQuantity));
       if (quantity <= 0) {
         continue;
       }
@@ -1352,18 +1352,18 @@ export class InventoryService {
         quantity,
         locationName: candidate.location?.name ?? null,
       });
-      remaining = this.round2(remaining - quantity);
+      remaining = roundDecimal(remaining - quantity);
     }
 
-    const allocatedQuantity = this.round2(
+    const allocatedQuantity = roundDecimal(
       allocations.reduce((sum, item) => sum + item.quantity, 0),
     );
 
     return {
       allocations,
-      requestedQuantity: this.round2(requestedQuantity),
+      requestedQuantity: roundDecimal(requestedQuantity),
       allocatedQuantity,
-      remainingQuantity: this.round2(
+      remainingQuantity: roundDecimal(
         Math.max(0, requestedQuantity - allocatedQuantity),
       ),
     };
@@ -1404,10 +1404,6 @@ export class InventoryService {
       locationName: candidate.location?.name ?? null,
       requestedQuantity,
     };
-  }
-
-  private round2(value: number) {
-    return roundDecimal(value);
   }
 
   private round4(value: Decimal.Value) {

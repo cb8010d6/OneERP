@@ -96,10 +96,6 @@ export class OrdersService {
     private readonly eventQueueService: EventQueueService,
   ) {}
 
-  private round2(value: number) {
-    return roundDecimal(value);
-  }
-
   private normalizeDiscountRate(requestedDiscount?: number) {
     if (requestedDiscount === undefined || requestedDiscount === null) {
       return 0;
@@ -132,7 +128,7 @@ export class OrdersService {
       throw new BadRequestException(`产品不存在或无权访问：${productId}`);
     }
 
-    const salePrice = this.round2(Number(product.listPrice ?? 0));
+    const salePrice = roundDecimal(Number(product.listPrice ?? 0));
     if (salePrice <= 0) {
       throw new BadRequestException(
         `产品 ${product.name} 未配置销售价，无法创建订单`,
@@ -180,9 +176,9 @@ export class OrdersService {
           approvalRequired = true;
         }
 
-        const lineBase = this.round2(item.quantity * baseUnitPrice);
-        const discountAmount = this.round2(lineBase * discountRate);
-        const discountedBase = this.round2(lineBase - discountAmount);
+        const lineBase = roundDecimal(item.quantity * baseUnitPrice);
+        const discountAmount = roundDecimal(lineBase * discountRate);
+        const discountedBase = roundDecimal(lineBase - discountAmount);
         const breakdown = this.calcTaxBreakdown(
           discountedBase,
           Number(resolvedTaxCode.rate ?? 0),
@@ -216,9 +212,9 @@ export class OrdersService {
 
     return {
       orderItems,
-      totalAmount: this.round2(totalAmount),
-      subTotal: this.round2(subTotal),
-      taxTotal: this.round2(taxTotal),
+      totalAmount: roundDecimal(totalAmount),
+      subTotal: roundDecimal(subTotal),
+      taxTotal: roundDecimal(taxTotal),
       approvalRequired,
     };
   }
@@ -230,18 +226,18 @@ export class OrdersService {
   ) {
     const safeRate = Math.max(0, Math.min(1, Number(taxRate ?? 0)));
     if (isTaxInclusive) {
-      const subTotal = this.round2(baseAmount / (1 + safeRate));
-      const taxAmount = this.round2(baseAmount - subTotal);
+      const subTotal = roundDecimal(baseAmount / (1 + safeRate));
+      const taxAmount = roundDecimal(baseAmount - subTotal);
       return {
         subTotal,
         taxAmount,
-        total: this.round2(baseAmount),
+        total: roundDecimal(baseAmount),
       };
     }
 
-    const subTotal = this.round2(baseAmount);
-    const taxAmount = this.round2(subTotal * safeRate);
-    const total = this.round2(subTotal + taxAmount);
+    const subTotal = roundDecimal(baseAmount);
+    const taxAmount = roundDecimal(subTotal * safeRate);
+    const total = roundDecimal(subTotal + taxAmount);
     return { subTotal, taxAmount, total };
   }
 
@@ -298,8 +294,8 @@ export class OrdersService {
         partnerId,
         status: approvalRequired ? 'PENDING_APPROVAL' : 'DRAFT',
         totalAmount,
-        subTotal: this.round2(subTotal),
-        taxTotal: this.round2(taxTotal),
+        subTotal: roundDecimal(subTotal),
+        taxTotal: roundDecimal(taxTotal),
         taxCodeId: baseTaxCode.id ?? null,
         aiSummary,
         expectedDate: expectedDate ? new Date(expectedDate) : null,
@@ -684,7 +680,7 @@ export class OrdersService {
       const current = onHandByMaterial.get(quant.materialId) ?? 0;
       onHandByMaterial.set(
         quant.materialId,
-        this.round2(current + Number(quant.quantity ?? 0)),
+        roundDecimal(current + Number(quant.quantity ?? 0)),
       );
     }
     return onHandByMaterial;
@@ -717,22 +713,22 @@ export class OrdersService {
       const current = productionByProduct.get(workOrder.productId) ?? 0;
       productionByProduct.set(
         workOrder.productId,
-        this.round2(current + openQty),
+        roundDecimal(current + openQty),
       );
     }
 
     return items.map((item): OrderFulfillmentAvailabilityLine => {
       const product = productMap.get(item.productId);
-      const orderedQty = this.round2(Number(item.quantity ?? 0));
+      const orderedQty = roundDecimal(Number(item.quantity ?? 0));
       const materialId = product?.materialId ?? null;
       const onHandQty = materialId
-        ? this.round2(onHandByMaterial.get(materialId) ?? 0)
+        ? roundDecimal(onHandByMaterial.get(materialId) ?? 0)
         : 0;
-      const inProductionQty = this.round2(
+      const inProductionQty = roundDecimal(
         productionByProduct.get(item.productId) ?? 0,
       );
-      const projectedQty = this.round2(onHandQty + inProductionQty);
-      const shortageQty = this.round2(Math.max(0, orderedQty - projectedQty));
+      const projectedQty = roundDecimal(onHandQty + inProductionQty);
+      const shortageQty = roundDecimal(Math.max(0, orderedQty - projectedQty));
       const status: OrderFulfillmentStatus = !materialId
         ? 'UNMAPPED'
         : onHandQty >= orderedQty
@@ -775,7 +771,7 @@ export class OrdersService {
         .length,
       unmappedLineCount: lines.filter((line) => line.status === 'UNMAPPED')
         .length,
-      totalShortageQty: this.round2(
+      totalShortageQty: roundDecimal(
         lines.reduce((sum, line) => sum + line.shortageQty, 0),
       ),
     };

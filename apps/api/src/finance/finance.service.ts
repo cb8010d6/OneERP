@@ -330,25 +330,21 @@ export class FinanceService {
     private readonly accountingPeriodService?: AccountingPeriodService,
   ) {}
 
-  private round2(value: number) {
-    return roundDecimal(value);
-  }
-
   private async assertAccountingPeriodOpen(companyId: string, date: Date) {
     await this.accountingPeriodService?.assertOpenForDate(companyId, date);
   }
 
   private calcTaxFromTotal(total: number, taxRate: number) {
     const safeRate = Math.max(0, Math.min(1, Number(taxRate ?? 0)));
-    const subTotal = this.round2(total / (1 + safeRate));
-    const taxAmount = this.round2(total - subTotal);
+    const subTotal = roundDecimal(total / (1 + safeRate));
+    const taxAmount = roundDecimal(total - subTotal);
     return { subTotal, taxAmount, taxRate: safeRate };
   }
 
   private paidAmount(
     allocations?: Array<{ amount: Prisma.Decimal | number | string }>,
   ) {
-    return this.round2(
+    return roundDecimal(
       (allocations ?? []).reduce(
         (sum, allocation) => sum + Number(allocation.amount),
         0,
@@ -362,7 +358,7 @@ export class FinanceService {
       postingStatus?: EntryPostingStatus;
     }>,
   ) {
-    return this.round2(
+    return roundDecimal(
       (creditNotes ?? [])
         .filter((creditNote) => creditNote.postingStatus === 'POSTED')
         .reduce((sum, creditNote) => sum + Number(creditNote.amount), 0),
@@ -375,7 +371,7 @@ export class FinanceService {
       postingStatus?: EntryPostingStatus;
     }>,
   ) {
-    return this.round2(
+    return roundDecimal(
       (refunds ?? [])
         .filter((refund) => refund.postingStatus === 'POSTED')
         .reduce((sum, refund) => sum + Number(refund.amount), 0),
@@ -387,8 +383,8 @@ export class FinanceService {
     paidAmount: number,
     creditedAmount: number,
   ) {
-    const settled = this.round2(paidAmount + creditedAmount);
-    if (settled >= this.round2(invoiceAmount - 0.01)) return 'PAID';
+    const settled = roundDecimal(paidAmount + creditedAmount);
+    if (settled >= roundDecimal(invoiceAmount - 0.01)) return 'PAID';
     if (settled > 0) return 'PARTIAL';
     return 'UNPAID';
   }
@@ -461,7 +457,7 @@ export class FinanceService {
       dto.taxCodeId ?? order.taxCodeId,
     );
 
-    const amount = this.round2(Number(dto.amount));
+    const amount = roundDecimal(Number(dto.amount));
     const breakdown = this.calcTaxFromTotal(
       amount,
       Number(resolvedTaxCode.rate ?? 0),
@@ -549,19 +545,19 @@ export class FinanceService {
       throw new BadRequestException('发票尚未过账，不能登记收款');
     }
 
-    const paymentAmount = this.round2(Number(dto.amount));
+    const paymentAmount = roundDecimal(Number(dto.amount));
     if (paymentAmount <= 0) {
       throw new BadRequestException('收款金额必须大于0');
     }
 
     const existingPaid = this.paidAmount(inv.paymentAllocations);
     const existingCredited = this.postedCreditAmount(inv.creditNotes);
-    const totalPaid = this.round2(existingPaid + paymentAmount);
-    const invoiceAmount = this.round2(Number(inv.amount));
+    const totalPaid = roundDecimal(existingPaid + paymentAmount);
+    const invoiceAmount = roundDecimal(Number(inv.amount));
 
     if (
-      this.round2(totalPaid + existingCredited) >
-      this.round2(invoiceAmount + 0.01)
+      roundDecimal(totalPaid + existingCredited) >
+      roundDecimal(invoiceAmount + 0.01)
     ) {
       throw new BadRequestException('收款金额超过发票剩余应收');
     }
@@ -632,14 +628,14 @@ export class FinanceService {
       throw new BadRequestException('客户不存在或已停用');
     }
 
-    const paymentAmount = this.round2(Number(dto.amount));
+    const paymentAmount = roundDecimal(Number(dto.amount));
     if (paymentAmount <= 0) {
       throw new BadRequestException('收款金额必须大于0');
     }
 
     const allocationMap = new Map<string, number>();
     for (const allocation of dto.allocations ?? []) {
-      const amount = this.round2(Number(allocation.amount));
+      const amount = roundDecimal(Number(allocation.amount));
       if (amount <= 0) {
         throw new BadRequestException('核销金额必须大于0');
       }
@@ -649,7 +645,7 @@ export class FinanceService {
       allocationMap.set(allocation.invoiceId, amount);
     }
 
-    const allocatedTotal = this.round2(
+    const allocatedTotal = roundDecimal(
       [...allocationMap.values()].reduce((sum, amount) => sum + amount, 0),
     );
     if (allocatedTotal > paymentAmount) {
@@ -688,10 +684,10 @@ export class FinanceService {
       const allocated = allocationMap.get(invoice.id) ?? 0;
       const existingPaid = this.paidAmount(invoice.paymentAllocations);
       const existingCredited = this.postedCreditAmount(invoice.creditNotes);
-      const invoiceAmount = this.round2(Number(invoice.amount));
+      const invoiceAmount = roundDecimal(Number(invoice.amount));
       if (
-        this.round2(existingPaid + existingCredited + allocated) >
-        this.round2(invoiceAmount + 0.01)
+        roundDecimal(existingPaid + existingCredited + allocated) >
+        roundDecimal(invoiceAmount + 0.01)
       ) {
         throw new BadRequestException(
           `发票 ${invoice.invoiceNo} 核销金额超过未结应收`,
@@ -726,8 +722,8 @@ export class FinanceService {
         const allocated = allocationMap.get(invoice.id) ?? 0;
         const existingPaid = this.paidAmount(invoice.paymentAllocations);
         const existingCredited = this.postedCreditAmount(invoice.creditNotes);
-        const totalPaid = this.round2(existingPaid + allocated);
-        const invoiceAmount = this.round2(Number(invoice.amount));
+        const totalPaid = roundDecimal(existingPaid + allocated);
+        const invoiceAmount = roundDecimal(Number(invoice.amount));
         const status = this.settlementStatus(
           invoiceAmount,
           totalPaid,
@@ -768,8 +764,8 @@ export class FinanceService {
 
     const rows = payments
       .map((payment) => {
-        const amount = this.round2(Number(payment.amount));
-        const allocatedAmount = this.round2(
+        const amount = roundDecimal(Number(payment.amount));
+        const allocatedAmount = roundDecimal(
           payment.allocations.reduce(
             (sum, allocation) => sum + Number(allocation.amount),
             0,
@@ -783,7 +779,7 @@ export class FinanceService {
           method: payment.method,
           amount,
           allocatedAmount,
-          unappliedAmount: this.round2(amount - allocatedAmount),
+          unappliedAmount: roundDecimal(amount - allocatedAmount),
           postingStatus: payment.postingStatus,
         };
       })
@@ -915,7 +911,7 @@ export class FinanceService {
         description: invoice.order.orderNo
           ? `销售发票 / ${invoice.order.orderNo}`
           : '销售发票',
-        debit: this.round2(Number(invoice.amount ?? 0)),
+        debit: roundDecimal(Number(invoice.amount ?? 0)),
         credit: 0,
       })),
       ...payments.map((payment) => ({
@@ -929,7 +925,7 @@ export class FinanceService {
         date: payment.paymentDate.toISOString(),
         description: `客户收款 / ${payment.method}`,
         debit: 0,
-        credit: this.round2(Number(payment.amount ?? 0)),
+        credit: roundDecimal(Number(payment.amount ?? 0)),
       })),
       ...creditNotes.map((creditNote) => ({
         partnerId: creditNote.partner.id,
@@ -944,7 +940,7 @@ export class FinanceService {
           ? `贷项冲减 / ${creditNote.invoice.invoiceNo}`
           : '贷项冲减',
         debit: 0,
-        credit: this.round2(Number(creditNote.amount ?? 0)),
+        credit: roundDecimal(Number(creditNote.amount ?? 0)),
       })),
       ...refunds.map((refund) => ({
         partnerId: refund.partner.id,
@@ -958,7 +954,7 @@ export class FinanceService {
         description: refund.creditNote.creditNo
           ? `客户退款 / ${refund.creditNote.creditNo}`
           : '客户退款',
-        debit: this.round2(Number(refund.amount ?? 0)),
+        debit: roundDecimal(Number(refund.amount ?? 0)),
         credit: 0,
       })),
     ].sort(
@@ -982,19 +978,19 @@ export class FinanceService {
       };
       partnersById.set(line.partnerId, partner);
 
-      const net = this.round2(line.debit - line.credit);
+      const net = roundDecimal(line.debit - line.credit);
       if (
         parsedStartDate &&
         line.occurredAt.getTime() < parsedStartDate.getTime()
       ) {
-        partner.openingBalance = this.round2(partner.openingBalance + net);
+        partner.openingBalance = roundDecimal(partner.openingBalance + net);
         partner.endingBalance = partner.openingBalance;
         continue;
       }
 
-      partner.periodDebit = this.round2(partner.periodDebit + line.debit);
-      partner.periodCredit = this.round2(partner.periodCredit + line.credit);
-      partner.endingBalance = this.round2(partner.endingBalance + net);
+      partner.periodDebit = roundDecimal(partner.periodDebit + line.debit);
+      partner.periodCredit = roundDecimal(partner.periodCredit + line.credit);
+      partner.endingBalance = roundDecimal(partner.endingBalance + net);
       partner.lines.push({
         sourceType: line.sourceType,
         sourceId: line.sourceId,
@@ -1010,7 +1006,7 @@ export class FinanceService {
     const partners = [...partnersById.values()]
       .map((partner) => ({
         ...partner,
-        endingBalance: this.round2(
+        endingBalance: roundDecimal(
           partner.openingBalance + partner.periodDebit - partner.periodCredit,
         ),
       }))
@@ -1027,16 +1023,16 @@ export class FinanceService {
       startDate: parsedStartDate?.toISOString() ?? null,
       endDate: parsedEndDate.toISOString(),
       partnerId: normalizedPartnerId ?? null,
-      totalOpeningBalance: this.round2(
+      totalOpeningBalance: roundDecimal(
         partners.reduce((sum, partner) => sum + partner.openingBalance, 0),
       ),
-      totalDebit: this.round2(
+      totalDebit: roundDecimal(
         partners.reduce((sum, partner) => sum + partner.periodDebit, 0),
       ),
-      totalCredit: this.round2(
+      totalCredit: roundDecimal(
         partners.reduce((sum, partner) => sum + partner.periodCredit, 0),
       ),
-      totalEndingBalance: this.round2(
+      totalEndingBalance: roundDecimal(
         partners.reduce((sum, partner) => sum + partner.endingBalance, 0),
       ),
       partners,
@@ -1064,7 +1060,7 @@ export class FinanceService {
       if (Number.isNaN(transactionDate.getTime())) {
         throw new BadRequestException('银行流水交易日期无效');
       }
-      const amount = this.round2(Number(line.amount));
+      const amount = roundDecimal(Number(line.amount));
       if (amount === 0) {
         throw new BadRequestException('银行流水金额不能为0');
       }
@@ -1150,7 +1146,7 @@ export class FinanceService {
     companyId: string,
     line: { amount: Prisma.Decimal | number | string; transactionDate: Date },
   ) {
-    const amount = this.round2(Number(line.amount));
+    const amount = roundDecimal(Number(line.amount));
     if (amount > 0) {
       const payments = await this.prisma.payment.findMany({
         where: {
@@ -1169,7 +1165,7 @@ export class FinanceService {
         targetType: 'CUSTOMER_PAYMENT' as const,
         targetId: payment.id,
         label: payment.partner.name,
-        amount: this.round2(Number(payment.amount)),
+        amount: roundDecimal(Number(payment.amount)),
         date: payment.paymentDate.toISOString(),
       }));
     }
@@ -1178,7 +1174,7 @@ export class FinanceService {
       where: {
         companyId,
         postingStatus: EntryPostingStatus.POSTED,
-        amount: this.round2(Math.abs(amount)),
+        amount: roundDecimal(Math.abs(amount)),
         bankStatementLines: {
           none: { status: BankStatementLineStatus.MATCHED },
         },
@@ -1191,7 +1187,7 @@ export class FinanceService {
       targetType: 'SUPPLIER_PAYMENT' as const,
       targetId: payment.id,
       label: payment.supplier.name,
-      amount: this.round2(Number(payment.amount)),
+      amount: roundDecimal(Number(payment.amount)),
       date: payment.paymentDate.toISOString(),
     }));
   }
@@ -1266,7 +1262,7 @@ export class FinanceService {
       throw new BadRequestException('银行流水已匹配');
     }
 
-    const amount = this.round2(Number(line.amount));
+    const amount = roundDecimal(Number(line.amount));
     if (dto.targetType === 'CUSTOMER_PAYMENT') {
       const payment = await this.prisma.payment.findFirst({
         where: { id: dto.targetId, companyId },
@@ -1278,7 +1274,7 @@ export class FinanceService {
       if (payment.postingStatus !== EntryPostingStatus.POSTED) {
         throw new BadRequestException('客户收款尚未过账，不能匹配银行流水');
       }
-      if (amount <= 0 || this.round2(Number(payment.amount)) !== amount) {
+      if (amount <= 0 || roundDecimal(Number(payment.amount)) !== amount) {
         throw new BadRequestException('银行流水金额与客户收款金额不一致');
       }
       return this.prisma.bankStatementLine.update({
@@ -1305,8 +1301,8 @@ export class FinanceService {
     }
     if (
       amount >= 0 ||
-      this.round2(Number(supplierPayment.amount)) !==
-        this.round2(Math.abs(amount))
+      roundDecimal(Number(supplierPayment.amount)) !==
+        roundDecimal(Math.abs(amount))
     ) {
       throw new BadRequestException('银行流水金额与供应商付款金额不一致');
     }
@@ -1341,7 +1337,7 @@ export class FinanceService {
 
     const allocationMap = new Map<string, number>();
     for (const allocation of dto.allocations) {
-      const amount = this.round2(Number(allocation.amount));
+      const amount = roundDecimal(Number(allocation.amount));
       if (amount <= 0) {
         throw new BadRequestException('核销金额必须大于0');
       }
@@ -1351,23 +1347,23 @@ export class FinanceService {
       allocationMap.set(allocation.invoiceId, amount);
     }
 
-    const allocatedTotal = this.round2(
+    const allocatedTotal = roundDecimal(
       [...allocationMap.values()].reduce((sum, amount) => sum + amount, 0),
     );
     if (allocatedTotal <= 0) {
       throw new BadRequestException('核销金额必须大于0');
     }
 
-    const existingAllocated = this.round2(
+    const existingAllocated = roundDecimal(
       payment.allocations.reduce(
         (sum, allocation) => sum + Number(allocation.amount),
         0,
       ),
     );
-    const unappliedAmount = this.round2(
+    const unappliedAmount = roundDecimal(
       Number(payment.amount) - existingAllocated,
     );
-    if (allocatedTotal > this.round2(unappliedAmount + 0.01)) {
+    if (allocatedTotal > roundDecimal(unappliedAmount + 0.01)) {
       throw new BadRequestException('核销金额超过未分配收款余额');
     }
 
@@ -1398,10 +1394,10 @@ export class FinanceService {
       const allocated = allocationMap.get(invoice.id) ?? 0;
       const existingPaid = this.paidAmount(invoice.paymentAllocations);
       const existingCredited = this.postedCreditAmount(invoice.creditNotes);
-      const invoiceAmount = this.round2(Number(invoice.amount));
+      const invoiceAmount = roundDecimal(Number(invoice.amount));
       if (
-        this.round2(existingPaid + existingCredited + allocated) >
-        this.round2(invoiceAmount + 0.01)
+        roundDecimal(existingPaid + existingCredited + allocated) >
+        roundDecimal(invoiceAmount + 0.01)
       ) {
         throw new BadRequestException(
           `发票 ${invoice.invoiceNo} 核销金额超过未结应收`,
@@ -1427,8 +1423,8 @@ export class FinanceService {
         const allocated = allocationMap.get(invoice.id) ?? 0;
         const existingPaid = this.paidAmount(invoice.paymentAllocations);
         const existingCredited = this.postedCreditAmount(invoice.creditNotes);
-        const totalPaid = this.round2(existingPaid + allocated);
-        const invoiceAmount = this.round2(Number(invoice.amount));
+        const totalPaid = roundDecimal(existingPaid + allocated);
+        const invoiceAmount = roundDecimal(Number(invoice.amount));
         const status = this.settlementStatus(
           invoiceAmount,
           totalPaid,
@@ -1484,15 +1480,15 @@ export class FinanceService {
       throw new BadRequestException('发票尚未过账，不能创建贷项凭证');
     }
 
-    const amount = this.round2(Number(dto.amount));
+    const amount = roundDecimal(Number(dto.amount));
     if (amount <= 0) {
       throw new BadRequestException('贷项金额必须大于0');
     }
 
     const creditedAmount = this.postedCreditAmount(invoice.creditNotes);
-    const invoiceAmount = this.round2(Number(invoice.amount));
-    const creditableAmount = this.round2(invoiceAmount - creditedAmount);
-    if (amount > this.round2(creditableAmount + 0.01)) {
+    const invoiceAmount = roundDecimal(Number(invoice.amount));
+    const creditableAmount = roundDecimal(invoiceAmount - creditedAmount);
+    if (amount > roundDecimal(creditableAmount + 0.01)) {
       throw new BadRequestException('贷项金额超过发票可冲减金额');
     }
 
@@ -1649,32 +1645,32 @@ export class FinanceService {
     }
     await this.assertAccountingPeriodOpen(companyId, creditNote.creditDate);
 
-    const invoiceAmount = this.round2(Number(creditNote.invoice.amount));
+    const invoiceAmount = roundDecimal(Number(creditNote.invoice.amount));
     const paidAmount = this.paidAmount(creditNote.invoice.paymentAllocations);
     const creditedAmount = this.postedCreditAmount(
       creditNote.invoice.creditNotes,
     );
-    const amount = this.round2(Number(creditNote.amount));
+    const amount = roundDecimal(Number(creditNote.amount));
     if (
-      this.round2(creditedAmount + amount) > this.round2(invoiceAmount + 0.01)
+      roundDecimal(creditedAmount + amount) > roundDecimal(invoiceAmount + 0.01)
     ) {
       throw new BadRequestException('贷项金额超过发票可冲减金额');
     }
 
-    const openReceivable = this.round2(
+    const openReceivable = roundDecimal(
       Math.max(0, invoiceAmount - paidAmount - creditedAmount),
     );
-    const receivableAppliedAmount = this.round2(
+    const receivableAppliedAmount = roundDecimal(
       Math.min(amount, openReceivable),
     );
-    const refundLiabilityAmount = this.round2(
+    const refundLiabilityAmount = roundDecimal(
       Math.max(0, amount - receivableAppliedAmount),
     );
 
     const status = this.settlementStatus(
       invoiceAmount,
       paidAmount,
-      this.round2(creditedAmount + receivableAppliedAmount),
+      roundDecimal(creditedAmount + receivableAppliedAmount),
     );
     const posted = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.creditNote.update({
@@ -1740,16 +1736,16 @@ export class FinanceService {
       throw new BadRequestException('贷项凭证尚未过账，不能退款');
     }
 
-    const amount = this.round2(Number(dto.amount));
+    const amount = roundDecimal(Number(dto.amount));
     if (amount <= 0) {
       throw new BadRequestException('退款金额必须大于0');
     }
 
     const refundedAmount = this.postedRefundAmount(creditNote.refunds);
-    const refundableAmount = this.round2(
+    const refundableAmount = roundDecimal(
       Number(creditNote.refundLiabilityAmount) - refundedAmount,
     );
-    if (amount > this.round2(refundableAmount + 0.01)) {
+    if (amount > roundDecimal(refundableAmount + 0.01)) {
       throw new BadRequestException('退款金额超过可退余额');
     }
 
@@ -1849,11 +1845,11 @@ export class FinanceService {
     await this.assertAccountingPeriodOpen(companyId, refund.refundDate);
 
     const refundedAmount = this.postedRefundAmount(refund.creditNote.refunds);
-    const refundableAmount = this.round2(
+    const refundableAmount = roundDecimal(
       Number(refund.creditNote.refundLiabilityAmount) - refundedAmount,
     );
-    const amount = this.round2(Number(refund.amount));
-    if (amount > this.round2(refundableAmount + 0.01)) {
+    const amount = roundDecimal(Number(refund.amount));
+    if (amount > roundDecimal(refundableAmount + 0.01)) {
       throw new BadRequestException('退款金额超过可退余额');
     }
 
@@ -1921,9 +1917,9 @@ export class FinanceService {
       companyId,
       taxCodeId ?? invoice.taxCodeId ?? invoice.order?.taxCodeId,
     );
-    const amount = this.round2(Number(invoice.amount));
-    let subTotal = this.round2(Number(invoice.subTotal ?? 0));
-    let taxAmount = this.round2(Number(invoice.taxAmount ?? 0));
+    const amount = roundDecimal(Number(invoice.amount));
+    let subTotal = roundDecimal(Number(invoice.subTotal ?? 0));
+    let taxAmount = roundDecimal(Number(invoice.taxAmount ?? 0));
     const shouldRecalc = subTotal <= 0 && taxAmount <= 0 && amount > 0;
 
     if (shouldRecalc) {
@@ -2182,20 +2178,20 @@ export class FinanceService {
         materialId: cost.materialId,
         sku: cost.material.sku,
         name: cost.material.name,
-        quantityOnHand: this.round2(Number(cost.quantityOnHand ?? 0)),
-        averageCost: this.round2(Number(cost.averageCost ?? 0)),
-        inventoryValue: this.round2(Number(cost.inventoryValue ?? 0)),
+        quantityOnHand: roundDecimal(Number(cost.quantityOnHand ?? 0)),
+        averageCost: roundDecimal(Number(cost.averageCost ?? 0)),
+        inventoryValue: roundDecimal(Number(cost.inventoryValue ?? 0)),
       }));
-    const inventoryValue = this.round2(
+    const inventoryValue = roundDecimal(
       rows.reduce((sum, row) => sum + row.inventoryValue, 0),
     );
-    const generalLedgerBalance = this.round2(
+    const generalLedgerBalance = roundDecimal(
       glLines.reduce(
         (sum, line) => sum + Number(line.debit ?? 0) - Number(line.credit ?? 0),
         0,
       ),
     );
-    const difference = this.round2(inventoryValue - generalLedgerBalance);
+    const difference = roundDecimal(inventoryValue - generalLedgerBalance);
 
     return {
       asOfDate: new Date().toISOString(),
@@ -2212,8 +2208,8 @@ export class FinanceService {
       rows,
       diagnostics: {
         recentGeneralLedgerLines: recentGeneralLedgerLines.map((line) => {
-          const debit = this.round2(Number(line.debit ?? 0));
-          const credit = this.round2(Number(line.credit ?? 0));
+          const debit = roundDecimal(Number(line.debit ?? 0));
+          const credit = roundDecimal(Number(line.credit ?? 0));
           return {
             journalEntryId: line.journalEntryId,
             entryNo: line.journalEntry.entryNo,
@@ -2223,7 +2219,7 @@ export class FinanceService {
             memo: line.memo,
             debit,
             credit,
-            balance: this.round2(debit - credit),
+            balance: roundDecimal(debit - credit),
           };
         }),
         pendingEvents: pendingEvents.map((event) => ({
@@ -2245,7 +2241,7 @@ export class FinanceService {
             purchaseNo: invoice.purchaseOrder.purchaseNo,
             supplierName: invoice.supplier.name,
             issuedDate: invoice.issuedDate.toISOString(),
-            amount: this.round2(Number(invoice.amount ?? 0)),
+            amount: roundDecimal(Number(invoice.amount ?? 0)),
             postingStatus: invoice.postingStatus,
             matchStatus: match.status,
             isPostable: match.isPostable,
@@ -2276,14 +2272,14 @@ export class FinanceService {
   }) {
     const tolerance = 0.01;
     const items = invoice.purchaseOrder.items ?? [];
-    const orderedAmount = this.round2(
+    const orderedAmount = roundDecimal(
       items.reduce(
         (sum, item) =>
           sum + Number(item.quantity ?? 0) * Number(item.unitPrice ?? 0),
         0,
       ),
     );
-    const receivedAmount = this.round2(
+    const receivedAmount = roundDecimal(
       items.reduce(
         (sum, item) =>
           sum + Number(item.receivedQty ?? 0) * Number(item.unitPrice ?? 0),
@@ -2301,7 +2297,7 @@ export class FinanceService {
     const invoices = invoice.purchaseOrder.invoices?.length
       ? invoice.purchaseOrder.invoices
       : [invoice];
-    const invoicedAmount = this.round2(
+    const invoicedAmount = roundDecimal(
       invoices.reduce((sum, payableInvoice) => {
         const subTotal = Number(payableInvoice.subTotal ?? 0);
         const fallbackAmount =
@@ -2310,7 +2306,7 @@ export class FinanceService {
         return sum + (subTotal > 0 ? subTotal : fallbackAmount);
       }, 0),
     );
-    const amountVariance = this.round2(invoicedAmount - receivedAmount);
+    const amountVariance = roundDecimal(invoicedAmount - receivedAmount);
     const reasons: string[] = [];
 
     if (hasOverReceipt) {
@@ -2380,10 +2376,10 @@ export class FinanceService {
     const rows: ReceivableAgingRow[] = [];
 
     for (const invoice of invoices) {
-      const amount = this.round2(Number(invoice.amount));
+      const amount = roundDecimal(Number(invoice.amount));
       const paidAmount = this.paidAmount(invoice.paymentAllocations);
       const creditedAmount = this.postedCreditAmount(invoice.creditNotes);
-      const openAmount = this.round2(amount - paidAmount - creditedAmount);
+      const openAmount = roundDecimal(amount - paidAmount - creditedAmount);
       if (openAmount <= 0) continue;
 
       const dueDate = invoice.dueDate ?? null;
@@ -2398,17 +2394,17 @@ export class FinanceService {
         : 0;
       const bucket = this.receivableBucket(daysOverdue, dueDate);
 
-      totals.totalOpen = this.round2(totals.totalOpen + openAmount);
+      totals.totalOpen = roundDecimal(totals.totalOpen + openAmount);
       if (bucket === 'CURRENT')
-        totals.current = this.round2(totals.current + openAmount);
+        totals.current = roundDecimal(totals.current + openAmount);
       if (bucket === 'DAYS_1_30')
-        totals.days1To30 = this.round2(totals.days1To30 + openAmount);
+        totals.days1To30 = roundDecimal(totals.days1To30 + openAmount);
       if (bucket === 'DAYS_31_60')
-        totals.days31To60 = this.round2(totals.days31To60 + openAmount);
+        totals.days31To60 = roundDecimal(totals.days31To60 + openAmount);
       if (bucket === 'DAYS_61_90')
-        totals.days61To90 = this.round2(totals.days61To90 + openAmount);
+        totals.days61To90 = roundDecimal(totals.days61To90 + openAmount);
       if (bucket === 'DAYS_90_PLUS')
-        totals.days90Plus = this.round2(totals.days90Plus + openAmount);
+        totals.days90Plus = roundDecimal(totals.days90Plus + openAmount);
 
       rows.push({
         invoiceId: invoice.id,
@@ -2451,8 +2447,8 @@ export class FinanceService {
     credit: number,
   ) {
     return type === 'REVENUE'
-      ? this.round2(credit - debit)
-      : this.round2(debit - credit);
+      ? roundDecimal(credit - debit)
+      : roundDecimal(debit - credit);
   }
 
   private balanceSheetAmount(
@@ -2461,14 +2457,14 @@ export class FinanceService {
     credit: number,
   ) {
     return type === 'ASSET'
-      ? this.round2(debit - credit)
-      : this.round2(credit - debit);
+      ? roundDecimal(debit - credit)
+      : roundDecimal(credit - debit);
   }
 
   private accountBalanceEffect(type: string, debit: number, credit: number) {
     return type === 'LIABILITY' || type === 'EQUITY' || type === 'REVENUE'
-      ? this.round2(credit - debit)
-      : this.round2(debit - credit);
+      ? roundDecimal(credit - debit)
+      : roundDecimal(debit - credit);
   }
 
   private cashFlowCategory(

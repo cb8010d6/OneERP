@@ -142,10 +142,6 @@ export class FinanceReportsService {
     private readonly financeAccountMappingService: FinanceAccountMappingService,
   ) {}
 
-  private round2(value: number) {
-    return roundDecimal(value);
-  }
-
   private parseTrialBalanceDate(
     value: string | undefined,
     fieldName: 'startDate' | 'endDate',
@@ -263,10 +259,10 @@ export class FinanceReportsService {
 
     const rows: TrialBalanceRow[] = aggregated
       .map((r) => {
-        const debit = this.round2(Number(r._sum.debit ?? 0));
-        const credit = this.round2(Number(r._sum.credit ?? 0));
-        totalDebit = this.round2(totalDebit + debit);
-        totalCredit = this.round2(totalCredit + credit);
+        const debit = roundDecimal(Number(r._sum.debit ?? 0));
+        const credit = roundDecimal(Number(r._sum.credit ?? 0));
+        totalDebit = roundDecimal(totalDebit + debit);
+        totalCredit = roundDecimal(totalCredit + credit);
         const account = accountMap.get(r.accountId)!;
         return {
           accountId: r.accountId,
@@ -275,12 +271,12 @@ export class FinanceReportsService {
           type: account.type,
           debit,
           credit,
-          balance: this.round2(debit - credit),
+          balance: roundDecimal(debit - credit),
         };
       })
       .sort((a, b) => a.code.localeCompare(b.code));
 
-    const difference = this.round2(totalDebit - totalCredit);
+    const difference = roundDecimal(totalDebit - totalCredit);
 
     return {
       startDate: parsedStartDate?.toISOString() ?? null,
@@ -352,8 +348,8 @@ export class FinanceReportsService {
       };
       accountsById.set(line.accountId, account);
 
-      const debit = this.round2(Number(line.debit ?? 0));
-      const credit = this.round2(Number(line.credit ?? 0));
+      const debit = roundDecimal(Number(line.debit ?? 0));
+      const credit = roundDecimal(Number(line.credit ?? 0));
       const balanceEffect = this.accountBalanceEffect(
         line.account.type,
         debit,
@@ -362,16 +358,16 @@ export class FinanceReportsService {
       const lineDate = line.journalEntry.date;
 
       if (parsedStartDate && lineDate.getTime() < parsedStartDate.getTime()) {
-        account.openingBalance = this.round2(
+        account.openingBalance = roundDecimal(
           account.openingBalance + balanceEffect,
         );
         account.endingBalance = account.openingBalance;
         continue;
       }
 
-      account.periodDebit = this.round2(account.periodDebit + debit);
-      account.periodCredit = this.round2(account.periodCredit + credit);
-      account.endingBalance = this.round2(
+      account.periodDebit = roundDecimal(account.periodDebit + debit);
+      account.periodCredit = roundDecimal(account.periodCredit + credit);
+      account.endingBalance = roundDecimal(
         account.endingBalance + balanceEffect,
       );
       account.lines.push({
@@ -393,7 +389,7 @@ export class FinanceReportsService {
     const accounts = [...accountsById.values()]
       .map((account) => ({
         ...account,
-        endingBalance: this.round2(
+        endingBalance: roundDecimal(
           account.openingBalance +
             this.accountBalanceEffect(
               account.type,
@@ -415,16 +411,16 @@ export class FinanceReportsService {
       startDate: parsedStartDate?.toISOString() ?? null,
       endDate: parsedEndDate.toISOString(),
       accountCode: normalizedAccountCode ?? null,
-      totalOpeningBalance: this.round2(
+      totalOpeningBalance: roundDecimal(
         accounts.reduce((sum, account) => sum + account.openingBalance, 0),
       ),
-      totalDebit: this.round2(
+      totalDebit: roundDecimal(
         accounts.reduce((sum, account) => sum + account.periodDebit, 0),
       ),
-      totalCredit: this.round2(
+      totalCredit: roundDecimal(
         accounts.reduce((sum, account) => sum + account.periodCredit, 0),
       ),
-      totalEndingBalance: this.round2(
+      totalEndingBalance: roundDecimal(
         accounts.reduce((sum, account) => sum + account.endingBalance, 0),
       ),
       accounts,
@@ -468,14 +464,14 @@ export class FinanceReportsService {
 
     const rowsByAccount = new Map<string, IncomeStatementRow>();
     for (const line of lines) {
-      const debit = this.round2(Number(line.debit ?? 0));
-      const credit = this.round2(Number(line.credit ?? 0));
+      const debit = roundDecimal(Number(line.debit ?? 0));
+      const credit = roundDecimal(Number(line.credit ?? 0));
       const type = line.account.type === 'REVENUE' ? 'REVENUE' : 'EXPENSE';
       const existing = rowsByAccount.get(line.accountId);
 
       if (existing) {
-        existing.debit = this.round2(existing.debit + debit);
-        existing.credit = this.round2(existing.credit + credit);
+        existing.debit = roundDecimal(existing.debit + debit);
+        existing.credit = roundDecimal(existing.credit + credit);
         existing.amount = this.incomeStatementAmount(
           existing.type,
           existing.debit,
@@ -498,12 +494,12 @@ export class FinanceReportsService {
     const rows = [...rowsByAccount.values()].sort((a, b) =>
       a.code.localeCompare(b.code),
     );
-    const totalRevenue = this.round2(
+    const totalRevenue = roundDecimal(
       rows
         .filter((row) => row.type === 'REVENUE')
         .reduce((sum, row) => sum + row.amount, 0),
     );
-    const totalExpense = this.round2(
+    const totalExpense = roundDecimal(
       rows
         .filter((row) => row.type === 'EXPENSE')
         .reduce((sum, row) => sum + row.amount, 0),
@@ -514,7 +510,7 @@ export class FinanceReportsService {
       endDate: parsedEndDate?.toISOString() ?? null,
       totalRevenue,
       totalExpense,
-      netIncome: this.round2(totalRevenue - totalExpense),
+      netIncome: roundDecimal(totalRevenue - totalExpense),
       rows,
     };
   }
@@ -543,18 +539,18 @@ export class FinanceReportsService {
     let totalExpense = 0;
 
     for (const line of lines) {
-      const debit = this.round2(Number(line.debit ?? 0));
-      const credit = this.round2(Number(line.credit ?? 0));
+      const debit = roundDecimal(Number(line.debit ?? 0));
+      const credit = roundDecimal(Number(line.credit ?? 0));
       const accountType = line.account.type;
 
       if (accountType === 'REVENUE') {
-        totalRevenue = this.round2(
+        totalRevenue = roundDecimal(
           totalRevenue + this.incomeStatementAmount('REVENUE', debit, credit),
         );
         continue;
       }
       if (accountType === 'EXPENSE') {
-        totalExpense = this.round2(
+        totalExpense = roundDecimal(
           totalExpense + this.incomeStatementAmount('EXPENSE', debit, credit),
         );
         continue;
@@ -569,8 +565,8 @@ export class FinanceReportsService {
 
       const existing = rowsByAccount.get(line.accountId);
       if (existing) {
-        existing.debit = this.round2(existing.debit + debit);
-        existing.credit = this.round2(existing.credit + credit);
+        existing.debit = roundDecimal(existing.debit + debit);
+        existing.credit = roundDecimal(existing.credit + credit);
         existing.amount = this.balanceSheetAmount(
           existing.type,
           existing.debit,
@@ -593,26 +589,26 @@ export class FinanceReportsService {
     const rows = [...rowsByAccount.values()].sort((a, b) =>
       a.code.localeCompare(b.code),
     );
-    const totalAssets = this.round2(
+    const totalAssets = roundDecimal(
       rows
         .filter((row) => row.type === 'ASSET')
         .reduce((sum, row) => sum + row.amount, 0),
     );
-    const totalLiabilities = this.round2(
+    const totalLiabilities = roundDecimal(
       rows
         .filter((row) => row.type === 'LIABILITY')
         .reduce((sum, row) => sum + row.amount, 0),
     );
-    const totalEquity = this.round2(
+    const totalEquity = roundDecimal(
       rows
         .filter((row) => row.type === 'EQUITY')
         .reduce((sum, row) => sum + row.amount, 0),
     );
-    const currentEarnings = this.round2(totalRevenue - totalExpense);
-    const totalLiabilitiesAndEquity = this.round2(
+    const currentEarnings = roundDecimal(totalRevenue - totalExpense);
+    const totalLiabilitiesAndEquity = roundDecimal(
       totalLiabilities + totalEquity + currentEarnings,
     );
-    const difference = this.round2(totalAssets - totalLiabilitiesAndEquity);
+    const difference = roundDecimal(totalAssets - totalLiabilitiesAndEquity);
 
     return {
       asOfDate: parsedAsOfDate.toISOString(),
@@ -690,18 +686,18 @@ export class FinanceReportsService {
     const rows: CashFlowRow[] = [];
 
     for (const line of lines) {
-      const cashInflow = this.round2(Number(line.debit ?? 0));
-      const cashOutflow = this.round2(Number(line.credit ?? 0));
-      const netCashFlow = this.round2(cashInflow - cashOutflow);
+      const cashInflow = roundDecimal(Number(line.debit ?? 0));
+      const cashOutflow = roundDecimal(Number(line.credit ?? 0));
+      const netCashFlow = roundDecimal(cashInflow - cashOutflow);
       const lineDate = line.journalEntry.date;
 
       if (parsedStartDate && lineDate.getTime() < parsedStartDate.getTime()) {
-        beginningCash = this.round2(beginningCash + netCashFlow);
+        beginningCash = roundDecimal(beginningCash + netCashFlow);
         continue;
       }
 
-      totalCashInflow = this.round2(totalCashInflow + cashInflow);
-      totalCashOutflow = this.round2(totalCashOutflow + cashOutflow);
+      totalCashInflow = roundDecimal(totalCashInflow + cashInflow);
+      totalCashOutflow = roundDecimal(totalCashOutflow + cashOutflow);
       rows.push({
         journalEntryId: line.journalEntryId,
         entryNo: line.journalEntry.entryNo,
@@ -720,22 +716,22 @@ export class FinanceReportsService {
       });
     }
 
-    const operatingCashFlow = this.round2(
+    const operatingCashFlow = roundDecimal(
       rows
         .filter((row) => row.category === 'OPERATING')
         .reduce((sum, row) => sum + row.netCashFlow, 0),
     );
-    const investingCashFlow = this.round2(
+    const investingCashFlow = roundDecimal(
       rows
         .filter((row) => row.category === 'INVESTING')
         .reduce((sum, row) => sum + row.netCashFlow, 0),
     );
-    const financingCashFlow = this.round2(
+    const financingCashFlow = roundDecimal(
       rows
         .filter((row) => row.category === 'FINANCING')
         .reduce((sum, row) => sum + row.netCashFlow, 0),
     );
-    const netCashFlow = this.round2(totalCashInflow - totalCashOutflow);
+    const netCashFlow = roundDecimal(totalCashInflow - totalCashOutflow);
 
     return {
       startDate: parsedStartDate?.toISOString() ?? null,
@@ -747,7 +743,7 @@ export class FinanceReportsService {
       investingCashFlow,
       financingCashFlow,
       netCashFlow,
-      endingCash: this.round2(beginningCash + netCashFlow),
+      endingCash: roundDecimal(beginningCash + netCashFlow),
       cashAccountCodes,
       rows,
     };
