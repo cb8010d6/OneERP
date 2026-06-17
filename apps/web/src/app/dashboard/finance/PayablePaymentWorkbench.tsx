@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BanknoteArrowUp, Loader2, RefreshCw, Wand2 } from "lucide-react";
 import api from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { roundMoney } from "@/lib/money";
 import { useAuthStore } from "@/store/authStore";
 
 type PayableRow = {
@@ -50,10 +51,6 @@ function money(value: number) {
   });
 }
 
-function round2(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -80,7 +77,7 @@ export function PayablePaymentWorkbench() {
     for (const row of rows) {
       const existing = bySupplier.get(row.supplierId);
       if (existing) {
-        existing.openAmount = round2(existing.openAmount + row.openAmount);
+        existing.openAmount = roundMoney(existing.openAmount + row.openAmount);
         continue;
       }
       bySupplier.set(row.supplierId, {
@@ -99,7 +96,7 @@ export function PayablePaymentWorkbench() {
 
   const selectedTotal = useMemo(
     () =>
-      round2(
+      roundMoney(
         supplierRows.reduce(
           (sum, row) =>
             sum + (allocatedByInvoice[row.purchaseInvoiceId] ?? 0),
@@ -109,7 +106,7 @@ export function PayablePaymentWorkbench() {
     [allocatedByInvoice, supplierRows],
   );
 
-  const unappliedAmount = round2(Math.max(paymentAmount - selectedTotal, 0));
+  const unappliedAmount = roundMoney(Math.max(paymentAmount - selectedTotal, 0));
 
   const load = useCallback(async () => {
     if (!currentCompanyId) return;
@@ -145,12 +142,12 @@ export function PayablePaymentWorkbench() {
     const next: Record<string, number> = {};
     for (const row of supplierRows) {
       if (row.openAmount > 0) {
-        next[row.purchaseInvoiceId] = round2(row.openAmount);
+        next[row.purchaseInvoiceId] = roundMoney(row.openAmount);
       }
     }
     setAllocatedByInvoice(next);
     setPaymentAmount(
-      round2(Object.values(next).reduce((sum, amount) => sum + amount, 0)),
+      roundMoney(Object.values(next).reduce((sum, amount) => sum + amount, 0)),
     );
   };
 
@@ -158,7 +155,7 @@ export function PayablePaymentWorkbench() {
     const row = supplierRows.find(
       (item) => item.purchaseInvoiceId === purchaseInvoiceId,
     );
-    const bounded = Math.min(Math.max(round2(value), 0), row?.openAmount ?? 0);
+    const bounded = Math.min(Math.max(roundMoney(value), 0), row?.openAmount ?? 0);
     setAllocatedByInvoice((prev) => ({
       ...prev,
       [purchaseInvoiceId]: bounded,
@@ -177,7 +174,7 @@ export function PayablePaymentWorkbench() {
     const allocations = supplierRows
       .map((row) => ({
         purchaseInvoiceId: row.purchaseInvoiceId,
-        amount: round2(allocatedByInvoice[row.purchaseInvoiceId] ?? 0),
+        amount: roundMoney(allocatedByInvoice[row.purchaseInvoiceId] ?? 0),
       }))
       .filter((allocation) => allocation.amount > 0);
 
@@ -300,7 +297,7 @@ export function PayablePaymentWorkbench() {
           step="0.01"
           value={paymentAmount}
           onChange={(event) =>
-            setPaymentAmount(round2(Number(event.target.value)))
+            setPaymentAmount(roundMoney(Number(event.target.value)))
           }
           className="rounded-md border border-slate-300 p-2 text-sm"
           placeholder={t("payableWorkbenchPaymentAmount")}

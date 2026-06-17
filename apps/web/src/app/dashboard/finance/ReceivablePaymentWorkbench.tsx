@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Banknote, Loader2, RefreshCw, Wand2 } from "lucide-react";
 import api from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { roundMoney } from "@/lib/money";
 import { useAuthStore } from "@/store/authStore";
 
 type AgingRow = {
@@ -60,10 +61,6 @@ function money(value: number) {
   });
 }
 
-function round2(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -92,7 +89,7 @@ export function ReceivablePaymentWorkbench() {
       if (!row.partnerId) continue;
       const existing = byPartner.get(row.partnerId);
       if (existing) {
-        existing.openAmount = round2(existing.openAmount + row.openAmount);
+        existing.openAmount = roundMoney(existing.openAmount + row.openAmount);
         continue;
       }
       byPartner.set(row.partnerId, {
@@ -114,7 +111,7 @@ export function ReceivablePaymentWorkbench() {
 
   const selectedTotal = useMemo(
     () =>
-      round2(
+      roundMoney(
         customerRows.reduce(
           (sum, row) => sum + (allocatedByInvoice[row.invoiceId] ?? 0),
           0,
@@ -122,7 +119,7 @@ export function ReceivablePaymentWorkbench() {
       ),
     [allocatedByInvoice, customerRows],
   );
-  const unappliedAmount = round2(Math.max(paymentAmount - selectedTotal, 0));
+  const unappliedAmount = roundMoney(Math.max(paymentAmount - selectedTotal, 0));
   const customerUnappliedRows = useMemo(
     () =>
       unappliedRows.filter(
@@ -180,12 +177,12 @@ export function ReceivablePaymentWorkbench() {
     for (const row of customerRows) {
       const amount = Math.min(row.openAmount, remaining);
       if (amount > 0) {
-        next[row.invoiceId] = round2(amount);
+        next[row.invoiceId] = roundMoney(amount);
       }
-      remaining = round2(remaining - amount);
+      remaining = roundMoney(remaining - amount);
     }
     setAllocatedByInvoice(next);
-    const nextTotal = round2(
+    const nextTotal = roundMoney(
       Object.values(next).reduce((sum, amount) => sum + amount, 0),
     );
     if (!selectedUnappliedPayment) {
@@ -195,7 +192,7 @@ export function ReceivablePaymentWorkbench() {
 
   const setAllocation = (invoiceId: string, value: number) => {
     const row = customerRows.find((item) => item.invoiceId === invoiceId);
-    const bounded = Math.min(Math.max(round2(value), 0), row?.openAmount ?? 0);
+    const bounded = Math.min(Math.max(roundMoney(value), 0), row?.openAmount ?? 0);
     setAllocatedByInvoice((prev) => ({
       ...prev,
       [invoiceId]: bounded,
@@ -214,7 +211,7 @@ export function ReceivablePaymentWorkbench() {
     const allocations = customerRows
       .map((row) => ({
         invoiceId: row.invoiceId,
-        amount: round2(allocatedByInvoice[row.invoiceId] ?? 0),
+        amount: roundMoney(allocatedByInvoice[row.invoiceId] ?? 0),
       }))
       .filter((allocation) => allocation.amount > 0);
 
@@ -224,7 +221,7 @@ export function ReceivablePaymentWorkbench() {
         return;
       }
       if (
-        selectedTotal > round2(selectedUnappliedPayment.unappliedAmount + 0.01)
+        selectedTotal > roundMoney(selectedUnappliedPayment.unappliedAmount + 0.01)
       ) {
         setError(t("paymentWorkbenchAllocationAboveUnapplied"));
         return;
@@ -373,7 +370,7 @@ export function ReceivablePaymentWorkbench() {
           step="0.01"
           value={paymentAmount}
           onChange={(event) =>
-            setPaymentAmount(round2(Number(event.target.value)))
+            setPaymentAmount(roundMoney(Number(event.target.value)))
           }
           disabled={!!selectedUnappliedPayment}
           className="rounded-md border border-slate-300 p-2 text-sm"

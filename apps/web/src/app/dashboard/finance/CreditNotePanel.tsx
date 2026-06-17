@@ -5,6 +5,7 @@ import { RotateCcw, Send, RefreshCw } from "lucide-react";
 import api from "@/lib/api";
 import { useAuthStore } from "@/store/authStore";
 import { useI18n } from "@/lib/i18n";
+import { roundMoney } from "@/lib/money";
 import { Button } from "@/components/ui/Button";
 
 type MoneyValue = number | string;
@@ -84,10 +85,6 @@ function money(value: MoneyValue | undefined) {
   });
 }
 
-function round2(value: number) {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
-
 function invoiceOpenAmount(invoice: InvoiceOption) {
   const amount = Number(invoice.amount ?? 0);
   const paid = (invoice.paymentAllocations ?? []).reduce(
@@ -97,14 +94,14 @@ function invoiceOpenAmount(invoice: InvoiceOption) {
   const credited = (invoice.creditNotes ?? [])
     .filter((creditNote) => creditNote.postingStatus === "POSTED")
     .reduce((sum, creditNote) => sum + Number(creditNote.amount ?? 0), 0);
-  return round2(amount - paid - credited);
+  return roundMoney(amount - paid - credited);
 }
 
 function refundableBalance(creditNote: CreditNote) {
   const refunded = (creditNote.refunds ?? [])
     .filter((refund) => refund.postingStatus === "POSTED")
     .reduce((sum, refund) => sum + Number(refund.amount ?? 0), 0);
-  return round2(Number(creditNote.refundLiabilityAmount ?? 0) - refunded);
+  return roundMoney(Number(creditNote.refundLiabilityAmount ?? 0) - refunded);
 }
 
 function dateOnly(value: string) {
@@ -207,10 +204,10 @@ export function CreditNotePanel() {
 
   const createCreditNote = async () => {
     if (!selectedInvoice || !amount) return;
-    const numericAmount = round2(Number(amount));
+    const numericAmount = roundMoney(Number(amount));
     if (
       numericAmount <= 0 ||
-      numericAmount > round2(selectedOpenAmount + 0.01)
+      numericAmount > roundMoney(selectedOpenAmount + 0.01)
     ) {
       setMessage(t("creditNoteAmountInvalid"));
       return;
