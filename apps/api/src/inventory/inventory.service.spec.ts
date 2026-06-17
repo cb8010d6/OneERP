@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
+import { StockQueryService } from './stock-query.service';
 
 type MockPrisma = {
   product: {
@@ -132,6 +133,7 @@ describe('InventoryService', () => {
   };
 
   let service: InventoryService;
+  let stockQueryService: StockQueryService;
 
   const kyselyService = {
     withTenant: jest.fn(),
@@ -147,6 +149,12 @@ describe('InventoryService', () => {
     tx.stockQuant.count.mockResolvedValue(1);
     tx.material.findFirst.mockResolvedValue({ unitPrice: 10 });
     tx.materialCost.findUnique.mockResolvedValue(null);
+    stockQueryService = new StockQueryService(
+      prisma as unknown as ConstructorParameters<typeof StockQueryService>[0],
+      kyselyService as unknown as ConstructorParameters<
+        typeof StockQueryService
+      >[1],
+    );
     service = new InventoryService(
       prisma as unknown as ConstructorParameters<typeof InventoryService>[0],
       kyselyService as unknown as ConstructorParameters<
@@ -155,6 +163,7 @@ describe('InventoryService', () => {
       eventEmitter as unknown as ConstructorParameters<
         typeof InventoryService
       >[2],
+      stockQueryService,
     );
   });
 

@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
+import { StockQueryService } from './stock-query.service';
 import { InventoryController } from './inventory.controller';
 import { KyselyModule } from '../core/prisma/kysely.module';
 import { PermissionsGuard } from '../core/guards/permissions.guard';
 
 @Module({
   imports: [KyselyModule],
-  providers: [InventoryService, PermissionsGuard],
+  providers: [StockQueryService, InventoryService, PermissionsGuard],
   controllers: [InventoryController],
-  exports: [InventoryService],
+  exports: [StockQueryService, InventoryService],
 })
 export class InventoryModule {}
