@@ -17,6 +17,7 @@ import { ProductionModule } from './production/production.module';
 import { FinanceModule } from './finance/finance.module';
 import { PurchaseModule } from './purchase/purchase.module';
 import { LoggerMiddleware } from './core/middlewares/logger.middleware';
+import { RequestIdMiddleware } from './core/middlewares/request-id.middleware';
 import { DepartmentsModule } from './departments/departments.module';
 import { AppCacheModule } from './core/cache/cache.module';
 import { CrudModule } from './core/crud/crud.module';
@@ -66,6 +67,8 @@ import { ConfigValidationModule } from './core/config/config-validation.module';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware, TenantContextMiddleware).forRoutes('*');
+    consumer
+      .apply(RequestIdMiddleware, LoggerMiddleware, TenantContextMiddleware)
+      .forRoutes('*');
   }
 }
