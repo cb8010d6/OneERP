@@ -28,6 +28,7 @@ import { AuditModule } from './core/audit/audit.module';
 import { TenantContextMiddleware } from './core/middlewares/tenant-context.middleware';
 import { KyselyModule } from './core/prisma/kysely.module';
 import { ConfigValidationModule } from './core/config/config-validation.module';
+import { MetricsModule } from './core/metrics/metrics.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { ConfigValidationModule } from './core/config/config-validation.module';
     MetadataModule,
     WorkflowModule,
     AuditModule,
+    MetricsModule,
     AIModule,
     CrudModule,
     AuthModule,
