@@ -64,7 +64,7 @@ function assertCondition(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-function round2(value) {
+function roundMoney(value) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
@@ -188,7 +188,7 @@ async function getLedgerQty(api, materialId, locationId) {
   const row = rows.find(
     (item) => item.materialId === materialId && item.locationId === locationId,
   );
-  return round2(getNumber(row?.netQty));
+  return roundMoney(getNumber(row?.netQty));
 }
 
 async function findInventoryTransaction(api, referenceNo, type) {
@@ -345,7 +345,7 @@ async function main() {
       'INBOUND',
     );
     assertCondition(transaction, '未找到采购入库流水');
-    assertCondition(round2(transaction.quantity) === 10, '采购入库流水数量不是 10');
+    assertCondition(roundMoney(transaction.quantity) === 10, '采购入库流水数量不是 10');
     return {
       detail: `qty=${qty} transaction=${transaction.id}`,
       data: { inbound, transactionId: transaction.id },
@@ -361,7 +361,7 @@ async function main() {
     });
     assertCondition(created?.id, '销售订单未返回 id');
     assertCondition(created?.orderNo, '销售订单未返回 orderNo');
-    assertCondition(round2(created.totalAmount) === 452, '销售订单金额不是 452');
+    assertCondition(roundMoney(created.totalAmount) === 452, '销售订单金额不是 452');
     return {
       detail: `order=${created.orderNo} amount=${created.totalAmount}`,
       value: created,
@@ -410,7 +410,7 @@ async function main() {
       'OUTBOUND',
     );
     assertCondition(transaction, '未找到销售出库流水');
-    assertCondition(round2(transaction.quantity) === 4, '销售出库流水数量不是 4');
+    assertCondition(roundMoney(transaction.quantity) === 4, '销售出库流水数量不是 4');
     const detail = await api.get(`/orders/${order.id}`);
     assertCondition(detail?.status === 'SHIPPED', `订单状态应为 SHIPPED，实际为 ${detail?.status}`);
     return {
@@ -433,10 +433,10 @@ async function main() {
       label: '等待发票过账凭证',
     });
     assertCondition(entry.lines.length >= 2, '发票凭证明细少于 2 行');
-    const totalDebit = round2(
+    const totalDebit = roundMoney(
       entry.lines.reduce((sum, line) => sum + getNumber(line.debit), 0),
     );
-    const totalCredit = round2(
+    const totalCredit = roundMoney(
       entry.lines.reduce((sum, line) => sum + getNumber(line.credit), 0),
     );
     assertCondition(totalDebit > 0, '发票凭证借方金额为 0');
@@ -451,7 +451,7 @@ async function main() {
   await withStep('trial-balance-is-balanced', async () => {
     const result = await api.get('/finance/trial-balance');
     assertCondition(result?.balanced === true, '试算平衡接口返回未平衡');
-    assertCondition(round2(result.totalDebit) === round2(result.totalCredit), '试算平衡借贷合计不相等');
+    assertCondition(roundMoney(result.totalDebit) === roundMoney(result.totalCredit), '试算平衡借贷合计不相等');
     assertCondition(getNumber(result.totalDebit) > 0, '试算平衡借方合计为 0');
     assertCondition(Array.isArray(result.rows) && result.rows.length > 0, '试算平衡没有科目行');
     return {
@@ -481,7 +481,7 @@ try {
   const report = {
     startedAt: startedAt.toISOString(),
     endedAt: endedAt.toISOString(),
-    durationSeconds: round2((endedAt.getTime() - startedAt.getTime()) / 1000),
+    durationSeconds: roundMoney((endedAt.getTime() - startedAt.getTime()) / 1000),
     passed: steps.every((step) => step.passed),
     context,
     steps,
