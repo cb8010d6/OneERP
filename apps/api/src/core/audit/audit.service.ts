@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EventQueueService } from '../events/event-queue.service';
 
 type CrudAction = 'CRUD_CREATE' | 'CRUD_UPDATE' | 'CRUD_DELETE';
 
@@ -30,7 +31,10 @@ const MODEL_ALIASES: Record<string, string[]> = {
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventQueueService: EventQueueService,
+  ) {}
 
   async logCrudAction(payload: CrudAuditPayload) {
     if (!payload.companyId || !payload.userId) {
@@ -53,9 +57,23 @@ export class AuditService {
       });
     } catch (error) {
       this.logger.warn(
-        `Failed to write audit log for ${payload.modelName}:${payload.recordId}`,
+        `Failed to write audit log for ${payload.modelName}:${payload.recordId}, queuing to DLQ`,
       );
       this.logger.debug(String(error));
+
+      await this.eventQueueService.enqueue({
+        eventName: 'audit.log.failed',
+        payload: {
+          userId: payload.userId,
+          companyId: payload.companyId,
+          entity,
+          entityId: payload.recordId,
+          action: payload.action,
+          details,
+        },
+        companyId: payload.companyId,
+        maxAttempts: 3,
+      });
     }
   }
 

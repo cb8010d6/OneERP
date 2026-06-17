@@ -7,8 +7,11 @@ function createService() {
       create: jest.fn(),
     },
   };
-  const service = new AuditService(prisma as never);
-  return { service, prisma };
+  const eventQueueService = {
+    enqueue: jest.fn(),
+  };
+  const service = new AuditService(prisma as never, eventQueueService as never);
+  return { service, prisma, eventQueueService };
 }
 
 describe('AuditService', () => {
