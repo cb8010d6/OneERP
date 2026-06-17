@@ -61,19 +61,26 @@ export class AuditService {
       );
       this.logger.debug(String(error));
 
-      await this.eventQueueService.enqueue({
-        eventName: 'audit.log.failed',
-        payload: {
-          userId: payload.userId,
+      try {
+        await this.eventQueueService.enqueue({
+          eventName: 'audit.log.failed',
+          payload: {
+            userId: payload.userId,
+            companyId: payload.companyId,
+            entity,
+            entityId: payload.recordId,
+            action: payload.action,
+            details,
+            originalError: String(error),
+          },
           companyId: payload.companyId,
-          entity,
-          entityId: payload.recordId,
-          action: payload.action,
-          details,
-        },
-        companyId: payload.companyId,
-        maxAttempts: 3,
-      });
+          maxAttempts: 3,
+        });
+      } catch (dlqError) {
+        this.logger.error(
+          `Failed to enqueue audit log to DLQ: ${String(dlqError)}`,
+        );
+      }
     }
   }
 

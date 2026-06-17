@@ -10,7 +10,8 @@ export class LoggerMiddleware implements NestMiddleware {
   constructor(private readonly metricsService: MetricsService) {}
 
   use(request: RequestWithId, response: Response, next: NextFunction): void {
-    const { ip, method, originalUrl } = request;
+    const { ip, method } = request;
+    const originalUrl = this.sanitizeUrl(request.originalUrl);
     const userAgent = request.get('user-agent') || '';
     const requestId = request.requestId || '';
     const startTime = Date.now();
@@ -23,9 +24,12 @@ export class LoggerMiddleware implements NestMiddleware {
       const responseTime = Date.now() - startTime;
 
       this.metricsService.decrementActiveConnections();
+      const route =
+        (request as { route?: { path?: string } }).route?.path ||
+        originalUrl.split('?')[0];
       this.metricsService.recordRequest(
         method,
-        originalUrl,
+        route,
         statusCode,
         responseTime,
       );
@@ -51,5 +55,21 @@ export class LoggerMiddleware implements NestMiddleware {
     });
 
     next();
+  }
+
+  private sanitizeUrl(url: string): string {
+    try {
+      const [path, query] = url.split('?');
+      if (!query) return path;
+      const params = new URLSearchParams(query);
+      for (const key of params.keys()) {
+        if (/token|password|secret|key|auth/i.test(key)) {
+          params.set(key, '***');
+        }
+      }
+      return `${path}?${params.toString()}`;
+    } catch {
+      return url.split('?')[0];
+    }
   }
 }

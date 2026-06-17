@@ -20,12 +20,31 @@ function Encrypt-File {
 
   $encryptedPath = "$FilePath.enc"
   $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+
+  $salt = New-Object byte[] 16
+  [System.Security.Cryptography.RandomNumberGenerator]::Fill($salt)
+
+  $deriveBytes = New-Object System.Security.Cryptography.Rfc2898DeriveBytes(
+    [System.Text.Encoding]::UTF8.GetBytes($Key),
+    $salt,
+    100000,
+    [System.Security.Cryptography.HashAlgorithmName]::SHA256
+  )
   $aes = [System.Security.Cryptography.Aes]::Create()
-  $aes.Key = [System.Text.Encoding]::UTF8.GetBytes($Key.PadRight(32).Substring(0, 32))
-  $aes.IV = New-Object byte[] 16
+  $aes.Key = $deriveBytes.GetBytes(32)
+  $aes.GenerateIV()
+  $deriveBytes.Dispose()
+
   $encryptor = $aes.CreateEncryptor()
   $encrypted = $encryptor.TransformFinalBlock($bytes, 0, $bytes.Length)
-  [System.IO.File]::WriteAllBytes($encryptedPath, $encrypted)
+
+  $output = New-Object byte[] ($salt.Length + $aes.IV.Length + $encrypted.Length)
+  [System.Array]::Copy($salt, 0, $output, 0, $salt.Length)
+  [System.Array]::Copy($aes.IV, 0, $output, $salt.Length, $aes.IV.Length)
+  [System.Array]::Copy($encrypted, 0, $output, $salt.Length + $aes.IV.Length, $encrypted.Length)
+
+  [System.IO.File]::WriteAllBytes($encryptedPath, $output)
+  $aes.Dispose()
   Remove-Item -LiteralPath $FilePath -Force
   return $encryptedPath
 }
