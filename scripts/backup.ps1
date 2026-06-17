@@ -1,11 +1,34 @@
 param(
   [string]$OutputDir = "",
   [string]$PolicyFile = "ops/backup-policy.example.json",
-  [string]$ComposeFile = "docker-compose.easy.yml"
+  [string]$ComposeFile = "docker-compose.easy.yml",
+  [string]$EncryptionKey = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+
+function Encrypt-File {
+  param(
+    [string]$FilePath,
+    [string]$Key
+  )
+
+  if ($Key -eq "") {
+    return $FilePath
+  }
+
+  $encryptedPath = "$FilePath.enc"
+  $bytes = [System.IO.File]::ReadAllBytes($FilePath)
+  $aes = [System.Security.Cryptography.Aes]::Create()
+  $aes.Key = [System.Text.Encoding]::UTF8.GetBytes($Key.PadRight(32).Substring(0, 32))
+  $aes.IV = New-Object byte[] 16
+  $encryptor = $aes.CreateEncryptor()
+  $encrypted = $encryptor.TransformFinalBlock($bytes, 0, $bytes.Length)
+  [System.IO.File]::WriteAllBytes($encryptedPath, $encrypted)
+  Remove-Item -LiteralPath $FilePath -Force
+  return $encryptedPath
+}
 function Read-BackupPolicy {
   param([string]$Path)
 
@@ -79,8 +102,22 @@ try {
     postgresIntervalMinutes = [int]$policy.postgresIntervalMinutes
     minioIntervalMinutes = [int]$policy.minioIntervalMinutes
     retentionDays = [int]$policy.retentionDays
+    encrypted = ($EncryptionKey -ne "")
     files = @("postgres.sql", "minio-data.tgz", ".env.copy")
   }
+
+  if ($EncryptionKey -ne "") {
+    Write-Host "Encrypting backup files..."
+    foreach ($file in $manifest.files) {
+      $filePath = Join-Path $target $file
+      if (Test-Path $filePath) {
+        Encrypt-File -FilePath $filePath -Key $EncryptionKey
+        $manifest.files[$manifest.files.IndexOf($file)] = "$file.enc"
+      }
+    }
+    Write-Host "Backup encryption completed"
+  }
+
   $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $target "backup-manifest.json") -Encoding UTF8
 
   Remove-ExpiredBackups -BackupRoot $backupRoot -RetentionDays ([int]$policy.retentionDays)
