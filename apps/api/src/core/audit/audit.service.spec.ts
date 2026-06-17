@@ -89,4 +89,27 @@ describe('AuditService', () => {
       expect.objectContaining({ take: 100 }),
     );
   });
+
+  it('enqueues to DLQ with idempotencyKey when audit log creation fails', async () => {
+    const { service, prisma, eventQueueService } = createService();
+    prisma.auditLog.create.mockRejectedValue(new Error('DB down'));
+
+    await service.logCrudAction({
+      modelName: 'order',
+      recordId: 'order-1',
+      companyId: 'c1',
+      userId: 'u1',
+      action: 'CRUD_CREATE',
+      after: { status: 'PENDING' },
+    });
+
+    expect(eventQueueService.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: 'audit.log.failed',
+        idempotencyKey: 'audit:c1:u1:order:order-1:CRUD_CREATE',
+        companyId: 'c1',
+        maxAttempts: 3,
+      }),
+    );
+  });
 });

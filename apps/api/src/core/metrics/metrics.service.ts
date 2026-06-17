@@ -47,11 +47,26 @@ export class MetricsService {
     status: number,
     duration: number,
   ) {
-    this.httpRequestsTotal.inc({ method, path, status: String(status) });
+    const normalized = MetricsService.normalizePath(path);
+    this.httpRequestsTotal.inc({
+      method,
+      path: normalized,
+      status: String(status),
+    });
     this.httpRequestDuration.observe(
-      { method, path, status: String(status) },
+      { method, path: normalized, status: String(status) },
       duration / 1000,
     );
+  }
+
+  static normalizePath(path: string): string {
+    return path
+      .replace(
+        /\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+        '/:id',
+      )
+      .replace(/\/[0-9a-f]{24}/gi, '/:id')
+      .replace(/\/\d+/g, '/:id');
   }
 
   incrementActiveConnections() {

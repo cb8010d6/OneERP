@@ -64,6 +64,7 @@ export class AuditService {
       try {
         await this.eventQueueService.enqueue({
           eventName: 'audit.log.failed',
+          idempotencyKey: `audit:${payload.companyId}:${payload.userId}:${entity}:${payload.recordId}:${payload.action}`,
           payload: {
             userId: payload.userId,
             companyId: payload.companyId,

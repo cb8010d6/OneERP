@@ -2,11 +2,22 @@ param(
   [string]$OutputDir = "",
   [string]$PolicyFile = "ops/backup-policy.example.json",
   [string]$ComposeFile = "docker-compose.easy.yml",
-  [string]$EncryptionKey = ""
+  [string]$EncryptionKey = "",
+  [switch]$RequireEncryption
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+
+$envRequire = $env:ONEERP_BACKUP_REQUIRE_ENCRYPTION
+if ($envRequire -eq "true" -or $envRequire -eq "1") {
+  $RequireEncryption = $true
+}
+
+if ($RequireEncryption -and $EncryptionKey -eq "") {
+  Write-Error "Encryption is required but -EncryptionKey was not provided. Set -EncryptionKey or ONEERP_BACKUP_REQUIRE_ENCRYPTION=true with ONEERP_BACKUP_ENCRYPTION_KEY."
+  exit 1
+}
 
 function Encrypt-File {
   param(
