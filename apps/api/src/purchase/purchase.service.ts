@@ -9,7 +9,6 @@ import Decimal from 'decimal.js';
 import { EntryPostingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { roundDecimal } from '../core/utils/decimal';
 import {
   CreatePurchaseInvoiceDto,
   CreatePurchaseOrderDto,
@@ -18,6 +17,14 @@ import {
   ReceivePurchaseOrderDto,
 } from './dto/purchase.dto';
 import { AccountingPeriodService } from '../finance/accounting-period.service';
+import { SupplierStatementService } from './supplier-statement.service';
+import {
+  purchaseMoney,
+  postedSupplierCreditAmount,
+  postedSupplierPaymentAmount,
+  purchaseInvoiceOpenAmount,
+  supplierSettlementStatus,
+} from './purchase-utils';
 
 type PurchaseMatchStatus =
   | 'NO_INVOICE'
@@ -44,55 +51,38 @@ type PurchaseOrderForMatch = {
   }>;
 };
 
-export interface SupplierOption {
-  id: string;
-  code: string | null;
-  name: string;
-  type: string;
-}
-
-export interface SupplierStatementLine {
-  sourceType: 'PURCHASE_INVOICE' | 'SUPPLIER_PAYMENT' | 'SUPPLIER_CREDIT_NOTE';
-  sourceId: string;
-  documentNo: string;
-  date: string;
-  description: string | null;
-  debit: number;
-  credit: number;
-  runningBalance: number;
-}
-
-export interface SupplierStatementPartner {
-  supplierId: string;
-  supplierCode: string | null;
-  supplierName: string;
-  openingBalance: number;
-  periodDebit: number;
-  periodCredit: number;
-  endingBalance: number;
-  lines: SupplierStatementLine[];
-}
-
-export interface SupplierStatementResult {
-  startDate: string | null;
-  endDate: string;
-  supplierId: string | null;
-  totalOpeningBalance: number;
-  totalDebit: number;
-  totalCredit: number;
-  totalEndingBalance: number;
-  suppliers: SupplierStatementPartner[];
-}
-
 @Injectable()
 export class PurchaseService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly supplierStatementService: SupplierStatementService,
     @Optional()
     private readonly accountingPeriodService?: AccountingPeriodService,
   ) {}
+
+  async listSupplierOptions(companyId: string) {
+    return this.supplierStatementService.listSupplierOptions(companyId);
+  }
+
+  async getSupplierStatement(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+    supplierId?: string,
+  ) {
+    return this.supplierStatementService.getSupplierStatement(
+      companyId,
+      startDate,
+      endDate,
+      supplierId,
+    );
+  }
+
+  async listOpenPayables(companyId: string) {
+    return this.supplierStatementService.listOpenPayables(companyId);
+  }
 
   private async assertAccountingPeriodOpen(companyId: string, date: Date) {
     await this.accountingPeriodService?.assertOpenForDate(companyId, date);
@@ -130,7 +120,7 @@ export class PurchaseService {
     const lines = dto.items.map((item) => {
       const quantity = new Decimal(item.quantity);
       const unitPrice = new Decimal(item.unitPrice);
-      const subTotal = this.money(quantity.times(unitPrice));
+      const subTotal = purchaseMoney(quantity.times(unitPrice));
       return {
         materialId: item.materialId,
         quantity,
@@ -142,7 +132,7 @@ export class PurchaseService {
       };
     });
 
-    const subTotal = this.money(
+    const subTotal = purchaseMoney(
       lines.reduce((sum, line) => sum.plus(line.subTotal), new Decimal(0)),
     );
 
@@ -537,307 +527,6 @@ export class PurchaseService {
     });
   }
 
-  async listSupplierOptions(companyId: string): Promise<SupplierOption[]> {
-    return this.prisma.partner.findMany({
-      where: {
-        companyId,
-        isActive: true,
-        type: { in: ['SUPPLIER', 'BOTH'] },
-      },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        type: true,
-      },
-      orderBy: [{ name: 'asc' }, { code: 'asc' }],
-      take: 500,
-    });
-  }
-
-  async getSupplierStatement(
-    companyId: string,
-    startDate?: string,
-    endDate?: string,
-    supplierId?: string,
-  ): Promise<SupplierStatementResult> {
-    const parsedStartDate = this.parseStatementDate(startDate, 'startDate');
-    const parsedEndDate =
-      this.parseStatementDate(endDate, 'endDate') ?? new Date();
-
-    if (
-      parsedStartDate &&
-      parsedStartDate.getTime() > parsedEndDate.getTime()
-    ) {
-      throw new BadRequestException('startDate 不能晚于 endDate');
-    }
-
-    const normalizedSupplierId = supplierId?.trim() || undefined;
-    if (normalizedSupplierId) {
-      const supplier = await this.prisma.partner.findFirst({
-        where: {
-          id: normalizedSupplierId,
-          companyId,
-          isActive: true,
-          type: { in: ['SUPPLIER', 'BOTH'] },
-        },
-        select: { id: true },
-      });
-      if (!supplier) {
-        throw new BadRequestException('供应商不存在或已停用');
-      }
-    }
-
-    const [invoices, payments, creditNotes] = await Promise.all([
-      this.prisma.purchaseInvoice.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          issuedDate: { lte: parsedEndDate },
-          ...(normalizedSupplierId ? { supplierId: normalizedSupplierId } : {}),
-        },
-        include: {
-          supplier: true,
-          purchaseOrder: { select: { purchaseNo: true } },
-        },
-      }),
-      this.prisma.supplierPayment.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          paymentDate: { lte: parsedEndDate },
-          ...(normalizedSupplierId ? { supplierId: normalizedSupplierId } : {}),
-        },
-        include: {
-          supplier: true,
-        },
-      }),
-      this.prisma.supplierCreditNote.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          creditDate: { lte: parsedEndDate },
-          ...(normalizedSupplierId ? { supplierId: normalizedSupplierId } : {}),
-        },
-        include: {
-          supplier: true,
-          purchaseInvoice: { select: { invoiceNo: true } },
-        },
-      }),
-    ]);
-
-    type DraftLine = Omit<SupplierStatementLine, 'runningBalance'> & {
-      supplierId: string;
-      supplierCode: string | null;
-      supplierName: string;
-      occurredAt: Date;
-    };
-
-    const draftLines: DraftLine[] = [
-      ...invoices.map((invoice) => ({
-        supplierId: invoice.supplier.id,
-        supplierCode: invoice.supplier.code,
-        supplierName: invoice.supplier.name,
-        sourceType: 'PURCHASE_INVOICE' as const,
-        sourceId: invoice.id,
-        documentNo: invoice.invoiceNo,
-        occurredAt: invoice.issuedDate,
-        date: invoice.issuedDate.toISOString(),
-        description: invoice.purchaseOrder.purchaseNo
-          ? `应付发票 / ${invoice.purchaseOrder.purchaseNo}`
-          : '应付发票',
-        debit: this.money(invoice.amount ?? 0).toNumber(),
-        credit: 0,
-      })),
-      ...payments.map((payment) => ({
-        supplierId: payment.supplier.id,
-        supplierCode: payment.supplier.code,
-        supplierName: payment.supplier.name,
-        sourceType: 'SUPPLIER_PAYMENT' as const,
-        sourceId: payment.id,
-        documentNo: payment.paymentNo,
-        occurredAt: payment.paymentDate,
-        date: payment.paymentDate.toISOString(),
-        description: payment.note
-          ? `供应商付款 / ${payment.method} / ${payment.note}`
-          : `供应商付款 / ${payment.method}`,
-        debit: 0,
-        credit: this.money(payment.amount ?? 0).toNumber(),
-      })),
-      ...creditNotes.map((creditNote) => ({
-        supplierId: creditNote.supplier.id,
-        supplierCode: creditNote.supplier.code,
-        supplierName: creditNote.supplier.name,
-        sourceType: 'SUPPLIER_CREDIT_NOTE' as const,
-        sourceId: creditNote.id,
-        documentNo: creditNote.creditNo,
-        occurredAt: creditNote.creditDate,
-        date: creditNote.creditDate.toISOString(),
-        description: creditNote.purchaseInvoice.invoiceNo
-          ? `供应商扣款 / ${creditNote.purchaseInvoice.invoiceNo}`
-          : '供应商扣款',
-        debit: 0,
-        credit: this.money(creditNote.amount ?? 0).toNumber(),
-      })),
-    ].sort(
-      (a, b) =>
-        a.supplierName.localeCompare(b.supplierName) ||
-        a.occurredAt.getTime() - b.occurredAt.getTime() ||
-        a.documentNo.localeCompare(b.documentNo),
-    );
-
-    const suppliersById = new Map<string, SupplierStatementPartner>();
-    for (const line of draftLines) {
-      const supplier = suppliersById.get(line.supplierId) ?? {
-        supplierId: line.supplierId,
-        supplierCode: line.supplierCode,
-        supplierName: line.supplierName,
-        openingBalance: 0,
-        periodDebit: 0,
-        periodCredit: 0,
-        endingBalance: 0,
-        lines: [],
-      };
-      suppliersById.set(line.supplierId, supplier);
-
-      const net = this.money(line.debit).minus(line.credit).toNumber();
-      if (
-        parsedStartDate &&
-        line.occurredAt.getTime() < parsedStartDate.getTime()
-      ) {
-        supplier.openingBalance = this.money(
-          this.money(supplier.openingBalance).plus(net),
-        ).toNumber();
-        supplier.endingBalance = supplier.openingBalance;
-        continue;
-      }
-
-      supplier.periodDebit = this.money(
-        this.money(supplier.periodDebit).plus(line.debit),
-      ).toNumber();
-      supplier.periodCredit = this.money(
-        this.money(supplier.periodCredit).plus(line.credit),
-      ).toNumber();
-      supplier.endingBalance = this.money(
-        this.money(supplier.endingBalance).plus(net),
-      ).toNumber();
-      supplier.lines.push({
-        sourceType: line.sourceType,
-        sourceId: line.sourceId,
-        documentNo: line.documentNo,
-        date: line.date,
-        description: line.description,
-        debit: line.debit,
-        credit: line.credit,
-        runningBalance: supplier.endingBalance,
-      });
-    }
-
-    const suppliers = [...suppliersById.values()]
-      .map((supplier) => ({
-        ...supplier,
-        endingBalance: this.money(
-          this.money(supplier.openingBalance)
-            .plus(supplier.periodDebit)
-            .minus(supplier.periodCredit),
-        ).toNumber(),
-      }))
-      .filter(
-        (supplier) =>
-          Math.abs(supplier.openingBalance) >= 0.01 ||
-          Math.abs(supplier.periodDebit) >= 0.01 ||
-          Math.abs(supplier.periodCredit) >= 0.01 ||
-          Math.abs(supplier.endingBalance) >= 0.01,
-      )
-      .sort((a, b) => a.supplierName.localeCompare(b.supplierName));
-
-    return {
-      startDate: parsedStartDate?.toISOString() ?? null,
-      endDate: parsedEndDate.toISOString(),
-      supplierId: normalizedSupplierId ?? null,
-      totalOpeningBalance: this.money(
-        suppliers.reduce((sum, supplier) => sum + supplier.openingBalance, 0),
-      ).toNumber(),
-      totalDebit: this.money(
-        suppliers.reduce((sum, supplier) => sum + supplier.periodDebit, 0),
-      ).toNumber(),
-      totalCredit: this.money(
-        suppliers.reduce((sum, supplier) => sum + supplier.periodCredit, 0),
-      ).toNumber(),
-      totalEndingBalance: this.money(
-        suppliers.reduce((sum, supplier) => sum + supplier.endingBalance, 0),
-      ).toNumber(),
-      suppliers,
-    };
-  }
-
-  async listOpenPayables(companyId: string) {
-    const invoices = await this.prisma.purchaseInvoice.findMany({
-      where: {
-        companyId,
-        postingStatus: EntryPostingStatus.POSTED,
-        status: { in: ['UNPAID', 'PARTIAL'] },
-      },
-      include: {
-        supplier: { select: { id: true, name: true } },
-        purchaseOrder: { select: { id: true, purchaseNo: true } },
-        supplierCreditNotes: {
-          where: { postingStatus: EntryPostingStatus.POSTED },
-          select: { amount: true, postingStatus: true },
-        },
-        supplierPaymentAllocations: {
-          where: {
-            supplierPayment: { postingStatus: EntryPostingStatus.POSTED },
-          },
-          select: { amount: true },
-        },
-      },
-      orderBy: [{ dueDate: 'asc' }, { issuedDate: 'asc' }],
-      take: 500,
-    });
-
-    const rows = invoices
-      .map((invoice) => {
-        const amount = this.money(invoice.amount);
-        const creditedAmount = this.postedSupplierCreditAmount(
-          invoice.supplierCreditNotes,
-        );
-        const paidAmount = this.postedSupplierPaymentAmount(
-          invoice.supplierPaymentAllocations,
-        );
-        const openAmount = this.purchaseInvoiceOpenAmount(invoice);
-        const dueDate = invoice.dueDate ?? null;
-        const daysOverdue = dueDate
-          ? Math.max(
-              0,
-              Math.floor(
-                (Date.now() - dueDate.getTime()) / (1000 * 60 * 60 * 24),
-              ),
-            )
-          : 0;
-
-        return {
-          purchaseInvoiceId: invoice.id,
-          invoiceNo: invoice.invoiceNo,
-          purchaseOrderId: invoice.purchaseOrderId,
-          purchaseNo: invoice.purchaseOrder.purchaseNo,
-          supplierId: invoice.supplierId,
-          supplierName: invoice.supplier.name,
-          issuedDate: invoice.issuedDate.toISOString(),
-          dueDate: dueDate?.toISOString() ?? null,
-          daysOverdue,
-          amount: amount.toNumber(),
-          creditedAmount: creditedAmount.toNumber(),
-          paidAmount: paidAmount.toNumber(),
-          openAmount: openAmount.toNumber(),
-          status: invoice.status,
-        };
-      })
-      .filter((row) => row.openAmount > 0);
-
-    return { rows };
-  }
-
   async createSupplierPayment(
     companyId: string,
     dto: CreateSupplierPaymentDto,
@@ -855,14 +544,14 @@ export class PurchaseService {
       throw new BadRequestException('供应商不存在或未启用');
     }
 
-    const paymentAmount = this.money(dto.amount);
+    const paymentAmount = purchaseMoney(dto.amount);
     if (paymentAmount.lte(0)) {
       throw new BadRequestException('付款金额必须大于0');
     }
 
     const allocationMap = new Map<string, Decimal>();
     for (const allocation of dto.allocations) {
-      const amount = this.money(allocation.amount);
+      const amount = purchaseMoney(allocation.amount);
       if (amount.lte(0)) {
         throw new BadRequestException('付款核销金额必须大于0');
       }
@@ -872,7 +561,7 @@ export class PurchaseService {
       allocationMap.set(allocation.purchaseInvoiceId, amount);
     }
 
-    const allocatedTotal = this.money(
+    const allocatedTotal = purchaseMoney(
       [...allocationMap.values()].reduce(
         (sum, amount) => sum.plus(amount),
         new Decimal(0),
@@ -910,7 +599,7 @@ export class PurchaseService {
         throw new BadRequestException('只能核销同一供应商的应付发票');
       }
       const allocated = allocationMap.get(invoice.id) ?? new Decimal(0);
-      const openAmount = this.purchaseInvoiceOpenAmount(invoice);
+      const openAmount = purchaseInvoiceOpenAmount(invoice);
       if (allocated.gt(openAmount.plus(0.01))) {
         throw new BadRequestException(
           `应付发票 ${invoice.invoiceNo} 付款金额超过未结应付`,
@@ -964,15 +653,15 @@ export class PurchaseService {
       throw new NotFoundException('应付发票不存在');
     }
 
-    const amount = this.money(dto.amount);
+    const amount = purchaseMoney(dto.amount);
     if (amount.lte(0)) {
       throw new BadRequestException('供应商贷项金额必须大于0');
     }
 
-    const postedCreditAmount = this.postedSupplierCreditAmount(
+    const postedCreditAmount = postedSupplierCreditAmount(
       invoice.supplierCreditNotes,
     );
-    const invoiceAmount = this.money(invoice.amount);
+    const invoiceAmount = purchaseMoney(invoice.amount);
     if (amount.gt(invoiceAmount.minus(postedCreditAmount).plus(0.01))) {
       throw new BadRequestException('供应商贷项金额超过发票剩余应付');
     }
@@ -1063,9 +752,9 @@ export class PurchaseService {
     }
     await this.assertAccountingPeriodOpen(companyId, creditNote.creditDate);
 
-    const amount = this.money(creditNote.amount);
-    const invoiceAmount = this.money(creditNote.purchaseInvoice.amount);
-    const postedCreditAmount = this.postedSupplierCreditAmount(
+    const amount = purchaseMoney(creditNote.amount);
+    const invoiceAmount = purchaseMoney(creditNote.purchaseInvoice.amount);
+    const postedCreditAmount = postedSupplierCreditAmount(
       creditNote.purchaseInvoice.supplierCreditNotes,
     );
     if (amount.gt(invoiceAmount.minus(postedCreditAmount).plus(0.01))) {
@@ -1073,7 +762,7 @@ export class PurchaseService {
     }
 
     const nextCreditedAmount = postedCreditAmount.plus(amount);
-    const status = this.supplierSettlementStatus(
+    const status = supplierSettlementStatus(
       invoiceAmount,
       nextCreditedAmount,
     );
@@ -1151,8 +840,8 @@ export class PurchaseService {
       throw new BadRequestException('供应商付款缺少核销明细');
     }
 
-    const paymentAmount = this.money(payment.amount);
-    const allocatedTotal = this.money(
+    const paymentAmount = purchaseMoney(payment.amount);
+    const allocatedTotal = purchaseMoney(
       payment.allocations.reduce(
         (sum, allocation) => sum.plus(allocation.amount),
         new Decimal(0),
@@ -1163,10 +852,10 @@ export class PurchaseService {
     }
 
     for (const allocation of payment.allocations) {
-      const openAmount = this.purchaseInvoiceOpenAmount(
+      const openAmount = purchaseInvoiceOpenAmount(
         allocation.purchaseInvoice,
       );
-      const amount = this.money(allocation.amount);
+      const amount = purchaseMoney(allocation.amount);
       if (amount.gt(openAmount.plus(0.01))) {
         throw new BadRequestException(
           `应付发票 ${allocation.purchaseInvoice.invoiceNo} 付款金额超过未结应付`,
@@ -1185,14 +874,14 @@ export class PurchaseService {
 
       for (const allocation of payment.allocations) {
         const invoice = allocation.purchaseInvoice;
-        const credited = this.postedSupplierCreditAmount(
+        const credited = postedSupplierCreditAmount(
           invoice.supplierCreditNotes,
         );
-        const paidBefore = this.postedSupplierPaymentAmount(
+        const paidBefore = postedSupplierPaymentAmount(
           invoice.supplierPaymentAllocations,
         );
-        const status = this.supplierSettlementStatus(
-          this.money(invoice.amount),
+        const status = supplierSettlementStatus(
+          purchaseMoney(invoice.amount),
           credited.plus(paidBefore).plus(allocation.amount),
         );
         await tx.purchaseInvoice.update({
@@ -1243,13 +932,13 @@ export class PurchaseService {
   private buildPurchaseMatchSummary(order: PurchaseOrderForMatch) {
     const tolerance = new Decimal(0.01);
     const lines = (order.items ?? []).map((line) => {
-      const orderedQty = this.money(line.quantity);
-      const receivedQty = this.money(line.receivedQty);
-      const unitPrice = this.money(line.unitPrice);
-      const orderedAmount = this.money(orderedQty.times(unitPrice));
-      const receivedAmount = this.money(receivedQty.times(unitPrice));
-      const quantityVariance = this.money(receivedQty.minus(orderedQty));
-      const amountVariance = this.money(receivedAmount.minus(orderedAmount));
+      const orderedQty = purchaseMoney(line.quantity);
+      const receivedQty = purchaseMoney(line.receivedQty);
+      const unitPrice = purchaseMoney(line.unitPrice);
+      const orderedAmount = purchaseMoney(orderedQty.times(unitPrice));
+      const receivedAmount = purchaseMoney(receivedQty.times(unitPrice));
+      const quantityVariance = purchaseMoney(receivedQty.minus(orderedQty));
+      const amountVariance = purchaseMoney(receivedAmount.minus(orderedAmount));
       const status: PurchaseMatchStatus = quantityVariance.gt(tolerance)
         ? 'OVER_RECEIPT'
         : quantityVariance.lt(tolerance.negated())
@@ -1271,32 +960,32 @@ export class PurchaseService {
       };
     });
 
-    const orderedQty = this.money(
+    const orderedQty = purchaseMoney(
       lines.reduce((sum, line) => sum.plus(line.orderedQty), new Decimal(0)),
     );
-    const receivedQty = this.money(
+    const receivedQty = purchaseMoney(
       lines.reduce((sum, line) => sum.plus(line.receivedQty), new Decimal(0)),
     );
-    const orderedAmount = this.money(
+    const orderedAmount = purchaseMoney(
       lines.reduce((sum, line) => sum.plus(line.orderedAmount), new Decimal(0)),
     );
-    const receivedAmount = this.money(
+    const receivedAmount = purchaseMoney(
       lines.reduce(
         (sum, line) => sum.plus(line.receivedAmount),
         new Decimal(0),
       ),
     );
-    const invoicedAmount = this.money(
+    const invoicedAmount = purchaseMoney(
       (order.invoices ?? []).reduce((sum, invoice) => {
-        const subTotal = this.money(invoice.subTotal ?? 0);
-        const fallbackAmount = this.money(invoice.amount ?? 0).minus(
+        const subTotal = purchaseMoney(invoice.subTotal ?? 0);
+        const fallbackAmount = purchaseMoney(invoice.amount ?? 0).minus(
           invoice.taxAmount ?? 0,
         );
         return sum.plus(subTotal.gt(0) ? subTotal : fallbackAmount);
       }, new Decimal(0)),
     );
-    const quantityVariance = this.money(receivedQty.minus(orderedQty));
-    const amountVariance = this.money(invoicedAmount.minus(receivedAmount));
+    const quantityVariance = purchaseMoney(receivedQty.minus(orderedQty));
+    const amountVariance = purchaseMoney(invoicedAmount.minus(receivedAmount));
     const hasInvoice = (order.invoices ?? []).length > 0;
     const reasons: string[] = [];
 
@@ -1341,79 +1030,6 @@ export class PurchaseService {
       reasons,
       lines,
     };
-  }
-
-  private postedSupplierCreditAmount(
-    creditNotes?: Array<{
-      amount: Prisma.Decimal | Decimal.Value;
-      postingStatus?: EntryPostingStatus;
-    }>,
-  ) {
-    return (creditNotes ?? [])
-      .filter((creditNote) => creditNote.postingStatus === 'POSTED')
-      .reduce((sum, creditNote) => sum.plus(creditNote.amount), new Decimal(0));
-  }
-
-  private postedSupplierPaymentAmount(
-    allocations?: Array<{
-      amount: Prisma.Decimal | Decimal.Value;
-      supplierPayment?: { postingStatus?: EntryPostingStatus };
-    }>,
-  ) {
-    return (allocations ?? [])
-      .filter(
-        (allocation) =>
-          !allocation.supplierPayment ||
-          allocation.supplierPayment.postingStatus === 'POSTED',
-      )
-      .reduce((sum, allocation) => sum.plus(allocation.amount), new Decimal(0));
-  }
-
-  private purchaseInvoiceOpenAmount(invoice: {
-    amount: Prisma.Decimal | Decimal.Value;
-    supplierCreditNotes?: Array<{
-      amount: Prisma.Decimal | Decimal.Value;
-      postingStatus?: EntryPostingStatus;
-    }>;
-    supplierPaymentAllocations?: Array<{
-      amount: Prisma.Decimal | Decimal.Value;
-      supplierPayment?: { postingStatus?: EntryPostingStatus };
-    }>;
-  }) {
-    const invoiceAmount = this.money(invoice.amount);
-    const credited = this.postedSupplierCreditAmount(
-      invoice.supplierCreditNotes,
-    );
-    const paid = this.postedSupplierPaymentAmount(
-      invoice.supplierPaymentAllocations,
-    );
-    return Decimal.max(0, invoiceAmount.minus(credited).minus(paid));
-  }
-
-  private supplierSettlementStatus(invoiceAmount: Decimal, settled: Decimal) {
-    if (settled.gte(invoiceAmount.minus(0.01))) return 'PAID';
-    if (settled.gt(0)) return 'PARTIAL';
-    return 'UNPAID';
-  }
-
-  private money(value: Decimal.Value) {
-    return new Decimal(roundDecimal(value));
-  }
-
-  private parseStatementDate(
-    value: string | undefined,
-    fieldName: 'startDate' | 'endDate',
-  ) {
-    if (!value) return undefined;
-    const normalized =
-      fieldName === 'endDate' && /^\d{4}-\d{2}-\d{2}$/.test(value)
-        ? `${value}T23:59:59.999Z`
-        : value;
-    const date = new Date(normalized);
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException(`${fieldName} 日期格式无效`);
-    }
-    return date;
   }
 
   private generateDocumentNo(prefix: string) {

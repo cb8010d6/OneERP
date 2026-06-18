@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import { BadRequestException } from '@nestjs/common';
 import { PurchaseService } from './purchase.service';
+import { SupplierStatementService } from './supplier-statement.service';
 
 function createService() {
   const tx = {
@@ -71,10 +72,14 @@ function createService() {
   const eventEmitter = {
     emit: jest.fn(),
   };
+  const supplierStatementService = new SupplierStatementService(
+    prisma as never,
+  );
   const service = new PurchaseService(
     prisma as never,
     inventoryService as never,
     eventEmitter as never,
+    supplierStatementService,
   );
   return { service, prisma, tx, inventoryService, eventEmitter };
 }
