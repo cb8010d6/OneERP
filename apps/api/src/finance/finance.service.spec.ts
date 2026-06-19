@@ -1,6 +1,8 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { BankStatementLineStatus } from '@prisma/client';
 import { FinanceService } from './finance.service';
+import { CustomerStatementService } from './customer-statement.service';
+import { BankStatementService } from './bank-statement.service';
 
 type MockPrisma = {
   order: { findFirst: jest.Mock };
@@ -118,6 +120,8 @@ describe('FinanceService', () => {
   };
 
   let service: FinanceService;
+  let customerStatementService: CustomerStatementService;
+  let bankStatementService: BankStatementService;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -129,6 +133,12 @@ describe('FinanceService', () => {
       accountName: '库存商品',
       accountType: 'ASSET',
     });
+    customerStatementService = new CustomerStatementService(
+      prisma as unknown as ConstructorParameters<typeof CustomerStatementService>[0],
+    );
+    bankStatementService = new BankStatementService(
+      prisma as unknown as ConstructorParameters<typeof BankStatementService>[0],
+    );
     service = new FinanceService(
       prisma as unknown as ConstructorParameters<typeof FinanceService>[0],
       eventEmitter as unknown as ConstructorParameters<
@@ -140,6 +150,8 @@ describe('FinanceService', () => {
       financeReportsService as unknown as ConstructorParameters<
         typeof FinanceService
       >[3],
+      customerStatementService,
+      bankStatementService,
     );
   });
 

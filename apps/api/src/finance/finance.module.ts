@@ -8,6 +8,8 @@ import { FinanceDlqService } from './finance-dlq.service';
 import { FinanceBridgeListener } from './finance-bridge.listener';
 import { AccountingPeriodService } from './accounting-period.service';
 import { FinanceReportsService } from './finance-reports.service';
+import { CustomerStatementService } from './customer-statement.service';
+import { BankStatementService } from './bank-statement.service';
 import { EventQueueModule } from '../core/events/event-queue.module';
 import { PermissionsGuard } from '../core/guards/permissions.guard';
 
@@ -15,6 +17,8 @@ import { PermissionsGuard } from '../core/guards/permissions.guard';
   imports: [PrismaModule, EventQueueModule],
   controllers: [FinanceController],
   providers: [
+    BankStatementService,
+    CustomerStatementService,
     FinanceService,
     AccountingService,
     FinanceAccountMappingService,

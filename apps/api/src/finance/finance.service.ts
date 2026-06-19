@@ -27,6 +27,8 @@ import { roundDecimal } from '../core/utils/decimal';
 import { FinanceAccountMappingService } from './finance-account-mapping.service';
 import { AccountingPeriodService } from './accounting-period.service';
 import { FinanceReportsService } from './finance-reports.service';
+import { CustomerStatementService } from './customer-statement.service';
+import { BankStatementService } from './bank-statement.service';
 
 export interface TrialBalanceRow {
   accountId: string;
@@ -202,46 +204,6 @@ export interface UnappliedPaymentRow {
   postingStatus: EntryPostingStatus;
 }
 
-export interface CustomerStatementLine {
-  sourceType: 'INVOICE' | 'PAYMENT' | 'CREDIT_NOTE' | 'REFUND';
-  sourceId: string;
-  documentNo: string;
-  date: string;
-  description: string | null;
-  debit: number;
-  credit: number;
-  runningBalance: number;
-}
-
-export interface CustomerStatementPartner {
-  partnerId: string;
-  partnerCode: string | null;
-  partnerName: string;
-  openingBalance: number;
-  periodDebit: number;
-  periodCredit: number;
-  endingBalance: number;
-  lines: CustomerStatementLine[];
-}
-
-export interface CustomerStatementResult {
-  startDate: string | null;
-  endDate: string;
-  partnerId: string | null;
-  totalOpeningBalance: number;
-  totalDebit: number;
-  totalCredit: number;
-  totalEndingBalance: number;
-  partners: CustomerStatementPartner[];
-}
-
-export interface CustomerOption {
-  id: string;
-  code: string | null;
-  name: string;
-  type: string;
-}
-
 export interface InventoryValuationReconciliationRow {
   materialId: string;
   sku: string;
@@ -326,6 +288,8 @@ export class FinanceService {
     private readonly eventEmitter: EventEmitter2,
     private readonly financeAccountMappingService: FinanceAccountMappingService,
     private readonly financeReportsService: FinanceReportsService,
+    private readonly customerStatementService: CustomerStatementService,
+    private readonly bankStatementService: BankStatementService,
     @Optional()
     private readonly accountingPeriodService?: AccountingPeriodService,
   ) {}
@@ -789,22 +753,8 @@ export class FinanceService {
     return { rows };
   }
 
-  async listCustomerOptions(companyId: string): Promise<CustomerOption[]> {
-    return this.prisma.partner.findMany({
-      where: {
-        companyId,
-        isActive: true,
-        type: { in: ['CUSTOMER', 'BOTH'] },
-      },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        type: true,
-      },
-      orderBy: [{ name: 'asc' }, { code: 'asc' }],
-      take: 500,
-    });
+  async listCustomerOptions(companyId: string) {
+    return this.customerStatementService.listCustomerOptions(companyId);
   }
 
   async getCustomerStatement(
@@ -812,438 +762,31 @@ export class FinanceService {
     startDate?: string,
     endDate?: string,
     partnerId?: string,
-  ): Promise<CustomerStatementResult> {
-    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
-    const parsedEndDate =
-      this.parseTrialBalanceDate(endDate, 'endDate') ?? new Date();
-
-    if (
-      parsedStartDate &&
-      parsedStartDate.getTime() > parsedEndDate.getTime()
-    ) {
-      throw new BadRequestException('startDate 不能晚于 endDate');
-    }
-
-    const normalizedPartnerId = partnerId?.trim() || undefined;
-    if (normalizedPartnerId) {
-      const partner = await this.prisma.partner.findFirst({
-        where: {
-          id: normalizedPartnerId,
-          companyId,
-          isActive: true,
-          type: { in: ['CUSTOMER', 'BOTH'] },
-        },
-        select: { id: true },
-      });
-      if (!partner) {
-        throw new BadRequestException('客户不存在或已停用');
-      }
-    }
-
-    const [invoices, payments, creditNotes, refunds] = await Promise.all([
-      this.prisma.invoice.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          issuedDate: { lte: parsedEndDate },
-          ...(normalizedPartnerId
-            ? { order: { partnerId: normalizedPartnerId } }
-            : {}),
-        },
-        include: {
-          order: { select: { orderNo: true, partner: true } },
-        },
-      }),
-      this.prisma.payment.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          paymentDate: { lte: parsedEndDate },
-          ...(normalizedPartnerId ? { partnerId: normalizedPartnerId } : {}),
-        },
-        include: {
-          partner: true,
-        },
-      }),
-      this.prisma.creditNote.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          creditDate: { lte: parsedEndDate },
-          ...(normalizedPartnerId ? { partnerId: normalizedPartnerId } : {}),
-        },
-        include: {
-          partner: true,
-          invoice: { select: { invoiceNo: true } },
-        },
-      }),
-      this.prisma.customerRefund.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          refundDate: { lte: parsedEndDate },
-          ...(normalizedPartnerId ? { partnerId: normalizedPartnerId } : {}),
-        },
-        include: {
-          partner: true,
-          creditNote: { select: { creditNo: true } },
-        },
-      }),
-    ]);
-
-    type DraftLine = Omit<CustomerStatementLine, 'runningBalance'> & {
-      partnerId: string;
-      partnerCode: string | null;
-      partnerName: string;
-      occurredAt: Date;
-    };
-
-    const draftLines: DraftLine[] = [
-      ...invoices.map((invoice) => ({
-        partnerId: invoice.order.partner.id,
-        partnerCode: invoice.order.partner.code,
-        partnerName: invoice.order.partner.name,
-        sourceType: 'INVOICE' as const,
-        sourceId: invoice.id,
-        documentNo: invoice.invoiceNo,
-        occurredAt: invoice.issuedDate,
-        date: invoice.issuedDate.toISOString(),
-        description: invoice.order.orderNo
-          ? `销售发票 / ${invoice.order.orderNo}`
-          : '销售发票',
-        debit: roundDecimal(Number(invoice.amount ?? 0)),
-        credit: 0,
-      })),
-      ...payments.map((payment) => ({
-        partnerId: payment.partner.id,
-        partnerCode: payment.partner.code,
-        partnerName: payment.partner.name,
-        sourceType: 'PAYMENT' as const,
-        sourceId: payment.id,
-        documentNo: payment.id,
-        occurredAt: payment.paymentDate,
-        date: payment.paymentDate.toISOString(),
-        description: `客户收款 / ${payment.method}`,
-        debit: 0,
-        credit: roundDecimal(Number(payment.amount ?? 0)),
-      })),
-      ...creditNotes.map((creditNote) => ({
-        partnerId: creditNote.partner.id,
-        partnerCode: creditNote.partner.code,
-        partnerName: creditNote.partner.name,
-        sourceType: 'CREDIT_NOTE' as const,
-        sourceId: creditNote.id,
-        documentNo: creditNote.creditNo,
-        occurredAt: creditNote.creditDate,
-        date: creditNote.creditDate.toISOString(),
-        description: creditNote.invoice.invoiceNo
-          ? `贷项冲减 / ${creditNote.invoice.invoiceNo}`
-          : '贷项冲减',
-        debit: 0,
-        credit: roundDecimal(Number(creditNote.amount ?? 0)),
-      })),
-      ...refunds.map((refund) => ({
-        partnerId: refund.partner.id,
-        partnerCode: refund.partner.code,
-        partnerName: refund.partner.name,
-        sourceType: 'REFUND' as const,
-        sourceId: refund.id,
-        documentNo: refund.refundNo,
-        occurredAt: refund.refundDate,
-        date: refund.refundDate.toISOString(),
-        description: refund.creditNote.creditNo
-          ? `客户退款 / ${refund.creditNote.creditNo}`
-          : '客户退款',
-        debit: roundDecimal(Number(refund.amount ?? 0)),
-        credit: 0,
-      })),
-    ].sort(
-      (a, b) =>
-        a.partnerName.localeCompare(b.partnerName) ||
-        a.occurredAt.getTime() - b.occurredAt.getTime() ||
-        a.documentNo.localeCompare(b.documentNo),
+  ) {
+    return this.customerStatementService.getCustomerStatement(
+      companyId,
+      startDate,
+      endDate,
+      partnerId,
     );
-
-    const partnersById = new Map<string, CustomerStatementPartner>();
-    for (const line of draftLines) {
-      const partner = partnersById.get(line.partnerId) ?? {
-        partnerId: line.partnerId,
-        partnerCode: line.partnerCode,
-        partnerName: line.partnerName,
-        openingBalance: 0,
-        periodDebit: 0,
-        periodCredit: 0,
-        endingBalance: 0,
-        lines: [],
-      };
-      partnersById.set(line.partnerId, partner);
-
-      const net = roundDecimal(line.debit - line.credit);
-      if (
-        parsedStartDate &&
-        line.occurredAt.getTime() < parsedStartDate.getTime()
-      ) {
-        partner.openingBalance = roundDecimal(partner.openingBalance + net);
-        partner.endingBalance = partner.openingBalance;
-        continue;
-      }
-
-      partner.periodDebit = roundDecimal(partner.periodDebit + line.debit);
-      partner.periodCredit = roundDecimal(partner.periodCredit + line.credit);
-      partner.endingBalance = roundDecimal(partner.endingBalance + net);
-      partner.lines.push({
-        sourceType: line.sourceType,
-        sourceId: line.sourceId,
-        documentNo: line.documentNo,
-        date: line.date,
-        description: line.description,
-        debit: line.debit,
-        credit: line.credit,
-        runningBalance: partner.endingBalance,
-      });
-    }
-
-    const partners = [...partnersById.values()]
-      .map((partner) => ({
-        ...partner,
-        endingBalance: roundDecimal(
-          partner.openingBalance + partner.periodDebit - partner.periodCredit,
-        ),
-      }))
-      .filter(
-        (partner) =>
-          Math.abs(partner.openingBalance) >= 0.01 ||
-          Math.abs(partner.periodDebit) >= 0.01 ||
-          Math.abs(partner.periodCredit) >= 0.01 ||
-          Math.abs(partner.endingBalance) >= 0.01,
-      )
-      .sort((a, b) => a.partnerName.localeCompare(b.partnerName));
-
-    return {
-      startDate: parsedStartDate?.toISOString() ?? null,
-      endDate: parsedEndDate.toISOString(),
-      partnerId: normalizedPartnerId ?? null,
-      totalOpeningBalance: roundDecimal(
-        partners.reduce((sum, partner) => sum + partner.openingBalance, 0),
-      ),
-      totalDebit: roundDecimal(
-        partners.reduce((sum, partner) => sum + partner.periodDebit, 0),
-      ),
-      totalCredit: roundDecimal(
-        partners.reduce((sum, partner) => sum + partner.periodCredit, 0),
-      ),
-      totalEndingBalance: roundDecimal(
-        partners.reduce((sum, partner) => sum + partner.endingBalance, 0),
-      ),
-      partners,
-    };
   }
 
   async importBankStatementLines(
     companyId: string,
     dto: ImportBankStatementLinesDto,
   ) {
-    const lines = (dto.lines ?? []).slice(0, 200);
-    if (lines.length === 0) {
-      throw new BadRequestException('请提供银行流水');
-    }
-
-    const results: Array<{
-      externalRef?: string | null;
-      status: 'IMPORTED' | 'SKIPPED';
-      id?: string;
-      message?: string;
-    }> = [];
-
-    for (const line of lines) {
-      const transactionDate = new Date(line.transactionDate);
-      if (Number.isNaN(transactionDate.getTime())) {
-        throw new BadRequestException('银行流水交易日期无效');
-      }
-      const amount = roundDecimal(Number(line.amount));
-      if (amount === 0) {
-        throw new BadRequestException('银行流水金额不能为0');
-      }
-      const externalRef = line.externalRef?.trim() || null;
-      if (externalRef) {
-        const existing = await this.prisma.bankStatementLine.findUnique({
-          where: { companyId_externalRef: { companyId, externalRef } },
-          select: { id: true },
-        });
-        if (existing) {
-          results.push({
-            externalRef,
-            status: 'SKIPPED',
-            id: existing.id,
-            message: '银行流水已存在',
-          });
-          continue;
-        }
-      }
-
-      const created = await this.prisma.bankStatementLine.create({
-        data: {
-          companyId,
-          bankAccount: line.bankAccount?.trim() || null,
-          transactionDate,
-          description: line.description?.trim() || null,
-          counterparty: line.counterparty?.trim() || null,
-          amount,
-          externalRef,
-          status: BankStatementLineStatus.UNMATCHED,
-        },
-      });
-      results.push({
-        externalRef,
-        status: 'IMPORTED',
-        id: created.id,
-      });
-    }
-
-    return {
-      total: lines.length,
-      imported: results.filter((result) => result.status === 'IMPORTED').length,
-      skipped: results.filter((result) => result.status === 'SKIPPED').length,
-      results,
-    };
+    return this.bankStatementService.importBankStatementLines(companyId, dto);
   }
 
   async getBankStatementLines(companyId: string, status?: string) {
-    const resolvedStatus =
-      status === BankStatementLineStatus.MATCHED ||
-      status === BankStatementLineStatus.UNMATCHED
-        ? status
-        : undefined;
-    const rows = await this.prisma.bankStatementLine.findMany({
-      where: {
-        companyId,
-        status: resolvedStatus,
-      },
-      include: {
-        payment: { include: { partner: { select: { id: true, name: true } } } },
-        supplierPayment: {
-          include: { supplier: { select: { id: true, name: true } } },
-        },
-      },
-      orderBy: [{ transactionDate: 'desc' }, { createdAt: 'desc' }],
-      take: 200,
-    });
-
-    const rowsWithCandidates = await Promise.all(
-      rows.map(async (row) => ({
-        ...row,
-        matchCandidates:
-          row.status === BankStatementLineStatus.UNMATCHED
-            ? await this.findBankStatementMatchCandidates(companyId, row)
-            : [],
-      })),
-    );
-
-    return { rows: rowsWithCandidates };
-  }
-
-  private async findBankStatementMatchCandidates(
-    companyId: string,
-    line: { amount: Prisma.Decimal | number | string; transactionDate: Date },
-  ) {
-    const amount = roundDecimal(Number(line.amount));
-    if (amount > 0) {
-      const payments = await this.prisma.payment.findMany({
-        where: {
-          companyId,
-          postingStatus: EntryPostingStatus.POSTED,
-          amount,
-          bankStatementLines: {
-            none: { status: BankStatementLineStatus.MATCHED },
-          },
-        },
-        include: { partner: { select: { id: true, name: true } } },
-        orderBy: { paymentDate: 'desc' },
-        take: 5,
-      });
-      return payments.map((payment) => ({
-        targetType: 'CUSTOMER_PAYMENT' as const,
-        targetId: payment.id,
-        label: payment.partner.name,
-        amount: roundDecimal(Number(payment.amount)),
-        date: payment.paymentDate.toISOString(),
-      }));
-    }
-
-    const supplierPayments = await this.prisma.supplierPayment.findMany({
-      where: {
-        companyId,
-        postingStatus: EntryPostingStatus.POSTED,
-        amount: roundDecimal(Math.abs(amount)),
-        bankStatementLines: {
-          none: { status: BankStatementLineStatus.MATCHED },
-        },
-      },
-      include: { supplier: { select: { id: true, name: true } } },
-      orderBy: { paymentDate: 'desc' },
-      take: 5,
-    });
-    return supplierPayments.map((payment) => ({
-      targetType: 'SUPPLIER_PAYMENT' as const,
-      targetId: payment.id,
-      label: payment.supplier.name,
-      amount: roundDecimal(Number(payment.amount)),
-      date: payment.paymentDate.toISOString(),
-    }));
+    return this.bankStatementService.getBankStatementLines(companyId, status);
   }
 
   async autoMatchBankStatementLines(companyId: string, operatorId?: string) {
-    const lines = await this.prisma.bankStatementLine.findMany({
-      where: { companyId, status: BankStatementLineStatus.UNMATCHED },
-      orderBy: [{ transactionDate: 'asc' }, { createdAt: 'asc' }],
-      take: 200,
-    });
-    const results: Array<{
-      bankStatementLineId: string;
-      status: 'MATCHED' | 'SKIPPED';
-      targetType?: 'CUSTOMER_PAYMENT' | 'SUPPLIER_PAYMENT';
-      targetId?: string;
-      message?: string;
-    }> = [];
-
-    for (const line of lines) {
-      const candidates = await this.findBankStatementMatchCandidates(
-        companyId,
-        line,
-      );
-      if (candidates.length !== 1) {
-        results.push({
-          bankStatementLineId: line.id,
-          status: 'SKIPPED',
-          message: candidates.length === 0 ? '无匹配候选' : '存在多个候选',
-        });
-        continue;
-      }
-
-      const [candidate] = candidates;
-      await this.matchBankStatementLine(
-        companyId,
-        line.id,
-        {
-          targetType: candidate.targetType,
-          targetId: candidate.targetId,
-        },
-        operatorId,
-      );
-      results.push({
-        bankStatementLineId: line.id,
-        status: 'MATCHED',
-        targetType: candidate.targetType,
-        targetId: candidate.targetId,
-      });
-    }
-
-    return {
-      total: lines.length,
-      matched: results.filter((result) => result.status === 'MATCHED').length,
-      skipped: results.filter((result) => result.status === 'SKIPPED').length,
-      results,
-    };
+    return this.bankStatementService.autoMatchBankStatementLines(
+      companyId,
+      operatorId,
+    );
   }
 
   async matchBankStatementLine(
@@ -1252,70 +795,12 @@ export class FinanceService {
     dto: MatchBankStatementLineDto,
     operatorId?: string,
   ) {
-    const line = await this.prisma.bankStatementLine.findFirst({
-      where: { id: bankStatementLineId, companyId },
-    });
-    if (!line) {
-      throw new NotFoundException('银行流水不存在');
-    }
-    if (line.status === BankStatementLineStatus.MATCHED) {
-      throw new BadRequestException('银行流水已匹配');
-    }
-
-    const amount = roundDecimal(Number(line.amount));
-    if (dto.targetType === 'CUSTOMER_PAYMENT') {
-      const payment = await this.prisma.payment.findFirst({
-        where: { id: dto.targetId, companyId },
-        select: { id: true, amount: true, postingStatus: true },
-      });
-      if (!payment) {
-        throw new NotFoundException('客户收款不存在');
-      }
-      if (payment.postingStatus !== EntryPostingStatus.POSTED) {
-        throw new BadRequestException('客户收款尚未过账，不能匹配银行流水');
-      }
-      if (amount <= 0 || roundDecimal(Number(payment.amount)) !== amount) {
-        throw new BadRequestException('银行流水金额与客户收款金额不一致');
-      }
-      return this.prisma.bankStatementLine.update({
-        where: { id: line.id },
-        data: {
-          status: BankStatementLineStatus.MATCHED,
-          paymentId: payment.id,
-          supplierPaymentId: null,
-          matchedAt: new Date(),
-          matchedBy: operatorId ?? null,
-        },
-      });
-    }
-
-    const supplierPayment = await this.prisma.supplierPayment.findFirst({
-      where: { id: dto.targetId, companyId },
-      select: { id: true, amount: true, postingStatus: true },
-    });
-    if (!supplierPayment) {
-      throw new NotFoundException('供应商付款不存在');
-    }
-    if (supplierPayment.postingStatus !== EntryPostingStatus.POSTED) {
-      throw new BadRequestException('供应商付款尚未过账，不能匹配银行流水');
-    }
-    if (
-      amount >= 0 ||
-      roundDecimal(Number(supplierPayment.amount)) !==
-        roundDecimal(Math.abs(amount))
-    ) {
-      throw new BadRequestException('银行流水金额与供应商付款金额不一致');
-    }
-    return this.prisma.bankStatementLine.update({
-      where: { id: line.id },
-      data: {
-        status: BankStatementLineStatus.MATCHED,
-        paymentId: null,
-        supplierPaymentId: supplierPayment.id,
-        matchedAt: new Date(),
-        matchedBy: operatorId ?? null,
-      },
-    });
+    return this.bankStatementService.matchBankStatementLine(
+      companyId,
+      bankStatementLineId,
+      dto,
+      operatorId,
+    );
   }
 
   async applyReceivablePayment(
