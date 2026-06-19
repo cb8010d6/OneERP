@@ -18,6 +18,7 @@ import {
 } from './dto/purchase.dto';
 import { AccountingPeriodService } from '../finance/accounting-period.service';
 import { SupplierStatementService } from './supplier-statement.service';
+import { PurchaseQueryService } from './purchase-query.service';
 import {
   purchaseMoney,
   postedSupplierCreditAmount,
@@ -58,6 +59,7 @@ export class PurchaseService {
     private readonly inventoryService: InventoryService,
     private readonly eventEmitter: EventEmitter2,
     private readonly supplierStatementService: SupplierStatementService,
+    private readonly purchaseQueryService: PurchaseQueryService,
     @Optional()
     private readonly accountingPeriodService?: AccountingPeriodService,
   ) {}
@@ -480,51 +482,11 @@ export class PurchaseService {
   }
 
   async listSupplierCreditNotes(companyId: string) {
-    return this.prisma.supplierCreditNote.findMany({
-      where: { companyId },
-      include: {
-        purchaseInvoice: {
-          select: {
-            id: true,
-            invoiceNo: true,
-            purchaseOrder: { select: { purchaseNo: true } },
-          },
-        },
-        supplier: { select: { id: true, name: true } },
-        inventoryReturnDocument: {
-          select: {
-            id: true,
-            returnNo: true,
-            sourceDocumentNo: true,
-          },
-        },
-      },
-      orderBy: { creditDate: 'desc' },
-      take: 100,
-    });
+    return this.purchaseQueryService.listSupplierCreditNotes(companyId);
   }
 
   async listSupplierPayments(companyId: string) {
-    return this.prisma.supplierPayment.findMany({
-      where: { companyId },
-      include: {
-        supplier: { select: { id: true, name: true } },
-        allocations: {
-          include: {
-            purchaseInvoice: {
-              select: {
-                id: true,
-                invoiceNo: true,
-                purchaseOrder: { select: { purchaseNo: true } },
-              },
-            },
-          },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-      orderBy: { paymentDate: 'desc' },
-      take: 100,
-    });
+    return this.purchaseQueryService.listSupplierPayments(companyId);
   }
 
   async createSupplierPayment(
