@@ -636,6 +636,9 @@ export class InventoryService {
     };
   }
 
+  /**
+   * @deprecated 当前版本已改为过账即生效，无需审批。保留端点以兼容旧客户端，后续版本将移除。
+   */
   async approveAndDeductStock(companyId: string, transactionId: string) {
     const transaction = await this.prisma.inventoryTransaction.findFirst({
       where: { id: transactionId, companyId, type: 'OUTBOUND' },
@@ -1087,43 +1090,6 @@ export class InventoryService {
       remainingQuantity: roundDecimal(
         Math.max(0, requestedQuantity - allocatedQuantity),
       ),
-    };
-  }
-
-  private async resolveShipmentStockCandidate(
-    companyId: string,
-    materialId: string,
-    requestedQuantity: number,
-    sourceLocationId?: string,
-    batchNo?: string,
-  ) {
-    const candidate = await this.prisma.stockQuant.findFirst({
-      where: {
-        materialId,
-        quantity: { gt: 0 },
-        location: { companyId },
-        ...(sourceLocationId ? { locationId: sourceLocationId } : {}),
-        ...(batchNo ? { batchNo } : {}),
-      },
-      orderBy: [{ quantity: 'desc' }, { updatedAt: 'asc' }],
-      select: {
-        locationId: true,
-        batchNo: true,
-        quantity: true,
-        location: { select: { name: true } },
-      },
-    });
-
-    if (!candidate) {
-      return null;
-    }
-
-    return {
-      sourceLocationId: candidate.locationId,
-      batchNo: candidate.batchNo,
-      availableQuantity: Number(candidate.quantity ?? 0),
-      locationName: candidate.location?.name ?? null,
-      requestedQuantity,
     };
   }
 
