@@ -6,11 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import {
-  BankStatementLineStatus,
-  EntryPostingStatus,
-  Prisma,
-} from '@prisma/client';
+import { EntryPostingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   CreateCreditNoteDto,

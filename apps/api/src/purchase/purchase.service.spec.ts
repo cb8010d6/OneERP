@@ -76,9 +76,7 @@ function createService() {
   const supplierStatementService = new SupplierStatementService(
     prisma as never,
   );
-  const purchaseQueryService = new PurchaseQueryService(
-    prisma as never,
-  );
+  const purchaseQueryService = new PurchaseQueryService(prisma as never);
   const service = new PurchaseService(
     prisma as never,
     inventoryService as never,

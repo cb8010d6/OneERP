@@ -128,7 +128,7 @@ describe('BankStatementService', () => {
           data: expect.objectContaining({
             status: 'MATCHED',
             paymentId: 'pay1',
-          }),
+          }) as Record<string, unknown>,
         }),
       );
     });

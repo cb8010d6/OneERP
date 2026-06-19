@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { EntryPostingStatus, Prisma } from '@prisma/client';
+import { EntryPostingStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { roundDecimal } from '../core/utils/decimal';
 import { PaginationDto } from '../core/dto/pagination.dto';

@@ -3,7 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BankStatementLineStatus, EntryPostingStatus, Prisma } from '@prisma/client';
+import {
+  BankStatementLineStatus,
+  EntryPostingStatus,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { roundDecimal } from '../core/utils/decimal';
 import {

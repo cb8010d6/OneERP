@@ -78,8 +78,7 @@ export class SupplierStatementService {
     supplierId?: string,
   ): Promise<SupplierStatementResult> {
     const parsedStartDate = parseStatementDate(startDate, 'startDate');
-    const parsedEndDate =
-      parseStatementDate(endDate, 'endDate') ?? new Date();
+    const parsedEndDate = parseStatementDate(endDate, 'endDate') ?? new Date();
 
     if (
       parsedStartDate &&

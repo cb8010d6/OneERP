@@ -88,8 +88,7 @@ export class CustomerStatementService {
     partnerId?: string,
   ): Promise<CustomerStatementResult> {
     const parsedStartDate = parseFinanceDate(startDate, 'startDate');
-    const parsedEndDate =
-      parseFinanceDate(endDate, 'endDate') ?? new Date();
+    const parsedEndDate = parseFinanceDate(endDate, 'endDate') ?? new Date();
 
     if (
       parsedStartDate &&

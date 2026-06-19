@@ -136,10 +136,14 @@ describe('FinanceService', () => {
       accountType: 'ASSET',
     });
     customerStatementService = new CustomerStatementService(
-      prisma as unknown as ConstructorParameters<typeof CustomerStatementService>[0],
+      prisma as unknown as ConstructorParameters<
+        typeof CustomerStatementService
+      >[0],
     );
     bankStatementService = new BankStatementService(
-      prisma as unknown as ConstructorParameters<typeof BankStatementService>[0],
+      prisma as unknown as ConstructorParameters<
+        typeof BankStatementService
+      >[0],
     );
     financeQueryService = new FinanceQueryService(
       prisma as unknown as ConstructorParameters<typeof FinanceQueryService>[0],

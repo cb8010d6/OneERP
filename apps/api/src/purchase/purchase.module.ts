@@ -11,7 +11,12 @@ import { PurchaseQueryService } from './purchase-query.service';
 @Module({
   imports: [PrismaModule, InventoryModule, FinanceModule],
   controllers: [PurchaseController],
-  providers: [SupplierStatementService, PurchaseQueryService, PurchaseService, PermissionsGuard],
+  providers: [
+    SupplierStatementService,
+    PurchaseQueryService,
+    PurchaseService,
+    PermissionsGuard,
+  ],
   exports: [PurchaseService],
 })
 export class PurchaseModule {}
