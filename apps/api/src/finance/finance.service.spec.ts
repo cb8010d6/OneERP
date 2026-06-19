@@ -3,6 +3,7 @@ import { BankStatementLineStatus } from '@prisma/client';
 import { FinanceService } from './finance.service';
 import { CustomerStatementService } from './customer-statement.service';
 import { BankStatementService } from './bank-statement.service';
+import { FinanceQueryService } from './finance-query.service';
 
 type MockPrisma = {
   order: { findFirst: jest.Mock };
@@ -122,6 +123,7 @@ describe('FinanceService', () => {
   let service: FinanceService;
   let customerStatementService: CustomerStatementService;
   let bankStatementService: BankStatementService;
+  let financeQueryService: FinanceQueryService;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -139,6 +141,9 @@ describe('FinanceService', () => {
     bankStatementService = new BankStatementService(
       prisma as unknown as ConstructorParameters<typeof BankStatementService>[0],
     );
+    financeQueryService = new FinanceQueryService(
+      prisma as unknown as ConstructorParameters<typeof FinanceQueryService>[0],
+    );
     service = new FinanceService(
       prisma as unknown as ConstructorParameters<typeof FinanceService>[0],
       eventEmitter as unknown as ConstructorParameters<
@@ -152,6 +157,7 @@ describe('FinanceService', () => {
       >[3],
       customerStatementService,
       bankStatementService,
+      financeQueryService,
     );
   });
 

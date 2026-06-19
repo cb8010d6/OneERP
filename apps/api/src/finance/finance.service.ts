@@ -29,6 +29,7 @@ import { AccountingPeriodService } from './accounting-period.service';
 import { FinanceReportsService } from './finance-reports.service';
 import { CustomerStatementService } from './customer-statement.service';
 import { BankStatementService } from './bank-statement.service';
+import { FinanceQueryService } from './finance-query.service';
 
 export interface TrialBalanceRow {
   accountId: string;
@@ -290,6 +291,7 @@ export class FinanceService {
     private readonly financeReportsService: FinanceReportsService,
     private readonly customerStatementService: CustomerStatementService,
     private readonly bankStatementService: BankStatementService,
+    private readonly financeQueryService: FinanceQueryService,
     @Optional()
     private readonly accountingPeriodService?: AccountingPeriodService,
   ) {}
@@ -464,26 +466,7 @@ export class FinanceService {
   }
 
   async getInvoices(companyId: string, pagination: PaginationDto) {
-    const { page = 1, limit = 20 } = pagination;
-    const where = { companyId };
-
-    const [data, total] = await Promise.all([
-      this.prisma.invoice.findMany({
-        where,
-        include: {
-          order: true,
-          payments: true,
-          paymentAllocations: true,
-          creditNotes: true,
-        },
-        orderBy: { issuedDate: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.invoice.count({ where }),
-    ]);
-
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return this.financeQueryService.getInvoices(companyId, pagination);
   }
 
   async recordPayment(
@@ -713,44 +696,8 @@ export class FinanceService {
     return payment;
   }
 
-  async getUnappliedPayments(
-    companyId: string,
-  ): Promise<{ rows: UnappliedPaymentRow[] }> {
-    const payments = await this.prisma.payment.findMany({
-      where: { companyId },
-      include: {
-        partner: { select: { id: true, name: true } },
-        allocations: { select: { amount: true } },
-      },
-      orderBy: { paymentDate: 'desc' },
-      take: 100,
-    });
-
-    const rows = payments
-      .map((payment) => {
-        const amount = roundDecimal(Number(payment.amount));
-        const allocatedAmount = roundDecimal(
-          payment.allocations.reduce(
-            (sum, allocation) => sum + Number(allocation.amount),
-            0,
-          ),
-        );
-        return {
-          paymentId: payment.id,
-          partnerId: payment.partner.id,
-          partnerName: payment.partner.name,
-          paymentDate: payment.paymentDate.toISOString(),
-          method: payment.method,
-          amount,
-          allocatedAmount,
-          unappliedAmount: roundDecimal(amount - allocatedAmount),
-          postingStatus: payment.postingStatus,
-        };
-      })
-      .filter((payment) => payment.unappliedAmount > 0)
-      .sort((a, b) => b.unappliedAmount - a.unappliedAmount);
-
-    return { rows };
+  async getUnappliedPayments(companyId: string) {
+    return this.financeQueryService.getUnappliedPayments(companyId);
   }
 
   async listCustomerOptions(companyId: string) {
@@ -1062,37 +1009,7 @@ export class FinanceService {
   }
 
   async getCreditNotes(companyId: string, pagination: PaginationDto) {
-    const { page = 1, limit = 20 } = pagination;
-    const where = { companyId };
-
-    const [data, total] = await Promise.all([
-      this.prisma.creditNote.findMany({
-        where,
-        include: {
-          invoice: {
-            include: {
-              order: { select: { orderNo: true } },
-            },
-          },
-          partner: { select: { id: true, name: true } },
-          inventoryReturnDocument: {
-            select: {
-              id: true,
-              returnNo: true,
-              returnType: true,
-              sourceDocumentNo: true,
-            },
-          },
-          refunds: true,
-        },
-        orderBy: { creditDate: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.creditNote.count({ where }),
-    ]);
-
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return this.financeQueryService.getCreditNotes(companyId, pagination);
   }
 
   async postCreditNote(
@@ -1272,24 +1189,7 @@ export class FinanceService {
   }
 
   async getCustomerRefunds(companyId: string, pagination: PaginationDto) {
-    const { page = 1, limit = 20 } = pagination;
-    const where = { companyId };
-
-    const [data, total] = await Promise.all([
-      this.prisma.customerRefund.findMany({
-        where,
-        include: {
-          creditNote: { select: { creditNo: true } },
-          partner: { select: { id: true, name: true } },
-        },
-        orderBy: { refundDate: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.customerRefund.count({ where }),
-    ]);
-
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return this.financeQueryService.getCustomerRefunds(companyId, pagination);
   }
 
   async postCustomerRefund(
