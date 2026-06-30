@@ -3,23 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { roundDecimal } from '../core/utils/decimal';
-
-export interface StockLedgerRow {
-  locationId: string;
-  locationName: string;
-  warehouseId: string | null;
-  warehouseName: string | null;
-  materialId: string;
-  materialSku: string;
-  materialName: string;
-  materialUnit: string;
-  minStock: number;
-  netQty: number;
-  batchCount: number;
-  averageCost: number;
-  inventoryValue: number;
-  isLow: boolean;
-}
+import type {
+  ReplenishmentSuggestionResult,
+  ReplenishmentSuggestionRow,
+  StockLedgerRow,
+} from './inventory.types';
 
 interface StockLedgerQueryRow {
   locationId: string;
@@ -34,30 +22,6 @@ interface StockLedgerQueryRow {
   netQty: number | string | null;
   batchCount: number | string | null;
   averageCost: number | string | null;
-}
-
-export interface ReplenishmentSuggestionRow {
-  materialId: string;
-  sku: string;
-  name: string;
-  category: string;
-  unit: string;
-  minStock: number;
-  onHandQty: number;
-  incomingQty: number;
-  projectedQty: number;
-  shortageQty: number;
-  suggestedPurchaseQty: number;
-  unitPrice: number;
-  estimatedAmount: number;
-  severity: 'OUT_OF_STOCK' | 'SHORTAGE';
-}
-
-export interface ReplenishmentSuggestionResult {
-  totalSuggestions: number;
-  totalShortageQty: number;
-  totalEstimatedAmount: number;
-  rows: ReplenishmentSuggestionRow[];
 }
 
 @Injectable()

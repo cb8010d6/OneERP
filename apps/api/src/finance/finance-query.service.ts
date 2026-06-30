@@ -1,20 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { EntryPostingStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { roundDecimal } from '../core/utils/decimal';
 import { PaginationDto } from '../core/dto/pagination.dto';
-
-export interface UnappliedPaymentRow {
-  paymentId: string;
-  partnerId: string;
-  partnerName: string;
-  paymentDate: string;
-  method: string;
-  amount: number;
-  allocatedAmount: number;
-  unappliedAmount: number;
-  postingStatus: EntryPostingStatus;
-}
+import type { UnappliedPaymentRow } from './finance.types';
 
 @Injectable()
 export class FinanceQueryService {
