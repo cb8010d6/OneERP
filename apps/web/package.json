@@ -29,6 +29,10 @@
     "tailwind-merge": "^3.5.0",
     "zustand": "^5.0.12"
   },
+  "overrides": {
+    "form-data": "4.0.6",
+    "postcss": "8.5.16"
+  },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@testing-library/jest-dom": "^6.6.3",
