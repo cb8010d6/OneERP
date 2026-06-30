@@ -162,7 +162,11 @@ export class InventoryController {
 
   @Post('approve/transaction/:transactionId')
   @RequirePermissions(Permission.InventoryPost)
-  @ApiOperation({ summary: '审批出库申请并扣减库存' })
+  @ApiOperation({
+    summary: '审批出库申请并扣减库存（兼容旧客户端，已废弃）',
+    deprecated: true,
+    description: '当前版本已改为过账即生效，此端点保留兼容，不执行库存扣减。',
+  })
   async approveOutbound(
     @CurrentCompany() companyId: string,
     @Param('transactionId') transactionId: string,

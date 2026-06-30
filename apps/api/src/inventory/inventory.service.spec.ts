@@ -32,6 +32,7 @@ type MockPrisma = {
   };
   inventoryTransaction: {
     count: jest.Mock;
+    findFirst: jest.Mock;
     findMany: jest.Mock;
   };
   inventoryReturnDocument: {
@@ -93,6 +94,7 @@ describe('InventoryService', () => {
     },
     inventoryTransaction: {
       count: jest.fn(),
+      findFirst: jest.fn(),
       findMany: jest.fn(),
     },
     inventoryReturnDocument: {
@@ -165,6 +167,22 @@ describe('InventoryService', () => {
       >[2],
       stockQueryService,
     );
+  });
+
+  it('keeps approveAndDeductStock as a no-op compatibility endpoint', async () => {
+    prisma.inventoryTransaction.findFirst.mockResolvedValue({ id: 'txn-1' });
+
+    const result = await service.approveAndDeductStock('c1', 'txn-1');
+
+    expect(result).toEqual({
+      success: true,
+      message: '当前版本已改为过账即生效，无需审批。',
+    });
+    expect(prisma.inventoryTransaction.findFirst).toHaveBeenCalledWith({
+      where: { id: 'txn-1', companyId: 'c1', type: 'OUTBOUND' },
+    });
+    expect(tx.stockQuant.updateMany).not.toHaveBeenCalled();
+    expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
   it('throws when sale order is missing on reverse posting', async () => {
