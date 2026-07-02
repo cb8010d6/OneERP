@@ -30,6 +30,7 @@
     "business:acceptance": "powershell -ExecutionPolicy Bypass -File scripts/business-acceptance.ps1",
     "staff:smoke": "powershell -ExecutionPolicy Bypass -File scripts/staff-permission-smoke.ps1",
     "prod:audit": "powershell -ExecutionPolicy Bypass -File scripts/audit-prod-config.ps1",
+    "risk:audit": "node scripts/remaining-risk-audit.mjs",
     "backup:schedule": "powershell -ExecutionPolicy Bypass -File scripts/install-backup-schedule.ps1",
     "restore:drill": "powershell -ExecutionPolicy Bypass -File scripts/restore-drill.ps1"
   },

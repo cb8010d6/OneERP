@@ -5,6 +5,16 @@
 
 本文件只记录后续重构风险和拆批建议，不代表已实施迁移或业务策略变更。
 
+## 自动盘点入口
+
+后续推进 enum 迁移、编号生成器、事件一致性或写操作拆分前，先运行：
+
+```powershell
+npm run risk:audit
+```
+
+脚本会输出 `remaining-risk-audit-report.json`，盘点 `status/type String` 字段、金额型 `Float` 字段、`Date.now()` 业务编号和直接 `eventEmitter.emit` 调用。报告是只读分析，不会修改数据库或源码。
+
 ## 一、编号生成器碰撞风险
 
 ### 1.1 当前生成点
