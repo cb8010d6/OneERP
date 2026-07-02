@@ -41,6 +41,7 @@ describe('AISettingsService', () => {
       AI_SETTINGS_ENCRYPTION_KEY: 'test-encryption-secret',
       AI_API_KEY: '',
       OPENAI_API_KEY: '',
+      AI_ALLOWED_BASE_URL_HOSTS: '',
     };
   });
 
@@ -84,5 +85,26 @@ describe('AISettingsService', () => {
     await expect(
       service.updateSettings('c1', { apiKey: 'secret-test-key' }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('rejects non-HTTPS AI base URLs', async () => {
+    const { service } = createService();
+
+    await expect(
+      service.updateSettings('c1', {
+        baseUrl: 'http://127.0.0.1:8000/v1',
+      }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('allows admin-configured public AI base URL hosts', async () => {
+    process.env.AI_ALLOWED_BASE_URL_HOSTS = 'llm.example.com';
+    const { service } = createService();
+
+    const result = await service.updateSettings('c1', {
+      baseUrl: 'https://llm.example.com/v1/',
+    });
+
+    expect(result.baseUrl).toBe('https://llm.example.com/v1');
   });
 });

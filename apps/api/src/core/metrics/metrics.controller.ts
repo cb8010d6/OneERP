@@ -44,12 +44,13 @@ export class MetricsController {
     }
 
     if (this.token) {
-      const match = authorization?.match(/^Bearer\s+(.+)$/i);
-      const bearer = match?.[1] ?? '';
+      const bearer = this.extractBearerToken(authorization);
+      const bearerBuffer = Buffer.from(bearer);
+      const tokenBuffer = Buffer.from(this.token);
       if (
         !bearer ||
-        bearer.length !== this.token.length ||
-        !timingSafeEqual(Buffer.from(bearer), Buffer.from(this.token))
+        bearerBuffer.length !== tokenBuffer.length ||
+        !timingSafeEqual(bearerBuffer, tokenBuffer)
       ) {
         throw new ForbiddenException('Invalid metrics token');
       }
@@ -87,5 +88,22 @@ export class MetricsController {
       timestamp: new Date().toISOString(),
       checks,
     };
+  }
+
+  private extractBearerToken(authorization?: string) {
+    const prefix = 'Bearer ';
+    if (!authorization || authorization.length <= prefix.length) {
+      return '';
+    }
+    if (authorization.slice(0, prefix.length).toLowerCase() !== 'bearer ') {
+      return '';
+    }
+    const token = authorization.slice(prefix.length);
+    return token.includes(' ') ||
+      token.includes('\t') ||
+      token.includes('\r') ||
+      token.includes('\n')
+      ? ''
+      : token;
   }
 }

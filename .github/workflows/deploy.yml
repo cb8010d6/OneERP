@@ -150,6 +150,8 @@ jobs:
     name: Deploy over SSH
     needs: [build-api, build-api-migrate, build-web]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     if: github.ref == 'refs/heads/main' && (vars.DEPLOY_ENABLED == 'true' || (github.event_name == 'workflow_dispatch' && inputs.deploy == true))
 
     environment:

@@ -60,6 +60,14 @@ describe('MetricsController', () => {
       );
     });
 
+    it('throws ForbiddenException when bearer token uses unsafe whitespace', async () => {
+      const { controller } = createController({ METRICS_TOKEN: 'secret123' });
+      const res = mockRes();
+      await expect(
+        controller.getMetrics(res, 'Bearer\tsecret123'),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
     it('throws ForbiddenException when token required but missing', async () => {
       const { controller } = createController({ METRICS_TOKEN: 'secret123' });
       const res = mockRes();

@@ -27,6 +27,11 @@ const DEFAULT_PROVIDER: AIProvider = 'openai-compatible';
 const DEFAULT_BASE_URL = 'https://token-plan-sgp.xiaomimimo.com/v1';
 const DEFAULT_MODEL = 'mimo-v2.5';
 const DEFAULT_PRO_MODEL = 'mimo-v2.5-pro';
+const DEFAULT_ALLOWED_BASE_URL_HOSTS = [
+  'token-plan-sgp.xiaomimimo.com',
+  'api.openai.com',
+  'api.anthropic.com',
+];
 
 @Injectable()
 export class AISettingsService {
@@ -253,7 +258,44 @@ export class AISettingsService {
   }
 
   private normalizeBaseUrl(value: string) {
-    return value.trim().replace(/\/+$/, '');
+    const raw = value.trim();
+    if (!raw) {
+      throw new BadRequestException('AI base URL 不能为空');
+    }
+    if (raw.length > 500) {
+      throw new BadRequestException('AI base URL 不能超过 500 个字符');
+    }
+
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new BadRequestException('AI base URL 格式不正确');
+    }
+
+    if (url.protocol !== 'https:') {
+      throw new BadRequestException('AI base URL 必须使用 HTTPS');
+    }
+
+    const hostname = url.hostname.toLowerCase();
+    if (!this.allowedBaseUrlHosts().has(hostname)) {
+      throw new BadRequestException(
+        'AI base URL host 未在 AI_ALLOWED_BASE_URL_HOSTS 白名单中',
+      );
+    }
+
+    url.hash = '';
+    url.search = '';
+    const serialized = url.toString();
+    return serialized.endsWith('/') ? serialized.slice(0, -1) : serialized;
+  }
+
+  private allowedBaseUrlHosts() {
+    const configuredHosts = (process.env.AI_ALLOWED_BASE_URL_HOSTS ?? '')
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+    return new Set([...DEFAULT_ALLOWED_BASE_URL_HOSTS, ...configuredHosts]);
   }
 
   private encrypt(plainText: string) {
