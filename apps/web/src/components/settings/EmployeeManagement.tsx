@@ -63,9 +63,12 @@ function hasPermission(permissions: string[], required: string) {
 }
 
 function makePassword() {
-  return `OneERP-${Math.random().toString(36).slice(2, 8)}-${Date.now()
-    .toString(36)
-    .slice(-4)}`;
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const suffix = Array.from(bytes, (byte) => byte.toString(36).padStart(2, '0'))
+    .join('')
+    .slice(0, 12);
+  return `OneERP-${suffix}`;
 }
 
 export function EmployeeManagement() {

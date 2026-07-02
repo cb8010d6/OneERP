@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +44,10 @@ function addStep(name, passed, detail, data) {
 
 function assertCondition(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function randomSuffix(bytes = 4) {
+  return randomBytes(bytes).toString('hex');
 }
 
 async function bodyOf(response) {
@@ -130,7 +135,7 @@ let context = {};
 
 try {
   const adminApi = new Api(apiBaseUrl);
-  const suffix = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+  const suffix = `${Date.now().toString(36)}-${randomSuffix(3)}`;
   context = { apiBaseUrl, suffix };
 
   await withStep('admin-login', async () => {
