@@ -27,8 +27,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate commit messages
-        run: npx commitlint --config commitlint.config.cjs --from=${{ github.event.pull_request.base.sha }} --to=${{ github.event.pull_request.head.sha }}
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf "%s\n" "$PR_TITLE" | npx commitlint --config commitlint.config.cjs
 
   # ---- Validate: prisma validate -> prisma generate -> typecheck -> lint -> test -> build ----
   validate:
