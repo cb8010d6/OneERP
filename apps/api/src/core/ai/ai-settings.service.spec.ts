@@ -41,7 +41,7 @@ describe('AISettingsService', () => {
       AI_SETTINGS_ENCRYPTION_KEY: 'test-encryption-secret',
       AI_API_KEY: '',
       OPENAI_API_KEY: '',
-      AI_ALLOWED_BASE_URL_HOSTS: '',
+      AI_ALLOWED_BASE_URLS: '',
     };
   });
 
@@ -97,8 +97,8 @@ describe('AISettingsService', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  it('allows admin-configured public AI base URL hosts', async () => {
-    process.env.AI_ALLOWED_BASE_URL_HOSTS = 'llm.example.com';
+  it('allows admin-configured public AI base URLs', async () => {
+    process.env.AI_ALLOWED_BASE_URLS = 'https://llm.example.com/v1';
     const { service } = createService();
 
     const result = await service.updateSettings('c1', {

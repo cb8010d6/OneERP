@@ -37,7 +37,7 @@ The backend reads these variables:
 | `AI_MODEL` | Standard model used for low-risk assistance and automation. |
 | `AI_PRO_MODEL` | Higher-capability model used for complex analysis flows. |
 | `AI_REQUEST_TIMEOUT_MS` | Request timeout in milliseconds. |
-| `AI_ALLOWED_BASE_URL_HOSTS` | Comma-separated allowlist for custom public HTTPS AI API hosts. |
+| `AI_ALLOWED_BASE_URLS` | Comma-separated allowlist for exact public HTTPS AI API base URLs. |
 | `AI_SETTINGS_ENCRYPTION_KEY` | Required before saving company-level keys from the settings UI. |
 | `AI_WRITE_ENABLED` | Enables AI write operations only after staff permission and audit controls are accepted. |
 | `OPENAI_API_KEY` | Backward-compatible fallback if `AI_API_KEY` is empty. |
@@ -53,7 +53,7 @@ AI_API_KEY=
 AI_MODEL=mimo-v2.5
 AI_PRO_MODEL=mimo-v2.5-pro
 AI_REQUEST_TIMEOUT_MS=30000
-AI_ALLOWED_BASE_URL_HOSTS=token-plan-sgp.xiaomimimo.com
+AI_ALLOWED_BASE_URLS=https://token-plan-sgp.xiaomimimo.com/v1
 AI_SETTINGS_ENCRYPTION_KEY=CHANGE_ME_LOCAL_ONLY
 AI_WRITE_ENABLED=false
 ```

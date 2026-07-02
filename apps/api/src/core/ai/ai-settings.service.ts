@@ -27,10 +27,10 @@ const DEFAULT_PROVIDER: AIProvider = 'openai-compatible';
 const DEFAULT_BASE_URL = 'https://token-plan-sgp.xiaomimimo.com/v1';
 const DEFAULT_MODEL = 'mimo-v2.5';
 const DEFAULT_PRO_MODEL = 'mimo-v2.5-pro';
-const DEFAULT_ALLOWED_BASE_URL_HOSTS = [
-  'token-plan-sgp.xiaomimimo.com',
-  'api.openai.com',
-  'api.anthropic.com',
+const DEFAULT_ALLOWED_BASE_URLS = [
+  DEFAULT_BASE_URL,
+  'https://api.openai.com/v1',
+  'https://api.anthropic.com/v1',
 ];
 
 @Injectable()
@@ -258,44 +258,55 @@ export class AISettingsService {
   }
 
   private normalizeBaseUrl(value: string) {
+    const candidate = this.parseBaseUrl(value, 'AI base URL');
+    for (const allowedBaseUrl of this.allowedBaseUrls()) {
+      if (candidate === allowedBaseUrl) {
+        return allowedBaseUrl;
+      }
+    }
+    throw new BadRequestException(
+      'AI base URL 未在 AI_ALLOWED_BASE_URLS 白名单中',
+    );
+  }
+
+  private parseBaseUrl(value: string, label: string) {
     const raw = value.trim();
     if (!raw) {
-      throw new BadRequestException('AI base URL 不能为空');
+      throw new BadRequestException(`${label} 不能为空`);
     }
     if (raw.length > 500) {
-      throw new BadRequestException('AI base URL 不能超过 500 个字符');
+      throw new BadRequestException(`${label} 不能超过 500 个字符`);
     }
 
     let url: URL;
     try {
       url = new URL(raw);
     } catch {
-      throw new BadRequestException('AI base URL 格式不正确');
+      throw new BadRequestException(`${label} 格式不正确`);
     }
 
     if (url.protocol !== 'https:') {
-      throw new BadRequestException('AI base URL 必须使用 HTTPS');
+      throw new BadRequestException(`${label} 必须使用 HTTPS`);
     }
 
-    const hostname = url.hostname.toLowerCase();
-    if (!this.allowedBaseUrlHosts().has(hostname)) {
-      throw new BadRequestException(
-        'AI base URL host 未在 AI_ALLOWED_BASE_URL_HOSTS 白名单中',
-      );
-    }
-
+    url.hostname = url.hostname.toLowerCase();
     url.hash = '';
     url.search = '';
     const serialized = url.toString();
     return serialized.endsWith('/') ? serialized.slice(0, -1) : serialized;
   }
 
-  private allowedBaseUrlHosts() {
-    const configuredHosts = (process.env.AI_ALLOWED_BASE_URL_HOSTS ?? '')
+  private allowedBaseUrls() {
+    const configuredBaseUrls = (process.env.AI_ALLOWED_BASE_URLS ?? '')
       .split(',')
-      .map((host) => host.trim().toLowerCase())
+      .map((baseUrl) => baseUrl.trim())
       .filter(Boolean);
-    return new Set([...DEFAULT_ALLOWED_BASE_URL_HOSTS, ...configuredHosts]);
+    return [
+      ...DEFAULT_ALLOWED_BASE_URLS,
+      ...configuredBaseUrls.map((baseUrl) =>
+        this.parseBaseUrl(baseUrl, 'AI_ALLOWED_BASE_URLS'),
+      ),
+    ];
   }
 
   private encrypt(plainText: string) {
