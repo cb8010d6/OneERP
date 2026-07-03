@@ -10,11 +10,16 @@ on:
         required: false
         default: false
         type: boolean
+      image_tag:
+        description: "Image tag to deploy, for example latest or a commit SHA tag"
+        required: false
+        default: latest
+        type: string
 
 env:
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository_owner }}/oneerp
-  IMAGE_TAG: latest
+  IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
 
 jobs:
   build-api:
@@ -184,6 +189,12 @@ jobs:
           if [ "${#missing[@]}" -gt 0 ]; then
             printf '::error::Missing deployment configuration: %s\n' "${missing[*]}"
             printf 'Configure repository secrets DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY and variable DEPLOY_PATH.\n'
+            exit 1
+          fi
+
+          if ! printf '%s' "$IMAGE_TAG" | grep -Eq '^[A-Za-z0-9_.-]{1,128}$'; then
+            printf '::error::Invalid IMAGE_TAG: %s\n' "$IMAGE_TAG"
+            printf 'Use a Docker-compatible tag such as latest, main, or a commit SHA tag.\n'
             exit 1
           fi
 
