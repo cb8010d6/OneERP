@@ -91,6 +91,9 @@ jobs:
       - name: Run release risk preflight
         run: npm run risk:preflight:db
 
+      - name: Validate Docker Compose files
+        run: npm run compose:config
+
       # Policy: ``npm run validate`` runs format -> lint -> typecheck -> test -> build.
       # The lint step must NOT use --fix in CI; developers use ``npm run lint:fix`` locally.
       - name: Validate
