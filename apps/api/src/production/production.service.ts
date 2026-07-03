@@ -13,6 +13,8 @@ import {
   GenerateWorkOrdersFromOrderDto,
 } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
+import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
 import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseService } from '../purchase/purchase.service';
 
@@ -126,16 +128,20 @@ export class ProductionService {
     });
     if (!order) throw new NotFoundException('找不到对应的销售订单');
 
-    return this.prisma.workOrder.create({
-      data: {
-        workOrderNo: `WO-${Date.now()}`,
-        orderId: dto.orderId,
-        productId: dto.productId,
-        plannedQty: dto.plannedQty,
-        status: 'PENDING',
-        companyId,
-      },
-    });
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.workOrder.create({
+          data: {
+            workOrderNo: this.generateWorkOrderNo(attempt),
+            orderId: dto.orderId,
+            productId: dto.productId,
+            plannedQty: dto.plannedQty,
+            status: 'PENDING',
+            companyId,
+          },
+        }),
+      { targetFields: ['workOrderNo'] },
+    );
   }
 
   async generateWorkOrdersFromSalesOrder(
@@ -197,42 +203,49 @@ export class ProductionService {
     );
     const skipExisting = dto.skipExisting !== false;
 
-    return this.prisma.$transaction(async (tx) => {
-      const created: WorkOrderRecord[] = [];
-      const skipped: GenerateWorkOrdersResult['skipped'] = [];
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.$transaction(async (tx) => {
+          const created: WorkOrderRecord[] = [];
+          const skipped: GenerateWorkOrdersResult['skipped'] = [];
+          const offsetBase = attempt * quantitiesByProduct.size;
 
-      for (const [productId, plannedQty] of quantitiesByProduct.entries()) {
-        if (skipExisting && existingProductIds.has(productId)) {
-          skipped.push({ productId, reason: '该产品已有生产工单' });
-          continue;
-        }
-        const workOrder = await tx.workOrder.create({
-          data: {
-            workOrderNo: this.generateWorkOrderNo(),
+          for (const [productId, plannedQty] of quantitiesByProduct.entries()) {
+            if (skipExisting && existingProductIds.has(productId)) {
+              skipped.push({ productId, reason: '该产品已有生产工单' });
+              continue;
+            }
+            const workOrder = await tx.workOrder.create({
+              data: {
+                workOrderNo: this.generateWorkOrderNo(
+                  offsetBase + created.length,
+                ),
+                orderId: order.id,
+                productId,
+                plannedQty,
+                status: 'PENDING',
+                companyId,
+              },
+            });
+            created.push(workOrder);
+          }
+
+          if (created.length > 0 && order.status !== 'IN_PRODUCTION') {
+            await tx.order.update({
+              where: { id: order.id },
+              data: { status: 'IN_PRODUCTION' },
+            });
+          }
+
+          return {
             orderId: order.id,
-            productId,
-            plannedQty,
-            status: 'PENDING',
-            companyId,
-          },
-        });
-        created.push(workOrder);
-      }
-
-      if (created.length > 0 && order.status !== 'IN_PRODUCTION') {
-        await tx.order.update({
-          where: { id: order.id },
-          data: { status: 'IN_PRODUCTION' },
-        });
-      }
-
-      return {
-        orderId: order.id,
-        orderNo: order.orderNo,
-        created,
-        skipped,
-      };
-    });
+            orderNo: order.orderNo,
+            created,
+            skipped,
+          };
+        }),
+      { targetFields: ['workOrderNo'] },
+    );
   }
 
   async getWorkOrders(companyId: string, pagination: PaginationDto) {
@@ -734,12 +747,13 @@ export class ProductionService {
     }));
   }
 
-  private generateWorkOrderNo() {
-    const now = new Date();
+  private generateWorkOrderNo(attempt = 0) {
+    const timestamp = nextDocumentTimestamp(attempt);
+    const now = new Date(timestamp);
     const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(
       2,
       '0',
     )}${String(now.getDate()).padStart(2, '0')}`;
-    return `WO-${date}-${String(now.getTime()).slice(-6)}`;
+    return `WO-${date}-${String(timestamp).slice(-6)}`;
   }
 }

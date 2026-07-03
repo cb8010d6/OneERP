@@ -25,9 +25,9 @@ npm run enum:dirty-sql
 
 ## 一、编号生成器碰撞风险
 
-### 1.1 当前生成点
+### 1.1 原风险生成点
 
-| 位置 | 生成字段 | 当前策略 | Prisma 约束 |
+| 位置 | 生成字段 | 原策略 | Prisma 约束 |
 |------|----------|----------|-------------|
 | `PurchaseService.generateDocumentNo(prefix)` | purchaseNo / receiptNo / invoiceNo / paymentNo / creditNo | `${prefix}-${Date.now()}` | 对应字段均为 `@unique` |
 | `InventoryService.generateReturnNo(returnType)` | returnNo | `${prefix}-${yyyyMMdd}-${Date.now().slice(-6)}` | `returnNo @unique` |
@@ -39,10 +39,17 @@ npm run enum:dirty-sql
 ### 1.2 风险判断
 
 - `Date.now()` 在同一毫秒内可能重复，数据库唯一约束会兜底失败，但用户会看到创建失败。
-- 当前策略没有重试，也没有按公司、业务日期或序列维度表达业务含义。
+- 原策略没有重试，也没有按公司、业务日期或序列维度表达业务含义。
 - 不能直接替换为随机 ID，因为发票、付款、贷项、退货等编号通常会进入对账、审计和客户/供应商沟通场景。
 
-### 1.3 后续方案对比
+### 1.3 当前短期缓解
+
+- 自动生成且有唯一约束的单据号已接入 Prisma `P2002` 唯一冲突重试。
+- 时间戳生成改为进程内单调递增，避免同一 Node 进程内连续生成相同时间戳编号。
+- 显式输入的外部编号不自动重试，避免掩盖用户输入的真实重复。
+- 这只是短期缓解，不等同于连续、可审计、跨实例安全的业务编号策略。
+
+### 1.4 后续方案对比
 
 | 方案 | 优点 | 风险 |
 |------|------|------|

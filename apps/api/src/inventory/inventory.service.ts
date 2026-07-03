@@ -10,7 +10,9 @@ import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
 import { roundDecimal } from '../core/utils/decimal';
+import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
 import {
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
@@ -570,7 +572,7 @@ export class InventoryService {
       throw new BadRequestException(`库存不足，当前余量：${availableQuantity}`);
     }
 
-    const referenceNo = `SCAN-${Date.now()}`;
+    const referenceNo = `SCAN-${nextDocumentTimestamp()}`;
     const transaction = await this.createStockMove(
       companyId,
       {
@@ -897,48 +899,53 @@ export class InventoryService {
       batchNo?: string | null;
     }>;
   }) {
-    return this.prisma.inventoryReturnDocument.upsert({
-      where: {
-        companyId_referenceNo: {
-          companyId: input.companyId,
-          referenceNo: input.referenceNo,
-        },
-      },
-      update: {
-        note: input.note,
-        status: 'POSTED',
-      },
-      create: {
-        returnNo: this.generateReturnNo(input.returnType),
-        returnType: input.returnType,
-        sourceDocumentId: input.sourceDocumentId,
-        sourceDocumentNo: input.sourceDocumentNo,
-        referenceNo: input.referenceNo,
-        status: 'POSTED',
-        note: input.note,
-        operatorId: input.operatorId,
-        companyId: input.companyId,
-        lines: {
-          create: input.lines.map((line) => ({
-            materialId: line.materialId,
-            quantity: line.quantity,
-            locationId: line.locationId,
-            inventoryMoveId: line.transactionId,
-            batchNo: line.batchNo,
-          })),
-        },
-      },
-      include: { lines: { orderBy: { createdAt: 'asc' } } },
-    });
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.inventoryReturnDocument.upsert({
+          where: {
+            companyId_referenceNo: {
+              companyId: input.companyId,
+              referenceNo: input.referenceNo,
+            },
+          },
+          update: {
+            note: input.note,
+            status: 'POSTED',
+          },
+          create: {
+            returnNo: this.generateReturnNo(input.returnType, attempt),
+            returnType: input.returnType,
+            sourceDocumentId: input.sourceDocumentId,
+            sourceDocumentNo: input.sourceDocumentNo,
+            referenceNo: input.referenceNo,
+            status: 'POSTED',
+            note: input.note,
+            operatorId: input.operatorId,
+            companyId: input.companyId,
+            lines: {
+              create: input.lines.map((line) => ({
+                materialId: line.materialId,
+                quantity: line.quantity,
+                locationId: line.locationId,
+                inventoryMoveId: line.transactionId,
+                batchNo: line.batchNo,
+              })),
+            },
+          },
+          include: { lines: { orderBy: { createdAt: 'asc' } } },
+        }),
+      { targetFields: ['returnNo'] },
+    );
   }
 
-  private generateReturnNo(returnType: 'SALES' | 'PURCHASE') {
+  private generateReturnNo(returnType: 'SALES' | 'PURCHASE', attempt = 0) {
     const prefix = returnType === 'SALES' ? 'SR' : 'PR';
-    const now = new Date();
+    const timestamp = nextDocumentTimestamp(attempt);
+    const now = new Date(timestamp);
     const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate(),
     ).padStart(2, '0')}`;
-    return `${prefix}-${date}-${String(now.getTime()).slice(-6)}`;
+    return `${prefix}-${date}-${String(timestamp).slice(-6)}`;
   }
 
   private async resolveLocationOwnership(
@@ -967,7 +974,7 @@ export class InventoryService {
   ) {
     if (referenceNo) return referenceNo;
     if (documentType && documentId) {
-      return `${documentType}-${documentId}-${Date.now()}`;
+      return `${documentType}-${documentId}-${nextDocumentTimestamp()}`;
     }
     return undefined;
   }
@@ -1056,7 +1063,7 @@ export class InventoryService {
   }
 
   private generateBatchNo() {
-    return `BATCH${Date.now()}`;
+    return `BATCH${nextDocumentTimestamp()}`;
   }
 
   private async executeStockMove(

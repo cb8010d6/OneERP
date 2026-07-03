@@ -17,6 +17,8 @@ import {
   ReceivePurchaseOrderDto,
 } from './dto/purchase.dto';
 import { AccountingPeriodService } from '../finance/accounting-period.service';
+import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
+import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
 import { SupplierStatementService } from './supplier-statement.service';
 import { PurchaseQueryService } from './purchase-query.service';
 import {
@@ -118,32 +120,38 @@ export class PurchaseService {
       lines.reduce((sum, line) => sum.plus(line.subTotal), new Decimal(0)),
     );
 
-    return this.prisma.purchaseOrder.create({
-      data: {
-        purchaseNo: this.generateDocumentNo('PO'),
-        supplierId: dto.supplierId,
-        buyerId: userId,
-        companyId,
-        status: 'ORDERED',
-        expectedDate: dto.expectedDate ? new Date(dto.expectedDate) : undefined,
-        notes: dto.notes,
-        subTotal,
-        taxTotal: 0,
-        totalAmount: subTotal,
-        items: {
-          create: lines.map((line) => ({
-            materialId: line.materialId,
-            quantity: line.quantity,
-            unitPrice: line.unitPrice,
-            subTotal: line.subTotal,
-            taxAmount: line.taxAmount,
-            totalPrice: line.totalPrice,
-            note: line.note,
-          })),
-        },
-      },
-      include: purchaseOrderInclude(),
-    });
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.purchaseOrder.create({
+          data: {
+            purchaseNo: this.generateDocumentNo('PO', attempt),
+            supplierId: dto.supplierId,
+            buyerId: userId,
+            companyId,
+            status: 'ORDERED',
+            expectedDate: dto.expectedDate
+              ? new Date(dto.expectedDate)
+              : undefined,
+            notes: dto.notes,
+            subTotal,
+            taxTotal: 0,
+            totalAmount: subTotal,
+            items: {
+              create: lines.map((line) => ({
+                materialId: line.materialId,
+                quantity: line.quantity,
+                unitPrice: line.unitPrice,
+                subTotal: line.subTotal,
+                taxAmount: line.taxAmount,
+                totalPrice: line.totalPrice,
+                note: line.note,
+              })),
+            },
+          },
+          include: purchaseOrderInclude(),
+        }),
+      { targetFields: ['purchaseNo'] },
+    );
   }
 
   async listPurchaseOrders(companyId: string) {
@@ -209,87 +217,93 @@ export class PurchaseService {
       }
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const created = await tx.purchaseReceipt.create({
-        data: {
-          receiptNo: this.generateDocumentNo('GR'),
-          purchaseOrderId: order.id,
-          companyId,
-          operatorId: userId,
-          note: dto.note,
-          lines: {
-            create: dto.lines.map((line) => {
-              const orderLine = lineMap.get(line.purchaseOrderLineId);
-              if (!orderLine) {
-                throw new BadRequestException('收货明细不属于当前采购单');
-              }
-              return {
-                purchaseOrderLineId: orderLine.id,
-                materialId: orderLine.materialId,
-                quantity: line.quantity,
-                destLocationId: line.destLocationId,
-                batchNo: line.batchNo,
-              };
-            }),
-          },
-        },
-        include: { lines: true },
-      });
+    await withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.$transaction(async (tx) => {
+          const created = await tx.purchaseReceipt.create({
+            data: {
+              receiptNo: this.generateDocumentNo('GR', attempt),
+              purchaseOrderId: order.id,
+              companyId,
+              operatorId: userId,
+              note: dto.note,
+              lines: {
+                create: dto.lines.map((line) => {
+                  const orderLine = lineMap.get(line.purchaseOrderLineId);
+                  if (!orderLine) {
+                    throw new BadRequestException('收货明细不属于当前采购单');
+                  }
+                  return {
+                    purchaseOrderLineId: orderLine.id,
+                    materialId: orderLine.materialId,
+                    quantity: line.quantity,
+                    destLocationId: line.destLocationId,
+                    batchNo: line.batchNo,
+                  };
+                }),
+              },
+            },
+            include: { lines: true },
+          });
 
-      for (const line of dto.lines) {
-        const orderLine = lineMap.get(line.purchaseOrderLineId);
-        if (!orderLine) continue;
-        await tx.purchaseOrderLine.update({
-          where: { id: orderLine.id },
-          data: {
-            receivedQty: new Decimal(orderLine.receivedQty).plus(line.quantity),
-          },
-        });
-      }
+          for (const line of dto.lines) {
+            const orderLine = lineMap.get(line.purchaseOrderLineId);
+            if (!orderLine) continue;
+            await tx.purchaseOrderLine.update({
+              where: { id: orderLine.id },
+              data: {
+                receivedQty: new Decimal(orderLine.receivedQty).plus(
+                  line.quantity,
+                ),
+              },
+            });
+          }
 
-      const updatedLines = await tx.purchaseOrderLine.findMany({
-        where: { purchaseOrderId: order.id },
-      });
-      const fullyReceived = updatedLines.every((line) =>
-        new Decimal(line.receivedQty).gte(line.quantity),
-      );
-      const partiallyReceived = updatedLines.some((line) =>
-        new Decimal(line.receivedQty).gt(0),
-      );
-      await tx.purchaseOrder.update({
-        where: { id: order.id },
-        data: {
-          status: fullyReceived
-            ? 'RECEIVED'
-            : partiallyReceived
-              ? 'PARTIAL_RECEIVED'
-              : 'ORDERED',
-        },
-      });
+          const updatedLines = await tx.purchaseOrderLine.findMany({
+            where: { purchaseOrderId: order.id },
+          });
+          const fullyReceived = updatedLines.every((line) =>
+            new Decimal(line.receivedQty).gte(line.quantity),
+          );
+          const partiallyReceived = updatedLines.some((line) =>
+            new Decimal(line.receivedQty).gt(0),
+          );
+          await tx.purchaseOrder.update({
+            where: { id: order.id },
+            data: {
+              status: fullyReceived
+                ? 'RECEIVED'
+                : partiallyReceived
+                  ? 'PARTIAL_RECEIVED'
+                  : 'ORDERED',
+            },
+          });
 
-      for (const line of created.lines) {
-        const orderLine = lineMap.get(line.purchaseOrderLineId);
-        await this.inventoryService.createStockMoveInTransaction(
-          tx,
-          companyId,
-          {
-            materialId: line.materialId,
-            destLocationId: line.destLocationId ?? undefined,
-            quantity: Number(line.quantity),
-            batchNo: line.batchNo ?? undefined,
-            unitCost:
-              orderLine?.unitPrice != null
-                ? Number(orderLine.unitPrice)
-                : undefined,
-            referenceNo: `PURCHASE-IN-${order.purchaseNo}-${created.receiptNo}`,
-            documentType: 'PURCHASE_RECEIPT',
-            documentId: created.receiptNo,
-            note: dto.note ?? `采购收货：${order.purchaseNo}`,
-          },
-          userId,
-        );
-      }
-    });
+          for (const line of created.lines) {
+            const orderLine = lineMap.get(line.purchaseOrderLineId);
+            await this.inventoryService.createStockMoveInTransaction(
+              tx,
+              companyId,
+              {
+                materialId: line.materialId,
+                destLocationId: line.destLocationId ?? undefined,
+                quantity: Number(line.quantity),
+                batchNo: line.batchNo ?? undefined,
+                unitCost:
+                  orderLine?.unitPrice != null
+                    ? Number(orderLine.unitPrice)
+                    : undefined,
+                referenceNo: `PURCHASE-IN-${order.purchaseNo}-${created.receiptNo}`,
+                documentType: 'PURCHASE_RECEIPT',
+                documentId: created.receiptNo,
+                note: dto.note ?? `采购收货：${order.purchaseNo}`,
+              },
+              userId,
+            );
+          }
+        }),
+      { targetFields: ['receiptNo'] },
+    );
 
     return this.getPurchaseOrder(companyId, id);
   }
@@ -313,23 +327,34 @@ export class PurchaseService {
       throw new BadRequestException('该采购单已生成应付发票');
     }
 
-    return this.prisma.purchaseInvoice.create({
-      data: {
-        invoiceNo: dto.invoiceNo?.trim() || this.generateDocumentNo('PI'),
-        purchaseOrderId: order.id,
-        supplierId: order.supplierId,
-        companyId,
-        amount: order.totalAmount,
-        subTotal: order.subTotal,
-        taxAmount: order.taxTotal,
-        status: 'UNPAID',
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-      },
-      include: {
-        purchaseOrder: true,
-        supplier: true,
-      },
-    });
+    const explicitInvoiceNo = dto.invoiceNo?.trim();
+    const createInvoice = (invoiceNo: string) =>
+      this.prisma.purchaseInvoice.create({
+        data: {
+          invoiceNo,
+          purchaseOrderId: order.id,
+          supplierId: order.supplierId,
+          companyId,
+          amount: order.totalAmount,
+          subTotal: order.subTotal,
+          taxAmount: order.taxTotal,
+          status: 'UNPAID',
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+        },
+        include: {
+          purchaseOrder: true,
+          supplier: true,
+        },
+      });
+
+    if (explicitInvoiceNo) {
+      return createInvoice(explicitInvoiceNo);
+    }
+
+    return withUniqueConstraintRetry(
+      (attempt) => createInvoice(this.generateDocumentNo('PI', attempt)),
+      { targetFields: ['invoiceNo'] },
+    );
   }
 
   async postPurchaseInvoice(
@@ -549,31 +574,37 @@ export class PurchaseService {
       }
     }
 
-    return this.prisma.supplierPayment.create({
-      data: {
-        paymentNo: this.generateDocumentNo('SP'),
-        supplierId: dto.supplierId,
-        amount: paymentAmount,
-        method: dto.method,
-        paymentDate: dto.paymentDate ? new Date(dto.paymentDate) : new Date(),
-        note: dto.note ?? null,
-        postingStatus: EntryPostingStatus.DRAFT,
-        companyId,
-        allocations: {
-          create: [...allocationMap.entries()].map(
-            ([purchaseInvoiceId, amount]) => ({
-              purchaseInvoiceId,
-              amount,
-              companyId,
-            }),
-          ),
-        },
-      },
-      include: {
-        supplier: true,
-        allocations: { include: { purchaseInvoice: true } },
-      },
-    });
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.supplierPayment.create({
+          data: {
+            paymentNo: this.generateDocumentNo('SP', attempt),
+            supplierId: dto.supplierId,
+            amount: paymentAmount,
+            method: dto.method,
+            paymentDate: dto.paymentDate
+              ? new Date(dto.paymentDate)
+              : new Date(),
+            note: dto.note ?? null,
+            postingStatus: EntryPostingStatus.DRAFT,
+            companyId,
+            allocations: {
+              create: [...allocationMap.entries()].map(
+                ([purchaseInvoiceId, amount]) => ({
+                  purchaseInvoiceId,
+                  amount,
+                  companyId,
+                }),
+              ),
+            },
+          },
+          include: {
+            supplier: true,
+            allocations: { include: { purchaseInvoice: true } },
+          },
+        }),
+      { targetFields: ['paymentNo'] },
+    );
   }
 
   async createSupplierCreditNote(
@@ -639,25 +670,29 @@ export class PurchaseService {
       inventoryReturnDocumentId = returnDocument.id;
     }
 
-    return this.prisma.supplierCreditNote.create({
-      data: {
-        creditNo: this.generateDocumentNo('SCN'),
-        purchaseInvoiceId: invoice.id,
-        supplierId: invoice.supplierId,
-        amount,
-        inventoryReturnDocumentId,
-        reason: dto.reason ?? null,
-        status: 'DRAFT',
-        postingStatus: EntryPostingStatus.DRAFT,
-        creditDate: dto.creditDate ? new Date(dto.creditDate) : new Date(),
-        companyId,
-      },
-      include: {
-        purchaseInvoice: true,
-        supplier: true,
-        inventoryReturnDocument: true,
-      },
-    });
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.supplierCreditNote.create({
+          data: {
+            creditNo: this.generateDocumentNo('SCN', attempt),
+            purchaseInvoiceId: invoice.id,
+            supplierId: invoice.supplierId,
+            amount,
+            inventoryReturnDocumentId,
+            reason: dto.reason ?? null,
+            status: 'DRAFT',
+            postingStatus: EntryPostingStatus.DRAFT,
+            creditDate: dto.creditDate ? new Date(dto.creditDate) : new Date(),
+            companyId,
+          },
+          include: {
+            purchaseInvoice: true,
+            supplier: true,
+            inventoryReturnDocument: true,
+          },
+        }),
+      { targetFields: ['creditNo'] },
+    );
   }
 
   async postSupplierCreditNote(
@@ -840,11 +875,12 @@ export class PurchaseService {
     return posted;
   }
 
-  private generateDocumentNo(prefix: string) {
-    const now = new Date();
+  private generateDocumentNo(prefix: string, attempt = 0) {
+    const timestamp = nextDocumentTimestamp(attempt);
+    const now = new Date(timestamp);
     const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
       now.getDate(),
     ).padStart(2, '0')}`;
-    return `${prefix}-${date}-${String(now.getTime()).slice(-6)}`;
+    return `${prefix}-${date}-${String(timestamp).slice(-6)}`;
   }
 }

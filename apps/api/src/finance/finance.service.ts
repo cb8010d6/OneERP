@@ -20,6 +20,8 @@ import {
 } from './dto/finance.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { roundDecimal } from '../core/utils/decimal';
+import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
+import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
 import { FinanceAccountMappingService } from './finance-account-mapping.service';
 import { AccountingPeriodService } from './accounting-period.service';
 import { FinanceReportsService } from './finance-reports.service';
@@ -290,20 +292,24 @@ export class FinanceService {
       Number(resolvedTaxCode.rate ?? 0),
     );
 
-    const invoice = await this.prisma.invoice.create({
-      data: {
-        invoiceNo: `INV-${Date.now()}`,
-        orderId: dto.orderId,
-        amount,
-        subTotal: breakdown.subTotal,
-        taxAmount: breakdown.taxAmount,
-        taxCodeId: resolvedTaxCode.id ?? null,
-        dueDate: new Date(dto.dueDate),
-        status: 'UNPAID',
-        postingStatus: EntryPostingStatus.DRAFT,
-        companyId,
-      },
-    });
+    const invoice = await withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.invoice.create({
+          data: {
+            invoiceNo: `INV-${nextDocumentTimestamp(attempt)}`,
+            orderId: dto.orderId,
+            amount,
+            subTotal: breakdown.subTotal,
+            taxAmount: breakdown.taxAmount,
+            taxCodeId: resolvedTaxCode.id ?? null,
+            dueDate: new Date(dto.dueDate),
+            status: 'UNPAID',
+            postingStatus: EntryPostingStatus.DRAFT,
+            companyId,
+          },
+        }),
+      { targetFields: ['invoiceNo'] },
+    );
 
     // 记录审计日志
     await this.prisma.auditLog.create({
@@ -830,23 +836,27 @@ export class FinanceService {
       inventoryReturnDocumentId = returnDocument.id;
     }
 
-    const creditNote = await this.prisma.creditNote.create({
-      data: {
-        creditNo: `CN-${Date.now()}`,
-        invoiceId: invoice.id,
-        partnerId: invoice.order.partnerId,
-        amount,
-        subTotal: breakdown.subTotal,
-        taxAmount: breakdown.taxAmount,
-        taxCodeId: resolvedTaxCode.id ?? null,
-        inventoryReturnDocumentId,
-        reason: dto.reason ?? null,
-        status: 'DRAFT',
-        postingStatus: EntryPostingStatus.DRAFT,
-        creditDate,
-        companyId,
-      },
-    });
+    const creditNote = await withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.creditNote.create({
+          data: {
+            creditNo: `CN-${nextDocumentTimestamp(attempt)}`,
+            invoiceId: invoice.id,
+            partnerId: invoice.order.partnerId,
+            amount,
+            subTotal: breakdown.subTotal,
+            taxAmount: breakdown.taxAmount,
+            taxCodeId: resolvedTaxCode.id ?? null,
+            inventoryReturnDocumentId,
+            reason: dto.reason ?? null,
+            status: 'DRAFT',
+            postingStatus: EntryPostingStatus.DRAFT,
+            creditDate,
+            companyId,
+          },
+        }),
+      { targetFields: ['creditNo'] },
+    );
 
     await this.prisma.auditLog.create({
       data: {
@@ -1015,20 +1025,24 @@ export class FinanceService {
     const refundDate = dto.refundDate
       ? this.parseTrialBalanceDate(dto.refundDate, 'startDate')
       : new Date();
-    const refund = await this.prisma.customerRefund.create({
-      data: {
-        refundNo: `RF-${Date.now()}`,
-        creditNoteId: creditNote.id,
-        partnerId: creditNote.partnerId,
-        amount,
-        method: dto.method,
-        status: 'DRAFT',
-        postingStatus: EntryPostingStatus.DRAFT,
-        refundDate,
-        note: dto.note ?? null,
-        companyId,
-      },
-    });
+    const refund = await withUniqueConstraintRetry(
+      (attempt) =>
+        this.prisma.customerRefund.create({
+          data: {
+            refundNo: `RF-${nextDocumentTimestamp(attempt)}`,
+            creditNoteId: creditNote.id,
+            partnerId: creditNote.partnerId,
+            amount,
+            method: dto.method,
+            status: 'DRAFT',
+            postingStatus: EntryPostingStatus.DRAFT,
+            refundDate,
+            note: dto.note ?? null,
+            companyId,
+          },
+        }),
+      { targetFields: ['refundNo'] },
+    );
 
     await this.prisma.auditLog.create({
       data: {

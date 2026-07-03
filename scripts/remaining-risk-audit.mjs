@@ -173,6 +173,9 @@ function classifyDateNowUsage(snippet) {
     ) ||
     /`(?:INV|CN|RF|WO|SCAN|BATCH|\$\{documentType\})[-$]/.test(snippet)
   ) {
+    if (/\+\s*attempt\b/.test(snippet)) {
+      return 'business-document-number-with-retry';
+    }
     return 'business-document-number';
   }
   if (/fileName|objectName|AI客户|chat2sql/.test(snippet)) {
@@ -187,7 +190,14 @@ function buildRecommendations(report) {
   const businessDocumentNumberCount = report.source.dateNowUsages.filter(
     (usage) => usage.category === 'business-document-number',
   ).length;
+  const retriedBusinessDocumentNumberCount = report.source.dateNowUsages.filter(
+    (usage) => usage.category === 'business-document-number-with-retry',
+  ).length;
   const eventEmitCount = report.source.directEventEmits.length;
+  const businessNumberDetail =
+    businessDocumentNumberCount > 0
+      ? `${businessDocumentNumberCount} Date.now() usages still lack retry/sequence coverage; ${retriedBusinessDocumentNumberCount} are covered by unique-conflict retry.`
+      : 'No uncovered Date.now() business document usages detected. Generated unique fields should still move to DB sequence/business-number table before strict production numbering.';
 
   return [
     {
@@ -206,7 +216,7 @@ function buildRecommendations(report) {
       priority: 'P1',
       name: 'Business number collision handling',
       status: businessDocumentNumberCount > 0 ? 'required' : 'clear',
-      detail: `${businessDocumentNumberCount} Date.now() usages look like business document numbers. Add retry or sequence design.`,
+      detail: businessNumberDetail,
     },
     {
       priority: 'P2',
@@ -238,6 +248,10 @@ function main() {
     businessDocumentNumberDateNowUsages: report.source.dateNowUsages.filter(
       (usage) => usage.category === 'business-document-number',
     ).length,
+    retriedBusinessDocumentNumberDateNowUsages:
+      report.source.dateNowUsages.filter(
+        (usage) => usage.category === 'business-document-number-with-retry',
+      ).length,
     directEventEmits: report.source.directEventEmits.length,
     transactionMentions: report.source.transactionMentions.length,
     deprecatedCompatibilityMarkers: report.source.deprecatedCompatibility.length,
