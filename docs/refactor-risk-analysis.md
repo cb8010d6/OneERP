@@ -23,6 +23,14 @@ npm run enum:dirty-sql
 
 脚本会输出 `enum-dirty-data-scan.sql`，包含每个 `status/type String` 候选字段的现值分布，以及按 schema 注释或 `@default` 推导的非法值检查。所有非法值查询必须返回零行，才能进入 enum migration 设计。该 SQL 使用 `SET TRANSACTION READ ONLY`，不修改数据库。
 
+如果已连接目标数据库，还应生成 JSON 证据报告：
+
+```powershell
+npm run enum:dirty-report
+```
+
+脚本会读取 `DATABASE_URL`，在只读事务里执行同一组候选字段检查，并输出 `enum-dirty-data-report.json`。报告中的 `summary.fieldsWithInvalidValues` 和 `summary.invalidRows` 必须为 `0`，才允许进入 enum migration 设计；`fieldsNeedingAllowedValueConfirmation` 大于 `0` 时，需要先由业务确认允许值来源。
+
 ## 一、编号生成器碰撞风险
 
 ### 1.1 原风险生成点

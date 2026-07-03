@@ -32,6 +32,7 @@
     "prod:audit": "powershell -ExecutionPolicy Bypass -File scripts/audit-prod-config.ps1",
     "risk:audit": "node scripts/remaining-risk-audit.mjs",
     "enum:dirty-sql": "node scripts/enum-dirty-data-sql.mjs",
+    "enum:dirty-report": "node scripts/enum-dirty-data-report.mjs",
     "backup:schedule": "powershell -ExecutionPolicy Bypass -File scripts/install-backup-schedule.ps1",
     "restore:drill": "powershell -ExecutionPolicy Bypass -File scripts/restore-drill.ps1"
   },

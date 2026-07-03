@@ -68,6 +68,7 @@ business-acceptance-report.json
 restore-drill-report.json
 remaining-risk-audit-report*.json
 enum-dirty-data-scan*.sql
+enum-dirty-data-report*.json
 .restore-drill/
 
 # Reference codebases not tracked in this repo
