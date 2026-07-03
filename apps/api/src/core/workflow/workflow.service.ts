@@ -4,9 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { EventQueueService } from '../events/event-queue.service';
 
 interface WorkflowTargetConfig {
   delegate: string;
@@ -229,7 +229,7 @@ const DEFAULT_WORKFLOW_DEFINITIONS: Record<string, DefaultWorkflowDefinition> =
 export class WorkflowService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventQueueService: EventQueueService,
   ) {}
 
   async transition(
@@ -362,10 +362,17 @@ export class WorkflowService {
       record: updatedRecord,
     };
 
-    this.eventEmitter.emit(`workflow.action.${eventModel}.${toEvent}`, payload);
+    await this.publishWorkflowActionEvent(
+      eventModel,
+      recordId,
+      toEvent,
+      payload,
+    );
     if (actionEvent !== toEvent) {
-      this.eventEmitter.emit(
-        `workflow.action.${eventModel}.${actionEvent}`,
+      await this.publishWorkflowActionEvent(
+        eventModel,
+        recordId,
+        actionEvent,
         payload,
       );
     }
@@ -392,6 +399,22 @@ export class WorkflowService {
 
   private toEventKey(value: string) {
     return value.trim().toLowerCase().replace(/\s+/g, '_');
+  }
+
+  private publishWorkflowActionEvent(
+    eventModel: string,
+    recordId: string,
+    eventKey: string,
+    payload: Record<string, unknown>,
+  ) {
+    const eventName = `workflow.action.${eventModel}.${eventKey}`;
+    return this.eventQueueService.publish({
+      eventName,
+      idempotencyKey: `${eventName}:${recordId}`,
+      companyId:
+        typeof payload.companyId === 'string' ? payload.companyId : undefined,
+      payload,
+    });
   }
 
   private async findOrBootstrapWorkflow(

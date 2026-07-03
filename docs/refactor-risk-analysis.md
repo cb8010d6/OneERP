@@ -126,9 +126,9 @@ select 'EventDlq.status' as field, status, count(*) from "EventDlq" group by sta
 ### 3.0 事件一致性当前收口
 
 - Finance / Purchase / Inventory 中事务后触发的业务事件已改为通过 `EventQueueService.publish()` 入队并发布。
+- Workflow action 事件也已改为通过 `EventQueueService.publish()` 发布。`workflow.action.sale_order.shipped` 会触发自动出库，属于业务副作用，不能依赖不等待 async listener 的直接 `emit`。
 - 发布失败会保留在 `EventDlq` 中，由 `EventQueueRunner` 后续重试，避免数据库提交成功但事件静默丢失。
-- `workflow.service.ts` 仍保留 2 个内部 `eventEmitter.emit`，用于工作流动作广播；这类事件暂未纳入本批 outbox 范围。
-- 后续若要继续收口，应先确认 workflow 事件是否需要跨进程可靠投递，再决定是否迁移。
+- 后续若新增 workflow listener，必须确认 listener 幂等性并设置稳定的事件名/幂等键。
 
 ### 3.1 Purchase 供应商付款
 
