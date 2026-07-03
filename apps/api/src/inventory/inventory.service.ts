@@ -4,12 +4,12 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
 import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { EventQueueService } from '../core/events/event-queue.service';
 import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
 import { roundDecimal } from '../core/utils/decimal';
 import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
@@ -61,7 +61,7 @@ export class InventoryService {
   constructor(
     private prisma: PrismaService,
     private readonly kyselyService: KyselyService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventQueueService: EventQueueService,
     private readonly stockQueryService: StockQueryService,
   ) {}
 
@@ -317,14 +317,19 @@ export class InventoryService {
         );
 
         for (const allocation of lineTransactions) {
-          this.eventEmitter.emit('inventory.stock_depleted', {
-            companyId,
+          await this.eventQueueService.publish({
+            eventName: 'inventory.stock_depleted',
             idempotencyKey: `stock_depleted:${allocation.transactionId}`,
-            transactionId: allocation.transactionId,
-            referenceNo: allocation.referenceNo,
-            materialId: product.materialId,
-            quantity: allocation.quantity,
-            operatorId: operatorId || 'SYSTEM',
+            companyId,
+            payload: {
+              companyId,
+              idempotencyKey: `stock_depleted:${allocation.transactionId}`,
+              transactionId: allocation.transactionId,
+              referenceNo: allocation.referenceNo,
+              materialId: product.materialId,
+              quantity: allocation.quantity,
+              operatorId: operatorId || 'SYSTEM',
+            },
           });
         }
 
@@ -461,15 +466,20 @@ export class InventoryService {
     );
 
     if (transaction.type === 'OUTBOUND') {
-      this.eventEmitter.emit('inventory.stock_depleted', {
-        companyId,
+      await this.eventQueueService.publish({
+        eventName: 'inventory.stock_depleted',
         idempotencyKey: `stock_depleted:${transaction.id}`,
-        transactionId: transaction.id,
-        referenceNo: transaction.referenceNo,
-        materialId: transaction.materialId,
-        quantity: transaction.quantity,
-        unitCost: transaction.unitCost ?? Number(material?.unitPrice ?? 0),
-        operatorId: operatorId || 'SYSTEM',
+        companyId,
+        payload: {
+          companyId,
+          idempotencyKey: `stock_depleted:${transaction.id}`,
+          transactionId: transaction.id,
+          referenceNo: transaction.referenceNo,
+          materialId: transaction.materialId,
+          quantity: transaction.quantity,
+          unitCost: transaction.unitCost ?? Number(material?.unitPrice ?? 0),
+          operatorId: operatorId || 'SYSTEM',
+        },
       });
     }
 

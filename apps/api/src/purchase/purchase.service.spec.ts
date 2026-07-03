@@ -70,8 +70,8 @@ function createService() {
     createStockMove: jest.fn(),
     createStockMoveInTransaction: jest.fn(),
   };
-  const eventEmitter = {
-    emit: jest.fn(),
+  const eventQueueService = {
+    publish: jest.fn(),
   };
   const supplierStatementService = new SupplierStatementService(
     prisma as never,
@@ -80,11 +80,17 @@ function createService() {
   const service = new PurchaseService(
     prisma as never,
     inventoryService as never,
-    eventEmitter as never,
+    eventQueueService as never,
     supplierStatementService,
     purchaseQueryService,
   );
-  return { service, prisma, tx, inventoryService, eventEmitter };
+  return {
+    service,
+    prisma,
+    tx,
+    inventoryService,
+    eventQueueService,
+  };
 }
 
 describe('PurchaseService', () => {
@@ -245,7 +251,7 @@ describe('PurchaseService', () => {
   });
 
   it('posts payable invoice and emits accounting event', async () => {
-    const { service, prisma, eventEmitter } = createService();
+    const { service, prisma, eventQueueService } = createService();
     prisma.purchaseInvoice.findFirst.mockResolvedValue({
       id: 'pi-1',
       invoiceNo: 'PI-001',
@@ -284,16 +290,21 @@ describe('PurchaseService', () => {
       where: { id: 'pi-1' },
       data: { postingStatus: 'POSTED' },
     });
-    expect(eventEmitter.emit).toHaveBeenCalledWith('purchase.invoice.posted', {
-      companyId: 'c1',
+    expect(eventQueueService.publish).toHaveBeenCalledWith({
+      eventName: 'purchase.invoice.posted',
       idempotencyKey: 'purchase_invoice_posted:pi-1',
-      purchaseInvoiceId: 'pi-1',
-      operatorId: 'u1',
+      companyId: 'c1',
+      payload: {
+        companyId: 'c1',
+        idempotencyKey: 'purchase_invoice_posted:pi-1',
+        purchaseInvoiceId: 'pi-1',
+        operatorId: 'u1',
+      },
     });
   });
 
   it('rejects payable invoice posting when receipt is short', async () => {
-    const { service, prisma, eventEmitter } = createService();
+    const { service, prisma, eventQueueService } = createService();
     prisma.purchaseInvoice.findFirst.mockResolvedValue({
       id: 'pi-1',
       invoiceNo: 'PI-001',
@@ -325,11 +336,11 @@ describe('PurchaseService', () => {
       service.postPurchaseInvoice('c1', 'pi-1', 'u1'),
     ).rejects.toThrow('应付发票未通过三单匹配');
     expect(prisma.purchaseInvoice.update).not.toHaveBeenCalled();
-    expect(eventEmitter.emit).not.toHaveBeenCalled();
+    expect(eventQueueService.publish).not.toHaveBeenCalled();
   });
 
   it('allows payable invoice posting when only purchase price variance exists', async () => {
-    const { service, prisma, eventEmitter } = createService();
+    const { service, prisma, eventQueueService } = createService();
     prisma.purchaseInvoice.findFirst.mockResolvedValue({
       id: 'pi-1',
       invoiceNo: 'PI-001',
@@ -364,11 +375,16 @@ describe('PurchaseService', () => {
     const result = await service.postPurchaseInvoice('c1', 'pi-1', 'u1');
 
     expect(result).toEqual({ id: 'pi-1', postingStatus: 'POSTED' });
-    expect(eventEmitter.emit).toHaveBeenCalledWith('purchase.invoice.posted', {
-      companyId: 'c1',
+    expect(eventQueueService.publish).toHaveBeenCalledWith({
+      eventName: 'purchase.invoice.posted',
       idempotencyKey: 'purchase_invoice_posted:pi-1',
-      purchaseInvoiceId: 'pi-1',
-      operatorId: 'u1',
+      companyId: 'c1',
+      payload: {
+        companyId: 'c1',
+        idempotencyKey: 'purchase_invoice_posted:pi-1',
+        purchaseInvoiceId: 'pi-1',
+        operatorId: 'u1',
+      },
     });
   });
 
@@ -416,7 +432,7 @@ describe('PurchaseService', () => {
   });
 
   it('does not emit duplicate event for already posted payable invoice', async () => {
-    const { service, prisma, eventEmitter } = createService();
+    const { service, prisma, eventQueueService } = createService();
     prisma.purchaseInvoice.findFirst.mockResolvedValue({
       id: 'pi-1',
       invoiceNo: 'PI-001',
@@ -432,7 +448,7 @@ describe('PurchaseService', () => {
       }),
     );
     expect(prisma.purchaseInvoice.update).not.toHaveBeenCalled();
-    expect(eventEmitter.emit).not.toHaveBeenCalled();
+    expect(eventQueueService.publish).not.toHaveBeenCalled();
   });
 
   it('bulk posts payable invoices and keeps per-invoice failure reasons', async () => {
@@ -802,7 +818,7 @@ describe('PurchaseService', () => {
   });
 
   it('posts supplier credit note and updates purchase invoice status', async () => {
-    const { service, prisma, tx, eventEmitter } = createService();
+    const { service, prisma, tx, eventQueueService } = createService();
     prisma.supplierCreditNote.findFirst.mockResolvedValue({
       id: 'scn-1',
       creditNo: 'SCN-001',
@@ -837,15 +853,17 @@ describe('PurchaseService', () => {
       where: { id: 'pi-1' },
       data: { status: 'PAID' },
     });
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'purchase.supplier_credit_note.posted',
-      {
+    expect(eventQueueService.publish).toHaveBeenCalledWith({
+      eventName: 'purchase.supplier_credit_note.posted',
+      idempotencyKey: 'supplier_credit_note_posted:scn-1',
+      companyId: 'c1',
+      payload: {
         companyId: 'c1',
         idempotencyKey: 'supplier_credit_note_posted:scn-1',
         supplierCreditNoteId: 'scn-1',
         operatorId: 'u1',
       },
-    );
+    });
   });
 
   it('creates supplier payment allocated to a payable invoice', async () => {
@@ -922,7 +940,7 @@ describe('PurchaseService', () => {
   });
 
   it('posts supplier payment and marks payable invoice paid', async () => {
-    const { service, prisma, tx, eventEmitter } = createService();
+    const { service, prisma, tx, eventQueueService } = createService();
     prisma.supplierPayment.findFirst.mockResolvedValue({
       id: 'sp-1',
       paymentNo: 'SP-001',
@@ -962,14 +980,16 @@ describe('PurchaseService', () => {
       where: { id: 'pi-1' },
       data: { status: 'PAID' },
     });
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'purchase.supplier_payment.posted',
-      {
+    expect(eventQueueService.publish).toHaveBeenCalledWith({
+      eventName: 'purchase.supplier_payment.posted',
+      idempotencyKey: 'supplier_payment_posted:sp-1',
+      companyId: 'c1',
+      payload: {
         companyId: 'c1',
         idempotencyKey: 'supplier_payment_posted:sp-1',
         supplierPaymentId: 'sp-1',
         operatorId: 'u1',
       },
-    );
+    });
   });
 });

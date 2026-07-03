@@ -136,6 +136,7 @@ function inspectSource() {
         directEventEmits.push({
           path: rel,
           line: lineNo,
+          category: classifyDirectEventEmit(rel),
           snippet: trimmed,
         });
       }
@@ -166,6 +167,13 @@ function inspectSource() {
   };
 }
 
+function classifyDirectEventEmit(relativePath) {
+  if (relativePath.includes('/core/workflow/')) {
+    return 'workflow-internal';
+  }
+  return 'business-service';
+}
+
 function classifyDateNowUsage(snippet) {
   if (
     /(?:invoiceNo|creditNo|refundNo|purchaseNo|receiptNo|paymentNo|returnNo|workOrderNo|referenceNo|batchNo)\b/.test(
@@ -193,7 +201,12 @@ function buildRecommendations(report) {
   const retriedBusinessDocumentNumberCount = report.source.dateNowUsages.filter(
     (usage) => usage.category === 'business-document-number-with-retry',
   ).length;
-  const eventEmitCount = report.source.directEventEmits.length;
+  const businessEventEmitCount = report.source.directEventEmits.filter(
+    (emit) => emit.category === 'business-service',
+  ).length;
+  const workflowEventEmitCount = report.source.directEventEmits.filter(
+    (emit) => emit.category === 'workflow-internal',
+  ).length;
   const businessNumberDetail =
     businessDocumentNumberCount > 0
       ? `${businessDocumentNumberCount} Date.now() usages still lack retry/sequence coverage; ${retriedBusinessDocumentNumberCount} are covered by unique-conflict retry.`
@@ -221,8 +234,11 @@ function buildRecommendations(report) {
     {
       priority: 'P2',
       name: 'Outbox/event consistency',
-      status: eventEmitCount > 0 ? 'required' : 'clear',
-      detail: `${eventEmitCount} direct eventEmitter.emit calls detected. Review post-transaction failure handling.`,
+      status: businessEventEmitCount > 0 ? 'required' : 'clear',
+      detail:
+        businessEventEmitCount > 0
+          ? `${businessEventEmitCount} business-service direct eventEmitter.emit calls detected. Route transaction-adjacent events through EventQueueService.`
+          : `${workflowEventEmitCount} workflow-internal direct emits remain; transaction-adjacent business events are routed through EventQueueService.`,
     },
   ];
 }
@@ -253,6 +269,12 @@ function main() {
         (usage) => usage.category === 'business-document-number-with-retry',
       ).length,
     directEventEmits: report.source.directEventEmits.length,
+    businessServiceDirectEventEmits: report.source.directEventEmits.filter(
+      (emit) => emit.category === 'business-service',
+    ).length,
+    workflowInternalDirectEventEmits: report.source.directEventEmits.filter(
+      (emit) => emit.category === 'workflow-internal',
+    ).length,
     transactionMentions: report.source.transactionMentions.length,
     deprecatedCompatibilityMarkers: report.source.deprecatedCompatibility.length,
   };

@@ -130,8 +130,8 @@ describe('InventoryService', () => {
     },
   };
 
-  const eventEmitter = {
-    emit: jest.fn(),
+  const eventQueueService = {
+    publish: jest.fn(),
   };
 
   let service: InventoryService;
@@ -162,7 +162,7 @@ describe('InventoryService', () => {
       kyselyService as unknown as ConstructorParameters<
         typeof InventoryService
       >[1],
-      eventEmitter as unknown as ConstructorParameters<
+      eventQueueService as unknown as ConstructorParameters<
         typeof InventoryService
       >[2],
       stockQueryService,
@@ -182,7 +182,7 @@ describe('InventoryService', () => {
       where: { id: 'txn-1', companyId: 'c1', type: 'OUTBOUND' },
     });
     expect(tx.stockQuant.updateMany).not.toHaveBeenCalled();
-    expect(eventEmitter.emit).not.toHaveBeenCalled();
+    expect(eventQueueService.publish).not.toHaveBeenCalled();
   });
 
   it('throws when sale order is missing on reverse posting', async () => {
@@ -519,17 +519,18 @@ describe('InventoryService', () => {
       where: { id: 'o1' },
       data: { status: 'PARTIAL_SHIPPED' },
     });
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'inventory.stock_depleted',
-      expect.objectContaining({ materialId: 'm1', quantity: 1 }),
+    expect(eventQueueService.publish).toHaveBeenCalledTimes(3);
+    expect(eventQueueService.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: 'inventory.stock_depleted',
+        payload: expect.objectContaining({ materialId: 'm1', quantity: 1 }),
+      }),
     );
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'inventory.stock_depleted',
-      expect.objectContaining({ materialId: 'm1', quantity: 1 }),
-    );
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'inventory.stock_depleted',
-      expect.objectContaining({ materialId: 'm2', quantity: 3 }),
+    expect(eventQueueService.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: 'inventory.stock_depleted',
+        payload: expect.objectContaining({ materialId: 'm2', quantity: 3 }),
+      }),
     );
   });
 
@@ -783,12 +784,14 @@ describe('InventoryService', () => {
         }),
       }),
     );
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'inventory.stock_depleted',
+    expect(eventQueueService.publish).toHaveBeenCalledWith(
       expect.objectContaining({
-        materialId: 'm1',
-        quantity: 2,
-        unitCost: 8,
+        eventName: 'inventory.stock_depleted',
+        payload: expect.objectContaining({
+          materialId: 'm1',
+          quantity: 2,
+          unitCost: 8,
+        }) as unknown,
       }),
     );
   });
@@ -867,9 +870,11 @@ describe('InventoryService', () => {
     expect(tx.stockQuant.findFirst).toHaveBeenCalledTimes(2);
     expect(tx.stockQuant.updateMany).toHaveBeenCalledTimes(2);
     expect(createCall.data.batchNo).toBe('B2');
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      'inventory.stock_depleted',
-      expect.objectContaining({ materialId: 'm1', quantity: 2 }),
+    expect(eventQueueService.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: 'inventory.stock_depleted',
+        payload: expect.objectContaining({ materialId: 'm1', quantity: 2 }),
+      }),
     );
   });
 });

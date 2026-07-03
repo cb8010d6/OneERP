@@ -5,9 +5,9 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EntryPostingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { EventQueueService } from '../core/events/event-queue.service';
 import {
   CreateCreditNoteDto,
   CreateInvoiceDto,
@@ -149,7 +149,7 @@ export class FinanceService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventQueueService: EventQueueService,
     private readonly financeAccountMappingService: FinanceAccountMappingService,
     private readonly financeReportsService: FinanceReportsService,
     private readonly customerStatementService: CustomerStatementService,
@@ -414,11 +414,16 @@ export class FinanceService {
       return payment;
     });
 
-    this.eventEmitter.emit('finance.payment.recorded', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'finance.payment.recorded',
       idempotencyKey: `payment_recorded:${payment.id}`,
-      paymentId: payment.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `payment_recorded:${payment.id}`,
+        paymentId: payment.id,
+        operatorId,
+      },
     });
 
     return payment;
@@ -553,11 +558,16 @@ export class FinanceService {
       return created;
     });
 
-    this.eventEmitter.emit('finance.payment.recorded', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'finance.payment.recorded',
       idempotencyKey: `payment_recorded:${payment.id}`,
-      paymentId: payment.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `payment_recorded:${payment.id}`,
+        paymentId: payment.id,
+        operatorId,
+      },
     });
 
     return payment;
@@ -739,12 +749,17 @@ export class FinanceService {
       return ids;
     });
 
-    this.eventEmitter.emit('finance.payment.applied', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'finance.payment.applied',
       idempotencyKey: `payment_applied:${allocationIds.join(':')}`,
-      paymentId,
-      allocationIds,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `payment_applied:${allocationIds.join(':')}`,
+        paymentId,
+        allocationIds,
+        operatorId,
+      },
     });
 
     return {
@@ -978,11 +993,16 @@ export class FinanceService {
       },
     });
 
-    this.eventEmitter.emit('finance.credit_note.posted', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'finance.credit_note.posted',
       idempotencyKey: `credit_note_posted:${creditNote.id}`,
-      creditNoteId: creditNote.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `credit_note_posted:${creditNote.id}`,
+        creditNoteId: creditNote.id,
+        operatorId,
+      },
     });
 
     return posted;
@@ -1138,11 +1158,16 @@ export class FinanceService {
       },
     });
 
-    this.eventEmitter.emit('finance.customer_refund.posted', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'finance.customer_refund.posted',
       idempotencyKey: `customer_refund_posted:${refund.id}`,
-      refundId: refund.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `customer_refund_posted:${refund.id}`,
+        refundId: refund.id,
+        operatorId,
+      },
     });
 
     return posted;
@@ -1221,13 +1246,18 @@ export class FinanceService {
       },
     });
 
-    this.eventEmitter.emit('finance.invoice.posted', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'finance.invoice.posted',
       idempotencyKey: `invoice_posted:${invoice.id}`,
-      invoiceId: invoice.id,
-      taxCodeId: invoice.taxCodeId ?? resolvedTaxCode.id ?? null,
-      taxRate: taxRate ?? resolvedTaxCode.rate ?? 0.13,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `invoice_posted:${invoice.id}`,
+        invoiceId: invoice.id,
+        taxCodeId: invoice.taxCodeId ?? resolvedTaxCode.id ?? null,
+        taxRate: taxRate ?? resolvedTaxCode.rate ?? 0.13,
+        operatorId,
+      },
     });
 
     return updated;

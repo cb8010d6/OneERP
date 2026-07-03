@@ -4,7 +4,6 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import Decimal from 'decimal.js';
 import { EntryPostingStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,6 +18,7 @@ import {
 import { AccountingPeriodService } from '../finance/accounting-period.service';
 import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
 import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
+import { EventQueueService } from '../core/events/event-queue.service';
 import { SupplierStatementService } from './supplier-statement.service';
 import { PurchaseQueryService } from './purchase-query.service';
 import {
@@ -39,7 +39,7 @@ export class PurchaseService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventQueueService: EventQueueService,
     private readonly supplierStatementService: SupplierStatementService,
     private readonly purchaseQueryService: PurchaseQueryService,
     @Optional()
@@ -395,11 +395,16 @@ export class PurchaseService {
       data: { postingStatus: EntryPostingStatus.POSTED },
     });
 
-    this.eventEmitter.emit('purchase.invoice.posted', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'purchase.invoice.posted',
       idempotencyKey: `purchase_invoice_posted:${invoice.id}`,
-      purchaseInvoiceId: invoice.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `purchase_invoice_posted:${invoice.id}`,
+        purchaseInvoiceId: invoice.id,
+        operatorId,
+      },
     });
 
     return posted;
@@ -757,11 +762,16 @@ export class PurchaseService {
       return posted;
     });
 
-    this.eventEmitter.emit('purchase.supplier_credit_note.posted', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'purchase.supplier_credit_note.posted',
       idempotencyKey: `supplier_credit_note_posted:${creditNote.id}`,
-      supplierCreditNoteId: creditNote.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `supplier_credit_note_posted:${creditNote.id}`,
+        supplierCreditNoteId: creditNote.id,
+        operatorId,
+      },
     });
 
     return posted;
@@ -865,11 +875,16 @@ export class PurchaseService {
       return posted;
     });
 
-    this.eventEmitter.emit('purchase.supplier_payment.posted', {
-      companyId,
+    await this.eventQueueService.publish({
+      eventName: 'purchase.supplier_payment.posted',
       idempotencyKey: `supplier_payment_posted:${payment.id}`,
-      supplierPaymentId: payment.id,
-      operatorId,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `supplier_payment_posted:${payment.id}`,
+        supplierPaymentId: payment.id,
+        operatorId,
+      },
     });
 
     return posted;

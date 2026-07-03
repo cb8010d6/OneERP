@@ -108,7 +108,7 @@ describe('FinanceService', () => {
     creditNote: { update: jest.fn() },
   };
 
-  const eventEmitter = { emit: jest.fn() };
+  const eventQueueService = { publish: jest.fn() };
   const financeAccountMappingService = {
     resolveLineAccount: jest.fn(),
   };
@@ -150,7 +150,7 @@ describe('FinanceService', () => {
     );
     service = new FinanceService(
       prisma as unknown as ConstructorParameters<typeof FinanceService>[0],
-      eventEmitter as unknown as ConstructorParameters<
+      eventQueueService as unknown as ConstructorParameters<
         typeof FinanceService
       >[1],
       financeAccountMappingService as unknown as ConstructorParameters<
@@ -665,12 +665,15 @@ describe('FinanceService', () => {
         where: { id: 'inv1' },
         data: { status: 'PAID' },
       });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'finance.payment.recorded',
+      expect(eventQueueService.publish).toHaveBeenCalledWith(
         expect.objectContaining({
+          eventName: 'finance.payment.recorded',
           companyId: 'c1',
-          paymentId: 'pay1',
-          operatorId: 'u1',
+          idempotencyKey: 'payment_recorded:pay1',
+          payload: expect.objectContaining({
+            paymentId: 'pay1',
+            operatorId: 'u1',
+          }) as unknown,
         }),
       );
     });
@@ -806,9 +809,15 @@ describe('FinanceService', () => {
         where: { id: 'inv2' },
         data: { status: 'PARTIAL' },
       });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'finance.payment.recorded',
-        expect.objectContaining({ paymentId: 'pay3', operatorId: 'u1' }),
+      expect(eventQueueService.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: 'finance.payment.recorded',
+          idempotencyKey: 'payment_recorded:pay3',
+          payload: expect.objectContaining({
+            paymentId: 'pay3',
+            operatorId: 'u1',
+          }) as unknown,
+        }),
       );
     });
 
@@ -914,13 +923,16 @@ describe('FinanceService', () => {
         where: { id: 'inv1' },
         data: expect.objectContaining({ postingStatus: 'POSTED' }) as unknown,
       });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'finance.invoice.posted',
+      expect(eventQueueService.publish).toHaveBeenCalledWith(
         expect.objectContaining({
+          eventName: 'finance.invoice.posted',
           companyId: 'c1',
-          invoiceId: 'inv1',
-          taxCodeId: null,
-          taxRate: 0.13,
+          idempotencyKey: 'invoice_posted:inv1',
+          payload: expect.objectContaining({
+            invoiceId: 'inv1',
+            taxCodeId: null,
+            taxRate: 0.13,
+          }) as unknown,
         }),
       );
     });
@@ -936,7 +948,7 @@ describe('FinanceService', () => {
 
       expect((result as { message?: string }).message).toContain('已过账');
       expect(prisma.invoice.update).not.toHaveBeenCalled();
-      expect(eventEmitter.emit).not.toHaveBeenCalled();
+      expect(eventQueueService.publish).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when invoice not found', async () => {
@@ -1248,12 +1260,15 @@ describe('FinanceService', () => {
         where: { id: 'inv1' },
         data: { status: 'PARTIAL' },
       });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'finance.payment.applied',
+      expect(eventQueueService.publish).toHaveBeenCalledWith(
         expect.objectContaining({
-          paymentId: 'pay1',
-          allocationIds: ['pa1'],
-          operatorId: 'u1',
+          eventName: 'finance.payment.applied',
+          idempotencyKey: 'payment_applied:pa1',
+          payload: expect.objectContaining({
+            paymentId: 'pay1',
+            allocationIds: ['pa1'],
+            operatorId: 'u1',
+          }) as unknown,
         }),
       );
     });
@@ -1514,12 +1529,15 @@ describe('FinanceService', () => {
         where: { id: 'inv1' },
         data: { status: 'PAID' },
       });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'finance.credit_note.posted',
+      expect(eventQueueService.publish).toHaveBeenCalledWith(
         expect.objectContaining({
+          eventName: 'finance.credit_note.posted',
           companyId: 'c1',
-          creditNoteId: 'cn1',
-          operatorId: 'u1',
+          idempotencyKey: 'credit_note_posted:cn1',
+          payload: expect.objectContaining({
+            creditNoteId: 'cn1',
+            operatorId: 'u1',
+          }) as unknown,
         }),
       );
     });
@@ -1625,11 +1643,14 @@ describe('FinanceService', () => {
           postingStatus: 'POSTED',
         }) as unknown,
       });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(
-        'finance.customer_refund.posted',
+      expect(eventQueueService.publish).toHaveBeenCalledWith(
         expect.objectContaining({
-          refundId: 'rf1',
-          operatorId: 'u1',
+          eventName: 'finance.customer_refund.posted',
+          idempotencyKey: 'customer_refund_posted:rf1',
+          payload: expect.objectContaining({
+            refundId: 'rf1',
+            operatorId: 'u1',
+          }) as unknown,
         }),
       );
     });
