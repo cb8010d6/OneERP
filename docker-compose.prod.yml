@@ -45,7 +45,7 @@ services:
 
   minio:
     <<: *common
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-01-18T00-31-37Z
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-oneerp_minio}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}

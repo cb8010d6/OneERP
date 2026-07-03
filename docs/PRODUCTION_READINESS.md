@@ -20,7 +20,7 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - [ ] 干净服务器上 `docker compose -f docker-compose.ha-lite.yml up -d --build` 成功。
 - [ ] `docker compose -f docker-compose.ha-lite.yml config` 通过。
 - [ ] 如使用镜像部署，`docker compose -f docker-compose.prod.yml config` 在生产 `.env` 下通过。
-- [ ] `npm run compose:config` 通过，确认 easy、HA-lite 和 image-based production Compose 文件均可解析。
+- [ ] `npm run compose:config` 通过，确认 dev、easy、HA-lite 和 image-based production Compose 文件均可解析。
 - [ ] `scripts/deploy-check.*` 通过。
 - [ ] `scripts/prod-smoke.*` 通过，核心登录、订单、库存、发票接口无 500。
 - [ ] `scripts/staff-permission-smoke.*` 通过，员工只读和越权拒绝均可验证。

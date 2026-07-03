@@ -3,6 +3,10 @@ import { spawnSync } from 'node:child_process';
 
 const checks = [
   {
+    name: 'dev',
+    file: 'docker-compose.yml',
+  },
+  {
     name: 'easy',
     file: 'docker-compose.easy.yml',
   },
