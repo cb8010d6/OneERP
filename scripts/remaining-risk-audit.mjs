@@ -194,7 +194,7 @@ function buildRecommendations(report) {
       priority: 'P1',
       name: 'Prisma enum migration preflight',
       status: enumCount > 0 ? 'required' : 'clear',
-      detail: `${enumCount} status/type String fields detected. Run dirty-data SQL before schema migration.`,
+      detail: `${enumCount} status/type String fields detected. Run npm run enum:dirty-sql before schema migration.`,
     },
     {
       priority: 'P1',

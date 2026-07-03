@@ -31,6 +31,7 @@
     "staff:smoke": "powershell -ExecutionPolicy Bypass -File scripts/staff-permission-smoke.ps1",
     "prod:audit": "powershell -ExecutionPolicy Bypass -File scripts/audit-prod-config.ps1",
     "risk:audit": "node scripts/remaining-risk-audit.mjs",
+    "enum:dirty-sql": "node scripts/enum-dirty-data-sql.mjs",
     "backup:schedule": "powershell -ExecutionPolicy Bypass -File scripts/install-backup-schedule.ps1",
     "restore:drill": "powershell -ExecutionPolicy Bypass -File scripts/restore-drill.ps1"
   },

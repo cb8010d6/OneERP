@@ -15,6 +15,14 @@ npm run risk:audit
 
 脚本会输出 `remaining-risk-audit-report.json`，盘点 `status/type String` 字段、金额型 `Float` 字段、`Date.now()` 业务编号和直接 `eventEmitter.emit` 调用。报告是只读分析，不会修改数据库或源码。
 
+T13 enum 迁移前，生成只读脏数据扫描 SQL：
+
+```powershell
+npm run enum:dirty-sql
+```
+
+脚本会输出 `enum-dirty-data-scan.sql`，包含每个 `status/type String` 候选字段的现值分布，以及按 schema 注释或 `@default` 推导的非法值检查。所有非法值查询必须返回零行，才能进入 enum migration 设计。该 SQL 使用 `SET TRANSACTION READ ONLY`，不修改数据库。
+
 ## 一、编号生成器碰撞风险
 
 ### 1.1 当前生成点
