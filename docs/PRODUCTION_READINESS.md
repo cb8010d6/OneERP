@@ -37,7 +37,7 @@ OneERP 在 quickstart 部署通过后，可以用于受控内测或试运行。�
 - [ ] 公网或跨办公区访问已启用 HTTPS。
 - [ ] 数据库、Redis、MinIO 端口不对公网开放。
 - [ ] `CORS_ORIGINS` 只列出可信 Web 域名。
-- [ ] GitHub Dependabot critical/high 漏洞已修复，或已记录接受原因。
+- [ ] `npm run audit:security` 通过；GitHub Dependabot critical/high 漏洞已修复，或已记录接受原因。
 - [ ] 至少完成一次接近真实数据的采购收货全流程测试。
 - [ ] 至少完成一次接近真实数据的销售发货全流程测试。
 - [ ] 至少完成一次凭证过账与冲销场景测试。
@@ -141,5 +141,6 @@ GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、We
 - 单机 HA-lite 没有自动故障切换。
 - 异地备份依赖 `offsiteDir` 或外部存储配置。
 - 前端 lint 仍有 warnings；不阻塞部署，但收紧 CI 前应继续减少。
-- GitHub 依赖漏洞告警需要单独做依赖加固迭代。
+- 移动端 Expo/React Native 依赖仍可能有 moderate 级审计告警；真实移动端上线前需单独升级验证。当前生产门禁先阻断 critical/high。
+- GitHub 依赖漏洞告警需要持续做依赖加固迭代。
 - 项目领域语言记录在 [`CONTEXT.md`](../CONTEXT.md)，架构决策记录在 [`docs/adr`](./adr)。

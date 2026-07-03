@@ -23,6 +23,7 @@
     "test": "npm --prefix apps/api run test -- --passWithNoTests && npm --prefix apps/web run test",
     "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
     "validate": "npm --prefix apps/api run prisma:validate && npm --prefix apps/api run prisma:generate && npm run typecheck && npm run lint && npm run test && npm run build",
+    "audit:security": "npm audit --audit-level=high && npm --prefix apps/api audit --audit-level=high && npm --prefix apps/web audit --audit-level=high && npm --prefix apps/mobile audit --audit-level=high",
     "quickstart": "powershell -ExecutionPolicy Bypass -File scripts/quickstart.ps1",
     "backup": "powershell -ExecutionPolicy Bypass -File scripts/backup.ps1",
     "deploy:check": "powershell -ExecutionPolicy Bypass -File scripts/deploy-check.ps1",

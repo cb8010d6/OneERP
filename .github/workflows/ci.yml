@@ -84,6 +84,9 @@ jobs:
         run: npm ci
         working-directory: apps/web
 
+      - name: Run dependency security audit
+        run: npm run audit:security
+
       - name: Run Prisma migrations
         run: npx prisma migrate deploy --schema=./prisma/schema.prisma
         working-directory: apps/api
