@@ -15,6 +15,14 @@ npm run risk:audit
 
 脚本会输出 `remaining-risk-audit-report.json`，盘点 `status/type String` 字段、金额型 `Float` 字段、`Date.now()` 业务编号和直接 `eventEmitter.emit` 调用。报告是只读分析，不会修改数据库或源码。
 
+CI 会在数据库 migrations 完成后运行：
+
+```powershell
+npm run risk:preflight:db
+```
+
+它会串行执行 `risk:audit`、`enum:dirty-sql` 和 `enum:dirty-report`。本地如果没有可用 `DATABASE_URL` 或数据库未启动，可以先运行不依赖数据库的 `npm run risk:preflight`。
+
 T13 enum 迁移前，生成只读脏数据扫描 SQL：
 
 ```powershell

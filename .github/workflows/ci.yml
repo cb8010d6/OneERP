@@ -88,6 +88,9 @@ jobs:
         run: npx prisma migrate deploy --schema=./prisma/schema.prisma
         working-directory: apps/api
 
+      - name: Run release risk preflight
+        run: npm run risk:preflight:db
+
       # Policy: ``npm run validate`` runs format -> lint -> typecheck -> test -> build.
       # The lint step must NOT use --fix in CI; developers use ``npm run lint:fix`` locally.
       - name: Validate
