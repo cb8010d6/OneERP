@@ -70,6 +70,8 @@ GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、We
 
 远端部署目录必须保留生产 `.env`；workflow 会在部署前同步当前 commit 的 `docker-compose.prod.yml`、`scripts/audit-prod-config.sh` 和 `scripts/deploy-check.sh`，并在拉取镜像前审计远端 `.env`。部署完成后会自动执行远端 `scripts/deploy-check.sh`；`scripts/prod-smoke.*` 和 `scripts/business-acceptance.*` 仍需在受控试运行前单独执行并留存报告。
 
+`scripts/deploy-check.*` 不只检查 Docker Compose 命令可执行，还会把 `exited`、`unhealthy`、`restarting`、`dead` 等服务状态视为失败。
+
 ## P1：强烈建议 / Strongly Recommended
 
 - [ ] 增加异地定时备份。

@@ -42,16 +42,24 @@ function Test-Http {
 function Invoke-Compose {
   param([string[]]$ComposeArgs)
   $baseArgs = @()
-  if ($EnvFile -ne "" -and (Test-Path (Join-Path $root $EnvFile))) {
-    $baseArgs += @("--env-file", $EnvFile)
+  if ($EnvFile -ne "" -and (Test-Path $envPath)) {
+    $baseArgs += @("--env-file", $envPath)
   }
-  $baseArgs += @("-f", $ComposeFile)
+  $baseArgs += @("-f", $composePath)
   docker compose @baseArgs @ComposeArgs
+}
+
+function Test-ComposeServicesHealthy {
+  param([string]$PsOutput)
+  if ($PsOutput.Trim() -eq "") { return $false }
+  if ($PsOutput -match '(?i)(exited|unhealthy|restarting|dead)') { return $false }
+  return $true
 }
 
 Push-Location $root
 try {
-  $envPath = Join-Path $root $EnvFile
+  $envPath = if ([System.IO.Path]::IsPathRooted($EnvFile)) { $EnvFile } else { Join-Path $root $EnvFile }
+  $composePath = if ([System.IO.Path]::IsPathRooted($ComposeFile)) { $ComposeFile } else { Join-Path $root $ComposeFile }
   $envMap = Read-Env -Path $envPath
   $apiPort = [string]$envMap["API_PORT"]
   if ($apiPort -eq "") { $apiPort = "8000" }
@@ -81,12 +89,8 @@ try {
     Add-Result "secret-$name" $strong "length=$($value.Length)"
   }
 
-  $ps = Invoke-Compose -ComposeArgs @("ps", "--format", "json")
-  if ($LASTEXITCODE -eq 0 -and "$ps" -ne "") {
-    Add-Result "compose-ps" $true "services reported by docker compose"
-  } else {
-    Add-Result "compose-ps" $false "no services reported; start the stack first"
-  }
+  $ps = Invoke-Compose -ComposeArgs @("ps")
+  Add-Result "compose-ps" (($LASTEXITCODE -eq 0) -and (Test-ComposeServicesHealthy -PsOutput "$ps")) "services must be running and not unhealthy/exited"
 
   Add-Result "api-health" (Test-Http -Url $ApiUrl) $ApiUrl
   Add-Result "web-root" (Test-Http -Url $WebUrl) $WebUrl

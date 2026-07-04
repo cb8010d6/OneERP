@@ -7,11 +7,21 @@ ENV_FILE="${ENV_FILE:-.env}"
 RESULTS="$ROOT/deploy-check-report.json"
 FAILED=0
 
+case "$ENV_FILE" in
+  /*) ENV_PATH="$ENV_FILE" ;;
+  *) ENV_PATH="$ROOT/$ENV_FILE" ;;
+esac
+
+case "$COMPOSE_FILE" in
+  /*) COMPOSE_PATH="$COMPOSE_FILE" ;;
+  *) COMPOSE_PATH="$ROOT/$COMPOSE_FILE" ;;
+esac
+
 env_value() {
   key="$1"
   default="$2"
-  if [ -f "$ROOT/$ENV_FILE" ]; then
-    value="$(grep -E "^$key=" "$ROOT/$ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
+  if [ -f "$ENV_PATH" ]; then
+    value="$(grep -E "^$key=" "$ENV_PATH" | tail -n 1 | cut -d= -f2- || true)"
     [ "$value" != "" ] && printf '%s' "$value" && return
   fi
   printf '%s' "$default"
@@ -34,6 +44,21 @@ strong_secret() {
   [ "${#value}" -ge 16 ] && [ "${value#CHANGE_ME}" = "$value" ]
 }
 
+compose() {
+  if [ -f "$ENV_PATH" ]; then
+    docker compose --env-file "$ENV_PATH" -f "$COMPOSE_PATH" "$@"
+  else
+    docker compose -f "$COMPOSE_PATH" "$@"
+  fi
+}
+
+compose_services_healthy() {
+  output="$(compose ps 2>&1)" || return 1
+  [ "$output" != "" ] || return 1
+  printf '%s\n' "$output" | grep -Eiq '(exited|unhealthy|restarting|dead)' && return 1
+  return 0
+}
+
 API_PORT="$(env_value API_PORT 8000)"
 WEB_PORT="$(env_value WEB_PORT 3000)"
 if [ "${API_BASE_URL:-}" != "" ] && [ "${API_URL:-}" = "" ]; then
@@ -47,18 +72,13 @@ WEB_URL="${WEB_URL:-http://localhost:$WEB_PORT/}"
 
 cd "$ROOT"
 check docker docker version
-if [ -f "$ROOT/$ENV_FILE" ]; then
-  COMPOSE_ENV_ARGS="--env-file $ENV_FILE"
-else
-  COMPOSE_ENV_ARGS=""
-fi
-check compose-config docker compose $COMPOSE_ENV_ARGS -f "$COMPOSE_FILE" config
-check env-file test -f "$ENV_FILE"
+check compose-config compose config
+check env-file test -f "$ENV_PATH"
 check secret-POSTGRES_PASSWORD strong_secret POSTGRES_PASSWORD
 check secret-JWT_SECRET strong_secret JWT_SECRET
 check secret-MINIO_SECRET_KEY strong_secret MINIO_SECRET_KEY
 check secret-INIT_ADMIN_PASSWORD strong_secret INIT_ADMIN_PASSWORD
-check compose-ps docker compose $COMPOSE_ENV_ARGS -f "$COMPOSE_FILE" ps
+check compose-ps compose_services_healthy
 check api-health curl -fsS "$API_URL"
 check web-root curl -fsS "$WEB_URL"
 
