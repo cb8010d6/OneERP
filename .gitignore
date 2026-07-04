@@ -94,6 +94,7 @@ __pycache__/
 run_fix*.js
 **/run_fix*.js
 graphify-out/
+.codex/hooks.json
 
 # Nested git backups (should never be committed)
 **/.git.inner.backup/
