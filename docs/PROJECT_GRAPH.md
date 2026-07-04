@@ -2,9 +2,17 @@
 
 **生成时间**: 2026-07-04
 **分支**: `refactor/remaining-tasks`
-**来源**: 本地只读扫描。当前 Codex 环境未暴露 `graphify` 插件，因此本文件使用脚本扫描 `package.json`、Nest module/service、Web routes 和根脚本生成。
+**来源**: Graphify-Labs / safishamsi 的 PyPI 包 `graphifyy` 0.9.6 已安装，Codex skill 已配置。当前仓库已生成代码结构图谱，输出位于本地 `graphify-out/`，该目录不进入 Git。
 
 本文档用于压缩上下文，帮助后续迭代从当前代码和 PR 状态继续，而不是依赖长对话历史。
+
+Graphify 本次结构图谱记录：
+
+- 语料检测：398 个支持文件，约 195,128 words，其中代码 351、文档 35、图片 12。
+- 当前图谱：2678 nodes、5960 edges、158 communities。
+- 范围说明：本次未把文档/图片做 LLM 语义抽取；CLI 在发现 47 个 doc/image 文件时要求外部 LLM key。为避免泄漏 API key，当前图谱先使用 AST 代码结构抽取。
+- 健康检查：存在 815 条 dangling-endpoint edges、308 条 directed collapsed edges、310 条 undirected collapsed edges。图谱可用于导航，但精确依赖判断仍需回到源码验证。
+- 本地入口：`graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/GRAPH_TREE.html`。
 
 ## 一、仓库分层
 

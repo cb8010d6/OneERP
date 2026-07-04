@@ -93,6 +93,7 @@ __pycache__/
 .tmp_*.txt
 run_fix*.js
 **/run_fix*.js
+graphify-out/
 
 # Nested git backups (should never be committed)
 **/.git.inner.backup/
