@@ -68,7 +68,7 @@ GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、We
 - repository variable：`DEPLOY_PATH`，指向服务器上的 OneERP 部署目录。
 - 如果 GHCR package 是私有的，配置 `GHCR_TOKEN`；否则需提前在服务器上完成 `docker login ghcr.io`。
 
-远端部署目录必须保留生产 `.env`；workflow 会在部署前同步当前 commit 的 `docker-compose.prod.yml`。部署后继续执行 `scripts/deploy-check.*`、`scripts/prod-smoke.*`、`scripts/business-acceptance.*`。
+远端部署目录必须保留生产 `.env`；workflow 会在部署前同步当前 commit 的 `docker-compose.prod.yml` 和 `scripts/audit-prod-config.sh`，并在拉取镜像前审计远端 `.env`。部署后继续执行 `scripts/deploy-check.*`、`scripts/prod-smoke.*`、`scripts/business-acceptance.*`。
 
 ## P1：强烈建议 / Strongly Recommended
 

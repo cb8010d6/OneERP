@@ -284,8 +284,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH'"
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/scripts'"
           scp -i ~/.ssh/oneerp_deploy docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
+          scp -i ~/.ssh/oneerp_deploy scripts/audit-prod-config.sh "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/scripts/audit-prod-config.sh"
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "chmod +x '$DEPLOY_PATH/scripts/audit-prod-config.sh'"
+
+      - name: Audit remote production configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && COMPOSE_FILE=docker-compose.prod.yml ENV_FILE=.env sh scripts/audit-prod-config.sh"
 
       - name: Login remote Docker to GHCR
         if: env.GHCR_TOKEN != ''
