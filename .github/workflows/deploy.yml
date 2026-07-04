@@ -287,7 +287,8 @@ jobs:
           ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/scripts'"
           scp -i ~/.ssh/oneerp_deploy docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
           scp -i ~/.ssh/oneerp_deploy scripts/audit-prod-config.sh "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/scripts/audit-prod-config.sh"
-          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "chmod +x '$DEPLOY_PATH/scripts/audit-prod-config.sh'"
+          scp -i ~/.ssh/oneerp_deploy scripts/deploy-check.sh "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/scripts/deploy-check.sh"
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" "chmod +x '$DEPLOY_PATH/scripts/audit-prod-config.sh' '$DEPLOY_PATH/scripts/deploy-check.sh'"
 
       - name: Audit remote production configuration
         shell: bash
@@ -318,3 +319,10 @@ jobs:
           docker compose -f docker-compose.prod.yml ps
           docker image prune -f
           REMOTE
+
+      - name: Verify remote deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/oneerp_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_PATH' && COMPOSE_FILE=docker-compose.prod.yml ENV_FILE=.env sh scripts/deploy-check.sh"
