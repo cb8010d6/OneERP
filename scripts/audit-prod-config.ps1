@@ -26,8 +26,8 @@ function Read-Env {
   return $map
 }
 
-$envPath = Join-Path $root $EnvFile
-$composePath = Join-Path $root $ComposeFile
+$envPath = if ([System.IO.Path]::IsPathRooted($EnvFile)) { $EnvFile } else { Join-Path $root $EnvFile }
+$composePath = if ([System.IO.Path]::IsPathRooted($ComposeFile)) { $ComposeFile } else { Join-Path $root $ComposeFile }
 $envMap = Read-Env -Path $envPath
 
 foreach ($key in @("POSTGRES_PASSWORD", "JWT_SECRET", "MINIO_SECRET_KEY", "INIT_ADMIN_PASSWORD")) {
@@ -37,13 +37,18 @@ foreach ($key in @("POSTGRES_PASSWORD", "JWT_SECRET", "MINIO_SECRET_KEY", "INIT_
   }
 }
 
-if ([string]$envMap["INIT_ADMIN_PASSWORD"] -eq "admin" -or [string]$envMap["INIT_ADMIN_EMAIL"] -eq "admin@oneerp.local") {
-  Add-Finding "P0" "default-admin" "Change the initial admin email/password after first login"
+$adminEmail = [string]$envMap["INIT_ADMIN_EMAIL"]
+if ($adminEmail -eq "" -or $adminEmail -eq "admin@oneerp.local" -or $adminEmail -like "CHANGE_ME*") {
+  Add-Finding "P0" "default-admin-email" "Use a real production INIT_ADMIN_EMAIL"
+}
+
+if ([string]$envMap["INIT_ADMIN_PASSWORD"] -eq "admin") {
+  Add-Finding "P0" "default-admin-password" "Change the initial admin password after first login"
 }
 
 $cors = [string]$envMap["CORS_ORIGINS"]
-if ($cors -eq "" -or $cors -match '\*' -or $cors -match 'localhost') {
-  Add-Finding "P1" "cors-origins" "Use real trusted origins for production CORS_ORIGINS"
+if ($cors -eq "" -or $cors -match '\*' -or $cors -match '(?i)(localhost|127\.0\.0\.1|0\.0\.0\.0)') {
+  Add-Finding "P0" "cors-origins" "Use real trusted public Web origins for production CORS_ORIGINS"
 }
 
 if ([string]$envMap["AI_WRITE_ENABLED"] -eq "true") {

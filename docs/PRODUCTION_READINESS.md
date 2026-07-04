@@ -60,6 +60,8 @@ GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、We
 
 镜像构建和推送前，workflow 会先启动临时 PostgreSQL，执行 `prisma migrate deploy`、`npm run audit:security`、`npm run risk:preflight:db`、`npm run compose:config` 和 `npm run validate`。任一门禁失败时，不会发布新的 GHCR 镜像，也不会执行远端部署。
 
+`scripts/audit-prod-config.*` 会把弱密钥、默认管理员邮箱/密码、以及 `CORS_ORIGINS` 为空、包含 `*`、`localhost`、`127.0.0.1` 或 `0.0.0.0` 记为 P0。内测或真实生产环境必须使用真实 Web 域名。
+
 启用 SSH 部署前必须配置：
 
 - repository secrets：`DEPLOY_HOST`、`DEPLOY_USER`、`DEPLOY_SSH_KEY`。

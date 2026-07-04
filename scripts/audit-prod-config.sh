@@ -7,10 +7,20 @@ ENV_FILE="${ENV_FILE:-.env}"
 FAILED=0
 REPORT="$ROOT/prod-config-audit.json"
 
+case "$ENV_FILE" in
+  /*) ENV_PATH="$ENV_FILE" ;;
+  *) ENV_PATH="$ROOT/$ENV_FILE" ;;
+esac
+
+case "$COMPOSE_FILE" in
+  /*) COMPOSE_PATH="$COMPOSE_FILE" ;;
+  *) COMPOSE_PATH="$ROOT/$COMPOSE_FILE" ;;
+esac
+
 env_value() {
   key="$1"
-  if [ -f "$ROOT/$ENV_FILE" ]; then
-    grep -E "^$key=" "$ROOT/$ENV_FILE" | tail -n 1 | cut -d= -f2- || true
+  if [ -f "$ENV_PATH" ]; then
+    grep -E "^$key=" "$ENV_PATH" | tail -n 1 | cut -d= -f2- || true
   fi
 }
 
@@ -29,19 +39,23 @@ for key in POSTGRES_PASSWORD JWT_SECRET MINIO_SECRET_KEY INIT_ADMIN_PASSWORD; do
   fi
 done
 
-[ "$(env_value INIT_ADMIN_PASSWORD)" = "admin" ] && finding P0 default-admin "Change the initial admin password"
-[ "$(env_value INIT_ADMIN_EMAIL)" = "admin@oneerp.local" ] && finding P0 default-admin-email "Use a real admin email for production"
+ADMIN_EMAIL="$(env_value INIT_ADMIN_EMAIL)"
+case "$ADMIN_EMAIL" in
+  ""|admin@oneerp.local|CHANGE_ME*) finding P0 default-admin-email "Use a real production INIT_ADMIN_EMAIL" ;;
+esac
+
+[ "$(env_value INIT_ADMIN_PASSWORD)" = "admin" ] && finding P0 default-admin-password "Change the initial admin password"
 
 CORS="$(env_value CORS_ORIGINS)"
 case "$CORS" in
-  ""|*"*"*|*localhost*) finding P1 cors-origins "Use real trusted origins for production CORS_ORIGINS" ;;
+  ""|*"*"*|*localhost*|*127.0.0.1*|*0.0.0.0*) finding P0 cors-origins "Use real trusted public Web origins for production CORS_ORIGINS" ;;
 esac
 
 [ "$(env_value AI_WRITE_ENABLED)" = "true" ] && finding P1 ai-write-enabled "AI write actions require completed staff permission acceptance and explicit approval"
 
-if [ -f "$ROOT/$COMPOSE_FILE" ]; then
+if [ -f "$COMPOSE_PATH" ]; then
   for port in 5432 6379 9000 9001; do
-    if grep -Eq "^[[:space:]]*-[[:space:]]*['\"]?[^#]*:$port(['\"]?[[:space:]]*(#.*)?)?$" "$ROOT/$COMPOSE_FILE"; then
+    if grep -Eq "^[[:space:]]*-[[:space:]]*['\"]?[^#]*:$port(['\"]?[[:space:]]*(#.*)?)?$" "$COMPOSE_PATH"; then
       finding P0 "public-port-$port" "Do not expose DB/Redis/MinIO ports in production"
     fi
   done
