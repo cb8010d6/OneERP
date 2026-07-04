@@ -28,6 +28,33 @@ jobs:
     permissions:
       contents: read
 
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: eip_user
+          POSTGRES_PASSWORD: eip_password
+          POSTGRES_DB: eip_db_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U eip_user"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://eip_user:eip_password@localhost:5432/eip_db_test
+      JWT_SECRET: test_secret_for_deploy_preflight
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: localhost
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: false
+      MINIO_ACCESS_KEY: minio_admin
+      MINIO_SECRET_KEY: minio_password
+      PORT: 8000
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,14 +68,29 @@ jobs:
       - name: Install root dependencies
         run: npm ci
 
+      - name: Install API dependencies
+        run: npm ci
+        working-directory: apps/api
+
+      - name: Install Web dependencies
+        run: npm ci
+        working-directory: apps/web
+
       - name: Run dependency security audit
         run: npm run audit:security
 
+      - name: Run Prisma migrations
+        run: npx prisma migrate deploy --schema=./prisma/schema.prisma
+        working-directory: apps/api
+
       - name: Run release risk preflight
-        run: npm run risk:preflight
+        run: npm run risk:preflight:db
 
       - name: Validate Docker Compose files
         run: npm run compose:config
+
+      - name: Validate application
+        run: npm run validate
 
   build-api:
     name: Build API image

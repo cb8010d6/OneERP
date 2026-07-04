@@ -58,7 +58,7 @@ GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、We
 - repository variable `DEPLOY_ENABLED=true` 且 push 到 `main`。
 - 手动运行 workflow，并勾选 `deploy`。需要精确回滚时，在 `image_tag` 输入框填入已发布镜像 tag，例如上一个 commit SHA tag；默认使用 `latest`。
 
-镜像构建和推送前，workflow 会先执行 `npm run audit:security`、`npm run risk:preflight` 和 `npm run compose:config`。任一门禁失败时，不会发布新的 GHCR 镜像，也不会执行远端部署。
+镜像构建和推送前，workflow 会先启动临时 PostgreSQL，执行 `prisma migrate deploy`、`npm run audit:security`、`npm run risk:preflight:db`、`npm run compose:config` 和 `npm run validate`。任一门禁失败时，不会发布新的 GHCR 镜像，也不会执行远端部署。
 
 启用 SSH 部署前必须配置：
 
