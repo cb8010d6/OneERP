@@ -1,6 +1,6 @@
 # T8/T9/T10 服务拆分架构记录
 
-**最后更新**: 2026-06-19
+**最后更新**: 2026-07-04
 **分支**: `refactor/remaining-tasks`
 
 ---
@@ -19,19 +19,20 @@
 | PurchaseQueryService | Purchase | 2 个列表查询（供应商付款/贷项） | `3943047` |
 | purchase-order-read-model.ts | Purchase | 纯函数：`purchaseOrderInclude`、`withPurchaseMatch`、`buildPurchaseMatchSummary`、`PurchaseMatchStatus`、`PurchaseOrderForMatch` 类型 | `21c5039` |
 
-### 死代码清理（待提交）
+### 收口清理
 
 | 变更 | 文件 | 内容 |
 |------|------|------|
 | 删除 4 个未使用私有方法 | finance.service.ts | `incomeStatementAmount`、`balanceSheetAmount`、`accountBalanceEffect`、`cashFlowCategory`（finance-reports.service.ts 中有同名在用副本） |
 | 删除未使用私有方法 | inventory.service.ts | `resolveShipmentStockCandidate`（无调用方） |
 | 标记 no-op 方法 | inventory.service.ts | `approveAndDeductStock` 加 JSDoc `@deprecated`（controller 端点保留） |
+| 统一共享类型 | finance.types.ts / inventory.types.ts | 财务报表、未分配收款、库存台账、补货建议等重复类型已集中定义 |
 
 ---
 
 ## 二、当前边界
 
-### FinanceService（原 2303 行 → 现 1824 行）
+### FinanceService（原 2303 行 → 现 1733 行）
 
 **已拆子服务（9 个）：** FinanceReportsService、FinanceAccountMappingService、AccountingPeriodService、AccountingService、FinanceDlqService、FinanceBridgeListener（既有）+ CustomerStatementService、BankStatementService、FinanceQueryService（本轮）
 
@@ -41,7 +42,7 @@
 - 写操作（9 个）：createInvoice、recordPayment、recordReceivablePayment、applyReceivablePayment、createCreditNote、postCreditNote、createCustomerRefund、postCustomerRefund、postInvoice
 - 读操作（1 个）：getReceivableAging
 
-### InventoryService（原 1606 行 → 现 1453 行）
+### InventoryService（原 1606 行 → 现 1429 行）
 
 **已拆子服务（1 个）：** StockQueryService（本轮）
 
@@ -49,7 +50,7 @@
 
 **仍在 InventoryService（9 个）：** 全部写操作 — postSaleOrderShipment、createStockMove、createStockMoveInTransaction、createInbound、scanAndCreateOutboundRequest、approveAndDeductStock（deprecated）、postPurchaseInbound、reverseSaleOrderShipment、reversePurchaseInbound
 
-### PurchaseService（原 1330 行 → 现 850 行）
+### PurchaseService（原 1330 行 → 现 901 行）
 
 **已拆（4 个）：** SupplierStatementService、PurchaseQueryService（本轮）+ purchase-order-read-model.ts、purchase-utils.ts（纯函数）
 
@@ -109,10 +110,12 @@ Purchase 的 `listPurchaseOrders` 等读方法依赖 `purchaseOrderInclude` 和 
 
 `InventoryService.approveAndDeductStock()` 返回硬编码消息"当前版本已改为过账即生效，无需审批"，controller 端点仍存在。已加 JSDoc `@deprecated` 标记，后续版本可移除。
 
-### 4.5 死代码（已识别，待提交）
+### 4.5 已收口项
 
-- finance.service.ts 中 4 个私有方法是 finance-reports.service.ts 同名方法的未使用副本
-- inventory.service.ts 中 `resolveShipmentStockCandidate` 无调用方
+- 死代码清理已提交：`d75ef2e refactor: remove dead service code`
+- 服务边界文档已补充：`0db3499 docs: update service extraction boundary record`
+- 共享类型去重已提交：`42eec1c refactor: 统一财务和库存共享类型`
+- 发布链路已补自动门禁：`audit:security`、`risk:preflight`、`compose:config`
 
 ---
 
@@ -128,28 +131,29 @@ Purchase 的 `listPurchaseOrders` 等读方法依赖 `purchaseOrderInclude` 和 
 | `21c5039` | refactor: extract purchase order read model | 已提交 |
 | `2f16410` | docs: document service extraction boundaries | 已提交 |
 | `d75ef2e` | refactor: remove dead service code | 已提交 |
+| `42eec1c` | refactor: 统一财务和库存共享类型 | 已提交 |
+| `b15bc66` | ci: 为部署流程增加发布前门禁 | 已提交 |
 
 ---
 
-## 六、验证基线（2026-06-19）
+## 六、验证基线（2026-07-04）
 
 | 检查项 | 结果 |
 |--------|------|
-| Prisma validate/generate | ✅ |
-| API + Web typecheck | ✅ |
+| `npm run validate` | ✅ API 40 suites / 384 tests，Web 4 suites / 34 tests |
 | API lint | 0 errors, 7 warnings（预存） |
 | Web lint | 0 errors, 73 warnings（预存） |
-| API tests | 37 suites / 372 tests ✅ |
-| Web tests | 4 suites / 34 tests ✅ |
-| API build | ✅ |
-| Web build | ✅ |
+| `npm run audit:security` | ✅ high/critical 门禁通过；mobile 仍有 moderate Expo/uuid 链路告警 |
+| `npm run risk:preflight` | ✅ enum SQL 生成，14 个 status/type String 候选 |
+| `npm run compose:config` | ✅ dev/easy/HA-lite/prod Compose 均可解析，无第三方运行时字面量 `:latest` |
+| PR #15 GitHub checks | ✅ commitlint、validate、CodeQL 全绿 |
 
 ---
 
 ## 七、后续推荐顺序
 
-1. **当前 PR 收口**：已提交的服务拆分 commits + 死代码清理
-2. **类型去重**（独立批次）：finance.types.ts、inventory.types.ts 消除重复类型定义
-3. **写操作拆分**（独立分支，逐服务 PR）：从风险最低的开始（Purchase supplier-payment、supplier-credit-note）
-4. **T13 Prisma enum**（独立分支）：脏数据扫描 → 分批 migration → Service 层适配
-5. **ID 生成器修复**（需业务确认）：nanoid vs DB sequence
+1. **保持 PR Draft 审查**：不宣称生产就绪，等待 Docker 实机启动、restore drill、业务验收和截图补齐。
+2. **写操作拆分前分析**：先产出 Purchase supplier-payment / supplier-credit-note 的事务、事件、幂等和测试矩阵，再决定是否实现。
+3. **Inventory 核心引擎测试增强**：优先覆盖 `executeStockMove`、冲销、循环部分成功等场景，再考虑库存移动引擎拆分。
+4. **T13 Prisma enum 独立分支**：先跑目标库脏数据报告，再按业务域分批 migration；不能与 Service 拆分混做。
+5. **业务编号长期方案确认**：当前已有唯一冲突重试，长期需在人类确认连续性要求后选择业务编号表或 DB sequence。
