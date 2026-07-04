@@ -271,6 +271,30 @@ jobs:
             exit 1
           fi
 
+          if ! printf '%s' "$DEPLOY_PATH" | grep -Eq '^/[A-Za-z0-9._~/-]{1,199}$'; then
+            printf '::error::Invalid DEPLOY_PATH: %s\n' "$DEPLOY_PATH"
+            printf 'Use an absolute Unix path without spaces, quotes, shell variables, or control characters.\n'
+            exit 1
+          fi
+
+          if ! printf '%s' "$DEPLOY_USER" | grep -Eq '^[A-Za-z0-9._-]{1,64}$'; then
+            printf '::error::Invalid DEPLOY_USER format.\n'
+            printf 'Use a simple SSH user name containing only letters, numbers, dot, underscore, or dash.\n'
+            exit 1
+          fi
+
+          if ! printf '%s' "$DEPLOY_HOST" | grep -Eq '^[A-Za-z0-9._:-]{1,253}$'; then
+            printf '::error::Invalid DEPLOY_HOST format.\n'
+            printf 'Use a hostname, IPv4 address, IPv6 address, or host:port without shell metacharacters.\n'
+            exit 1
+          fi
+
+          if ! printf '%s' "$GHCR_USERNAME" | grep -Eq '^[A-Za-z0-9_.-]{1,128}$'; then
+            printf '::error::Invalid GHCR_USERNAME format.\n'
+            printf 'Use a GitHub username or organization slug without spaces or shell metacharacters.\n'
+            exit 1
+          fi
+
       - name: Install SSH key
         shell: bash
         run: |

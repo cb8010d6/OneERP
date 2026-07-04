@@ -68,6 +68,8 @@ GitHub Actions 的 `Deploy` workflow 会构建并推送 API、API migration、We
 - repository variable：`DEPLOY_PATH`，指向服务器上的 OneERP 部署目录。
 - 如果 GHCR package 是私有的，配置 `GHCR_TOKEN`；否则需提前在服务器上完成 `docker login ghcr.io`。
 
+Deploy workflow 会校验部署变量格式：`DEPLOY_PATH` 必须是无空格、无引号的绝对 Unix 路径；`DEPLOY_USER`、`DEPLOY_HOST`、`GHCR_USERNAME` 只能使用 SSH/Docker 常见安全字符，避免 shell 元字符进入远端部署命令。
+
 远端部署目录必须保留生产 `.env`；workflow 会在部署前同步当前 commit 的 `docker-compose.prod.yml`、`scripts/audit-prod-config.sh` 和 `scripts/deploy-check.sh`，并在拉取镜像前审计远端 `.env`。部署完成后会自动执行远端 `scripts/deploy-check.sh`；`scripts/prod-smoke.*` 和 `scripts/business-acceptance.*` 仍需在受控试运行前单独执行并留存报告。
 
 `scripts/deploy-check.*` 不只检查 Docker Compose 命令可执行，还会把 `exited`、`unhealthy`、`restarting`、`dead` 等服务状态视为失败。
