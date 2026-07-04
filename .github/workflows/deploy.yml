@@ -22,8 +22,37 @@ env:
   IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
 
 jobs:
+  release-preflight:
+    name: Release preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Run dependency security audit
+        run: npm run audit:security
+
+      - name: Run release risk preflight
+        run: npm run risk:preflight
+
+      - name: Validate Docker Compose files
+        run: npm run compose:config
+
   build-api:
     name: Build API image
+    needs: release-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,6 +96,7 @@ jobs:
 
   build-api-migrate:
     name: Build API migration image
+    needs: release-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -110,6 +140,7 @@ jobs:
 
   build-web:
     name: Build Web image
+    needs: release-preflight
     runs-on: ubuntu-latest
     permissions:
       contents: read
