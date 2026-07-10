@@ -142,6 +142,8 @@ flowchart LR
 
 目标：先打通一条最小真实售前链，而不是一次做完整 CRM。
 
+技术边界评审稿：[`PHASE_2_PRESALES_VERTICAL_SLICE.md`](./PHASE_2_PRESALES_VERTICAL_SLICE.md)。该文件明确不可变快照、幂等转单、权限、事务/事件和 migration 门禁；门禁确认前不创建 Prisma migration。
+
 建议最小切片：客户需求 -> 报价 V1/V2 -> 报价发出/接受 -> 合同登记/附件 -> 转销售订单。
 
 - 新模型和命名以 Phase 1 的确认结果为准。

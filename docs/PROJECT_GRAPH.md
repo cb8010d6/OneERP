@@ -1,6 +1,6 @@
 # OneERP 项目图谱与当前上下文
 
-**生成时间**: 2026-07-04
+**生成时间**: 2026-07-10
 **分支**: `refactor/remaining-tasks`
 **来源**: Graphify-Labs / safishamsi 的 PyPI 包 `graphifyy` 0.9.6 已安装，Codex skill 已配置。当前仓库已生成代码结构图谱，输出位于本地 `graphify-out/`，该目录不进入 Git。
 
@@ -8,10 +8,9 @@
 
 Graphify 本次结构图谱记录：
 
-- 语料检测：398 个支持文件，约 195,128 words，其中代码 351、文档 35、图片 12。
-- 当前图谱：2678 nodes、5960 edges、158 communities。
-- 范围说明：本次未把文档/图片做 LLM 语义抽取；CLI 在发现 47 个 doc/image 文件时要求外部 LLM key。为避免泄漏 API key，当前图谱先使用 AST 代码结构抽取。
-- 健康检查：存在 815 条 dangling-endpoint edges、308 条 directed collapsed edges、310 条 undirected collapsed edges。图谱可用于导航，但精确依赖判断仍需回到源码验证。
+- 最新 `graphify update .`：3147 nodes、6395 edges、228 communities；本次 AST 更新覆盖 382 个文件。
+- 图片等二进制资产已通过 `.graphifyignore` 排除；当前未使用外部 LLM 做文档/图片语义抽取，避免把 API key 引入图谱生成流程。
+- 图谱可用于导航和缩小检索范围，但精确依赖、事务和权限判断仍需回到源码验证。
 - 本地入口：`graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/GRAPH_TREE.html`。
 
 ## 一、仓库分层
@@ -128,7 +127,8 @@ Next.js App Router 当前有 18 个页面/布局入口：
 | `npm run audit:security` | Root/API/Web/Mobile high/critical 依赖审计门禁 |
 | `npm run risk:preflight` | 剩余风险扫描 + enum dirty SQL 生成 |
 | `npm run risk:preflight:db` | 在目标数据库上生成 enum dirty JSON 报告 |
-| `npm run compose:config` | 校验 dev/easy/HA-lite/prod Compose，可阻断第三方 runtime `:latest` |
+| `npm run compose:config` | 校验 dev/easy/HA-lite/prod 及 2 GB UAT override，可阻断第三方 runtime `:latest` |
+| `npm run compose:images` | 在发布工作流中校验字面量第三方运行时镜像的远端 manifest |
 | `npm run prod:audit` | 生产 `.env` 审计，弱密钥/默认管理员/本地 CORS 为 P0 |
 | `npm run deploy:check` | Docker/Compose/env/API/Web 部署健康检查 |
 | `npm run prod:smoke` | 登录和核心 API/Web 冒烟 |
@@ -151,12 +151,12 @@ Deploy workflow 当前链路：
 - PR: `https://github.com/cb8010d6/OneERP/pull/15`
 - 状态: Draft
 - 当前策略: 不声明生产就绪，不直接合并。
-- 最近检查: commitlint、validate、CodeQL 均为 green。
-- 本机 Docker daemon 不可用，因此仍缺真实容器启动与恢复演练证据。
+- 最近检查: 2026-07-10 分支 head `ad24a94` 的 commitlint、validate、CodeQL 均为 green。
+- 2 GB 远程 UAT 已启动 API、Web、PostgreSQL、Redis、MinIO 并两次通过现有 9 步业务验收；使用临时 overlay API 镜像。恢复演练、正式分支镜像、HTTPS 和真实业务数据签字仍未完成。
 
 ## 七、下一步优先级
 
-1. **真实环境门禁**：在可用 Docker/服务器上跑 HA-lite 或 prod compose、`deploy-check`、`prod-smoke`、`business-acceptance`、`restore-drill`。
+1. **真实环境门禁**：用正式分支镜像重跑 `deploy-check`、`prod-smoke`、`staff-permission-smoke`、`business-acceptance` 和 `restore-drill`。
 2. **截图和 GitHub 门面**：补真实 Dashboard、订单、库存、采购、财务、AI 截图；补 GitHub About；保留“不宣称生产就绪”的措辞。
 3. **写流程分析**：只读分析 Purchase supplier payment / supplier credit note 的事务、事件、幂等、失败回滚和测试覆盖。
 4. **Inventory 引擎测试**：先增强 `executeStockMove`、冲销、循环部分成功的测试，再谈拆服务。
