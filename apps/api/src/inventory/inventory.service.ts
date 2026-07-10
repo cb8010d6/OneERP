@@ -207,6 +207,53 @@ export class InventoryService {
       reason: string;
     }> = [];
 
+    if (!payload.allowPartial) {
+      for (const requestItem of payload.items) {
+        const requestedQuantity = Number(requestItem.shipQuantity ?? 0);
+        if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+          throw new BadRequestException('发货数量必须大于0');
+        }
+
+        const product = productById.get(requestItem.productId);
+        if (!product) {
+          throw new BadRequestException('销售订单中不存在该产品');
+        }
+        if (!product.materialId) {
+          throw new BadRequestException(
+            `产品 ${product.name} 未绑定主物料，无法发货`,
+          );
+        }
+
+        const orderedQuantity = orderedQuantityByProductId.get(product.id) ?? 0;
+        const alreadyShippedQuantity =
+          shippedQuantityByProductId.get(product.id) ?? 0;
+        const remainingQuantity = roundDecimal(
+          Math.max(0, orderedQuantity - alreadyShippedQuantity),
+        );
+        if (remainingQuantity <= 0) {
+          throw new BadRequestException(`产品 ${product.name} 已全部发货`);
+        }
+        if (requestedQuantity > remainingQuantity) {
+          throw new BadRequestException(
+            `产品 ${product.name} 请求发货 ${requestedQuantity}，订单剩余可发 ${remainingQuantity}`,
+          );
+        }
+
+        const stockPlan = await this.resolveShipmentAllocations(
+          companyId,
+          product.materialId,
+          requestedQuantity,
+          payload.sourceLocationId,
+          payload.batchNo,
+        );
+        if (stockPlan.allocatedQuantity < requestedQuantity) {
+          throw new BadRequestException(
+            `库存不足：产品 ${product.name} 请求发货 ${requestedQuantity}，当前可发 ${stockPlan.allocatedQuantity}；如需部分发货请显式设置 allowPartial=true`,
+          );
+        }
+      }
+    }
+
     for (const requestItem of payload.items) {
       const requestedQuantity = Number(requestItem.shipQuantity ?? 0);
       if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
@@ -356,6 +403,9 @@ export class InventoryService {
           roundDecimal(currentShipped + quantityToShip),
         );
       } catch (error) {
+        if (!payload.allowPartial) {
+          throw error;
+        }
         skippedLines.push({
           productId: product.id,
           requestedQuantity,

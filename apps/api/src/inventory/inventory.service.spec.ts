@@ -478,6 +478,7 @@ describe('InventoryService', () => {
       'o1',
       {
         sourceLocationId: 'loc-1',
+        allowPartial: true,
         items: [
           { productId: 'p1', shipQuantity: 5 },
           { productId: 'p2', shipQuantity: 3 },
@@ -534,6 +535,43 @@ describe('InventoryService', () => {
     );
   });
 
+  it('rejects the entire shipment by default when stock is insufficient', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'o1',
+      orderNo: 'ORD-INSUFFICIENT',
+      status: 'DRAFT',
+      items: [{ productId: 'p1', quantity: 5 }],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
+    ]);
+    prisma.inventoryTransaction.findMany.mockResolvedValue([]);
+    prisma.stockQuant.findMany.mockResolvedValue([
+      {
+        locationId: 'loc-1',
+        batchNo: 'B1',
+        quantity: 2,
+        location: { name: '主仓' },
+      },
+    ]);
+
+    await expect(
+      service.postSaleOrderShipment(
+        'c1',
+        'o1',
+        {
+          sourceLocationId: 'loc-1',
+          items: [{ productId: 'p1', shipQuantity: 5 }],
+        },
+        'u1',
+      ),
+    ).rejects.toThrow('库存不足');
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.order.update).not.toHaveBeenCalled();
+    expect(eventQueueService.publish).not.toHaveBeenCalled();
+  });
+
   it('keeps order status unchanged when no stock is posted', async () => {
     prisma.order.findFirst.mockResolvedValue({
       id: 'o1',
@@ -552,6 +590,7 @@ describe('InventoryService', () => {
       'o1',
       {
         sourceLocationId: 'loc-1',
+        allowPartial: true,
         items: [{ productId: 'p1', shipQuantity: 2 }],
       },
       'u1',

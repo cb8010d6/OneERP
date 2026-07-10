@@ -6,6 +6,7 @@ import {
   Min,
   IsOptional,
   IsArray,
+  IsBoolean,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -120,6 +121,14 @@ export class SaleOrderShipmentDto {
   @ValidateNested({ each: true })
   @Type(() => SaleOrderShipmentItemDto)
   items!: SaleOrderShipmentItemDto[];
+
+  @ApiPropertyOptional({
+    description: '是否允许库存不足时部分发货；默认 false，整笔拒绝',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  allowPartial?: boolean;
 
   @ApiPropertyOptional({ description: '批次号（可选）' })
   @IsOptional()
