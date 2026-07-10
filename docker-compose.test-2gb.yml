@@ -1,0 +1,73 @@
+# Low-memory override for temporary OneERP speed/UAT testing only.
+# Not a production profile. Build images in CI; never build on the 2 GB host.
+# Usage:
+#   docker compose --env-file .env -f docker-compose.prod.yml -f docker-compose.test-2gb.yml up -d
+
+services:
+  db:
+    cpus: 0.50
+    mem_limit: 256m
+    mem_reservation: 128m
+    pids_limit: 128
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - max_connections=30
+
+  redis:
+    cpus: 0.20
+    mem_limit: 64m
+    mem_reservation: 24m
+    pids_limit: 64
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 48mb
+      - --maxmemory-policy
+      - noeviction
+
+  minio:
+    cpus: 0.25
+    mem_limit: 192m
+    mem_reservation: 96m
+    pids_limit: 96
+
+  migrate:
+    cpus: 0.50
+    mem_limit: 512m
+    mem_reservation: 128m
+    pids_limit: 128
+    environment:
+      NODE_OPTIONS: --max-old-space-size=384
+
+  api:
+    cpus: 0.50
+    mem_limit: 320m
+    mem_reservation: 160m
+    pids_limit: 128
+    environment:
+      NODE_OPTIONS: --max-old-space-size=224
+    ports: !override
+      - "127.0.0.1:${API_PORT:-18000}:8000"
+
+  web:
+    cpus: 0.35
+    mem_limit: 192m
+    mem_reservation: 96m
+    pids_limit: 128
+    environment:
+      NODE_OPTIONS: --max-old-space-size=128
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-13000}:3000"

@@ -308,6 +308,7 @@ async function main() {
       name: `业务验收产品 ${suffix}`,
       type: 'STOCKABLE',
       materialId: material.id,
+      listPrice: 113,
       uom: 'pcs',
       description: '业务数据验收专用产品',
       isActive: true,
@@ -379,6 +380,7 @@ async function main() {
       `/inventory/posting/sale-order/${largeOrder.id}/ship`,
       {
         sourceLocationId: masterData.location.id,
+        items: [{ productId: masterData.product.id, shipQuantity: 999 }],
         batchNo,
         note: '业务验收库存不足拒绝',
       },
@@ -395,6 +397,7 @@ async function main() {
   await withStep('sales-shipment-deducts-inventory', async () => {
     const shipment = await api.post(`/inventory/posting/sale-order/${order.id}/ship`, {
       sourceLocationId: masterData.location.id,
+      items: [{ productId: masterData.product.id, shipQuantity: 4 }],
       batchNo,
       note: '业务验收销售发货',
     });

@@ -28,6 +28,7 @@
     "backup": "powershell -ExecutionPolicy Bypass -File scripts/backup.ps1",
     "deploy:check": "powershell -ExecutionPolicy Bypass -File scripts/deploy-check.ps1",
     "compose:config": "node scripts/compose-config-check.mjs",
+    "compose:images": "node scripts/compose-config-check.mjs --manifests",
     "prod:smoke": "powershell -ExecutionPolicy Bypass -File scripts/prod-smoke.ps1",
     "business:acceptance": "powershell -ExecutionPolicy Bypass -File scripts/business-acceptance.ps1",
     "staff:smoke": "powershell -ExecutionPolicy Bypass -File scripts/staff-permission-smoke.ps1",

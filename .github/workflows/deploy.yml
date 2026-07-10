@@ -93,6 +93,9 @@ jobs:
       - name: Validate Docker Compose files
         run: npm run compose:config
 
+      - name: Validate runtime image manifests
+        run: npm run compose:images
+
       - name: Validate application
         run: npm run validate
 
