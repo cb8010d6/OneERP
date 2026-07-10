@@ -94,6 +94,7 @@ Deploy workflow 会校验部署变量格式：`DEPLOY_PATH` 必须是无空格�
 使用接近真实的 SKU、批次和库位执行：
 
 - 自动验收 / Automated check：`scripts/business-acceptance.*`。
+- 2026-07-10 证据：2 GB 远程 UAT 的自动验收两次通过，已验证采购入库、库存不足默认拒绝且库存不变、正常销售发货、发票过账和试算平衡。该证据使用合成 UAT 数据和临时 overlay API 镜像，因此下列真实数据门禁仍保持未勾选。
 - [ ] 采购收货通过库存流水增加库存。
 - [ ] 调拨扣减源库位并增加目标库位。
 - [ ] 发货在可用库存不足时拒绝。
@@ -147,7 +148,7 @@ Deploy workflow 会校验部署变量格式：`DEPLOY_PATH` 必须是无空格�
 
 ## 已知缺口 / Known Gaps
 
-- Prisma schema 中仍有部分金额字段使用 `Float`。高频财务生产前，应将关键金额字段迁移到 Decimal。
+- 当前 Prisma schema 的金额与数量字段已使用 `Decimal`；后续新增或迁移业务金额字段时必须继续禁止 `Float` 回归，并通过 Prisma 校验和风险预检确认。
 - 单机 HA-lite 没有自动故障切换。
 - 异地备份依赖 `offsiteDir` 或外部存储配置。
 - 前端 lint 仍有 warnings；不阻塞部署，但收紧 CI 前应继续减少。
