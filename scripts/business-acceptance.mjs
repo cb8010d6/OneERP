@@ -326,6 +326,60 @@ async function main() {
     };
   });
 
+  const requirement = await withStep('create-customer-requirement', async () => {
+    const created = await api.post('/presales/requirements', {
+      partnerId: masterData.partner.id,
+      sourceChannel: 'business-acceptance',
+      summary: `业务验收报价需求 ${suffix}`,
+      estimatedAmount: 452,
+      expectedCloseDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    assertCondition(created?.id, '客户需求单未返回 id');
+    assertCondition(created?.requirementNo, '客户需求单未返回 requirementNo');
+    assertCondition(created?.partnerId === masterData.partner.id, '需求客户快照不一致');
+    context.records.requirementId = created.id;
+    return {
+      detail: `requirement=${created.requirementNo} status=${created.status}`,
+      value: created,
+    };
+  });
+
+  await withStep('create-quote-version-one', async () => {
+    const created = await api.post(`/presales/requirements/${requirement.id}/quotes`, {
+      currencyCode: 'CNY',
+      validUntil: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      paymentTerms: '验收测试：到货后付款',
+      deliveryTerms: '验收测试：送货上门',
+      items: [
+        {
+          productId: masterData.product.id,
+          quantity: 4,
+          unitPrice: 113,
+          discountRate: 0,
+          taxRate: 0,
+        },
+      ],
+    });
+    const version = created?.versions?.[0];
+    const item = version?.items?.[0];
+    assertCondition(created?.quoteNo, '报价未返回 quoteNo');
+    assertCondition(created?.requirementId === requirement.id, '报价来源需求不一致');
+    assertCondition(created?.partnerId === masterData.partner.id, '报价客户快照不一致');
+    assertCondition(version?.versionNo === 1 && version?.status === 'DRAFT', '报价 V1 状态错误');
+    assertCondition(version?.currencyCode === 'CNY', '报价交易币种错误');
+    assertCondition(version?.baseCurrencyCode === 'CNY', '报价本位币错误');
+    assertCondition(String(version?.exchangeRate) === '1', 'CNY 汇率快照错误');
+    assertCondition(version?.exchangeRateSource === 'SYSTEM_BASE', 'CNY 汇率来源错误');
+    assertCondition(item?.productId === masterData.product.id, '报价产品来源错误');
+    assertCondition(item?.skuSnapshot === masterData.product.sku, '报价 SKU 快照错误');
+    assertCondition(String(version?.total) === '452', '报价总额错误');
+    context.records.quoteId = created.id;
+    return {
+      detail: `quote=${created.quoteNo} version=1 status=${version.status} total=${version.total}`,
+      data: created,
+    };
+  });
+
   const purchaseNo = `BA-PO-${suffix}`;
   const batchNo = `BA-BATCH-${suffix}`;
   await withStep('purchase-receipt-increases-inventory', async () => {
