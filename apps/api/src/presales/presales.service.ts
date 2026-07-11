@@ -159,6 +159,13 @@ export class PresalesService {
                   currencyCode: true,
                   total: true,
                   validUntil: true,
+                  contract: {
+                    select: {
+                      contractNo: true,
+                      status: true,
+                      currentVersionNo: true,
+                    },
+                  },
                 },
               },
             },

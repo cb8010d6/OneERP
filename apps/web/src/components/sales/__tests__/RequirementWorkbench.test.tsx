@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RequirementWorkbench } from '../RequirementWorkbench';
 
@@ -56,6 +56,74 @@ describe('RequirementWorkbench', () => {
         expectedCloseDate: undefined,
         nextFollowUpAt: undefined,
       });
+    });
+  });
+
+  it('registers Contract V1 from an accepted quote version', async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        data: [
+          {
+            id: 'requirement-1',
+            requirementNo: 'REQ-2026-000001',
+            status: 'QUOTING',
+            sourceChannel: '客户来电',
+            summary: '设备零件',
+            estimatedAmount: 250,
+            expectedCloseDate: null,
+            nextFollowUpAt: null,
+            closeReason: null,
+            updatedAt: '2026-07-11T00:00:00.000Z',
+            partner: { id: 'partner-1', name: '示例客户' },
+            owner: { id: 'owner-1', name: '销售员', email: 'sales@example.com' },
+            quotes: [
+              {
+                id: 'quote-1',
+                quoteNo: 'QT-2026-000001',
+                currentVersionNo: 2,
+                versions: [
+                  {
+                    id: 'version-2',
+                    versionNo: 2,
+                    status: 'ACCEPTED',
+                    currencyCode: 'CNY',
+                    total: 250,
+                    validUntil: '2026-08-01T00:00:00.000Z',
+                    contract: null,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        total: 1,
+        page: 1,
+        limit: 100,
+        totalPages: 1,
+      },
+    });
+    const user = userEvent.setup();
+    render(<RequirementWorkbench />);
+
+    await user.click(await screen.findByText('登记合同 V1'));
+    expect(screen.getByLabelText('合同标题')).toHaveValue(
+      'QT-2026-000001 销售合同',
+    );
+    await user.click(
+      within(screen.getByRole('complementary')).getByRole('button', {
+        name: '登记合同 V1',
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        '/presales/contracts/from-quote-version/version-2',
+        expect.objectContaining({
+          title: 'QT-2026-000001 销售合同',
+          effectiveAt: expect.any(String),
+          expiresAt: undefined,
+        }),
+      );
     });
   });
 });

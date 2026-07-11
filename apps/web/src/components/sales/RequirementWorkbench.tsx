@@ -38,6 +38,11 @@ interface RequirementListItem {
       currencyCode: string;
       total: string | number;
       validUntil: string;
+      contract?: {
+        contractNo: string;
+        status: string;
+        currentVersionNo: number;
+      } | null;
     }>;
   }>;
 }
@@ -113,6 +118,16 @@ export function RequirementWorkbench() {
     createQuoteItemDraft(),
   ]);
   const [quoteActionBusy, setQuoteActionBusy] = useState<string | null>(null);
+  const [contractOpen, setContractOpen] = useState(false);
+  const [contractVersion, setContractVersion] = useState<{
+    quoteNo: string;
+    versionId: string;
+    versionNo: number;
+    total: string | number;
+  } | null>(null);
+  const [contractTitle, setContractTitle] = useState('');
+  const [contractEffectiveAt, setContractEffectiveAt] = useState('');
+  const [contractExpiresAt, setContractExpiresAt] = useState('');
 
   const fetchRequirements = useCallback(async () => {
     setLoading(true);
@@ -328,6 +343,47 @@ export function RequirementWorkbench() {
     }
   };
 
+  const openContract = (quote: NonNullable<RequirementListItem['quotes']>[number]) => {
+    const version = quote.versions[0];
+    if (!version || version.status !== 'ACCEPTED' || version.contract) return;
+    setContractVersion({
+      quoteNo: quote.quoteNo,
+      versionId: version.id,
+      versionNo: version.versionNo,
+      total: version.total,
+    });
+    setContractTitle(`${quote.quoteNo} 销售合同`);
+    setContractEffectiveAt(new Date().toISOString().slice(0, 10));
+    setContractExpiresAt('');
+    setContractOpen(true);
+  };
+
+  const submitContract = async () => {
+    if (!contractVersion || !contractTitle.trim()) {
+      toast.error('请填写合同标题');
+      return;
+    }
+    setQuoteActionBusy(`${contractVersion.versionId}:contract`);
+    try {
+      await api.post(
+        `/presales/contracts/from-quote-version/${contractVersion.versionId}`,
+        {
+          title: contractTitle.trim(),
+          effectiveAt: contractEffectiveAt || undefined,
+          expiresAt: contractExpiresAt || undefined,
+        },
+      );
+      toast.success('合同 V1 已登记');
+      setContractOpen(false);
+      setContractVersion(null);
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '合同登记失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-5 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -424,6 +480,7 @@ export function RequirementWorkbench() {
                         quote={item.quotes[0]}
                         busyKey={quoteActionBusy}
                         onAction={runQuoteAction}
+                        onCreateContract={openContract}
                       />
                     ) : null}
                   </div>
@@ -733,6 +790,62 @@ export function RequirementWorkbench() {
       </Sheet>
 
       <Sheet
+        open={contractOpen}
+        title="登记合同 V1"
+        onClose={() => setContractOpen(false)}
+      >
+        <div className="space-y-5">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm">
+            <p className="font-mono font-bold text-emerald-800">
+              {contractVersion?.quoteNo} · V{contractVersion?.versionNo}
+            </p>
+            <p className="mt-1 text-emerald-900">
+              CNY {Number(contractVersion?.total ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+            </p>
+            <p className="mt-1 text-xs text-emerald-700">
+              合同金额、币种和条款将从已接受报价版本固化。
+            </p>
+          </div>
+          <FormField label="合同标题" htmlFor="contract-title">
+            <input
+              id="contract-title"
+              value={contractTitle}
+              onChange={(event) => setContractTitle(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2"
+            />
+          </FormField>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="生效日期" htmlFor="contract-effective-at">
+              <input
+                id="contract-effective-at"
+                type="date"
+                value={contractEffectiveAt}
+                onChange={(event) => setContractEffectiveAt(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+              />
+            </FormField>
+            <FormField label="到期日期" htmlFor="contract-expires-at">
+              <input
+                id="contract-expires-at"
+                type="date"
+                value={contractExpiresAt}
+                onChange={(event) => setContractExpiresAt(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+              />
+            </FormField>
+          </div>
+          <button
+            type="button"
+            disabled={Boolean(quoteActionBusy)}
+            onClick={() => void submitContract()}
+            className="w-full rounded-xl bg-slate-900 px-4 py-2.5 font-semibold text-white disabled:opacity-50"
+          >
+            {quoteActionBusy ? '正在登记...' : '登记合同 V1'}
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet
         open={Boolean(actionMode && selected)}
         title={actionMode === 'close' ? '标记丢单' : '添加跟进'}
         onClose={() => setActionMode(null)}
@@ -795,6 +908,7 @@ function QuoteSummary({
   quote,
   busyKey,
   onAction,
+  onCreateContract,
 }: {
   quote: NonNullable<RequirementListItem['quotes']>[number];
   busyKey: string | null;
@@ -803,6 +917,7 @@ function QuoteSummary({
     versionId: string,
     action: 'send' | 'new-version' | 'accept' | 'reject',
   ) => Promise<void>;
+  onCreateContract: (quote: NonNullable<RequirementListItem['quotes']>[number]) => void;
 }) {
   const version = quote.versions[0];
   if (!version) return null;
@@ -828,6 +943,18 @@ function QuoteSummary({
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
+        {version.status === 'ACCEPTED' && version.contract ? (
+          <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-600">
+            {version.contract.contractNo} · V{version.contract.currentVersionNo} · {version.contract.status}
+          </span>
+        ) : null}
+        {version.status === 'ACCEPTED' && !version.contract ? (
+          <QuoteActionButton
+            label="登记合同 V1"
+            disabled={isBusy}
+            onClick={() => onCreateContract(quote)}
+          />
+        ) : null}
         {version.status === 'DRAFT' ? (
           <QuoteActionButton
             label="发出报价"
