@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ClipboardList,
   FilePlus2,
+  FileSignature,
   Loader2,
   Plus,
   Search,
@@ -44,6 +45,9 @@ interface RequirementListItem {
         contractNo: string;
         status: string;
         currentVersionNo: number;
+        signedFileId?: string | null;
+        signedAt?: string | null;
+        activatedAt?: string | null;
       } | null;
     }>;
   }>;
@@ -136,6 +140,12 @@ export function RequirementWorkbench() {
   const [contractTitle, setContractTitle] = useState('');
   const [contractEffectiveAt, setContractEffectiveAt] = useState('');
   const [contractExpiresAt, setContractExpiresAt] = useState('');
+  const [signOpen, setSignOpen] = useState(false);
+  const [signContract, setSignContract] = useState<{
+    id: string;
+    contractNo: string;
+  } | null>(null);
+  const [signedFile, setSignedFile] = useState<File | null>(null);
 
   const fetchRequirements = useCallback(async () => {
     setLoading(true);
@@ -425,6 +435,56 @@ export function RequirementWorkbench() {
     }
   };
 
+  const openContractSigning = (contract: {
+    id: string;
+    contractNo: string;
+  }) => {
+    setSignContract(contract);
+    setSignedFile(null);
+    setSignOpen(true);
+  };
+
+  const submitContractSigning = async () => {
+    if (!signContract || !signedFile) {
+      toast.error('请选择签署件');
+      return;
+    }
+    setQuoteActionBusy(`${signContract.id}:sign`);
+    try {
+      const formData = new FormData();
+      formData.append('file', signedFile);
+      const upload = await api.post<{ id: string }>(
+        '/files/upload?folder=contracts',
+        formData,
+      );
+      await api.post(`/presales/contracts/${signContract.id}/sign`, {
+        fileRecordId: upload.data.id,
+      });
+      toast.success('签署件已归档，合同已签署');
+      setSignOpen(false);
+      setSignContract(null);
+      setSignedFile(null);
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '合同签署失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
+  const activateContract = async (contractId: string) => {
+    setQuoteActionBusy(`${contractId}:activate`);
+    try {
+      await api.post(`/presales/contracts/${contractId}/activate`);
+      toast.success('合同已生效');
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '合同生效失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-5 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -524,6 +584,8 @@ export function RequirementWorkbench() {
                         onCreateContract={openContract}
                         onDecideContract={decideContract}
                         onSubmitContract={submitContractApproval}
+                        onSignContract={openContractSigning}
+                        onActivateContract={activateContract}
                         permissions={permissions}
                       />
                     ) : null}
@@ -890,6 +952,43 @@ export function RequirementWorkbench() {
       </Sheet>
 
       <Sheet
+        open={signOpen}
+        title="归档合同签署件"
+        onClose={() => setSignOpen(false)}
+      >
+        <div className="space-y-5">
+          <div className="border-b border-slate-200 pb-4">
+            <p className="font-mono text-sm font-bold text-blue-700">
+              {signContract?.contractNo}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              签署件将保存到公司文件库，并与此合同建立唯一关联。
+            </p>
+          </div>
+          <FormField label="签署件" htmlFor="contract-signed-file">
+            <input
+              id="contract-signed-file"
+              type="file"
+              accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+              onChange={(event) =>
+                setSignedFile(event.target.files?.[0] ?? null)
+              }
+              className="block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+          </FormField>
+          <button
+            type="button"
+            disabled={!signedFile || Boolean(quoteActionBusy)}
+            onClick={() => void submitContractSigning()}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 font-semibold text-white disabled:opacity-50"
+          >
+            <FileSignature className="h-4 w-4" />
+            {quoteActionBusy ? '正在归档...' : '确认签署并归档'}
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet
         open={Boolean(actionMode && selected)}
         title={actionMode === 'close' ? '标记丢单' : '添加跟进'}
         onClose={() => setActionMode(null)}
@@ -955,6 +1054,8 @@ function QuoteSummary({
   onCreateContract,
   onDecideContract,
   onSubmitContract,
+  onSignContract,
+  onActivateContract,
   permissions,
 }: {
   quote: NonNullable<RequirementListItem['quotes']>[number];
@@ -971,11 +1072,18 @@ function QuoteSummary({
     decision: 'APPROVE' | 'REJECT',
   ) => Promise<void>;
   onSubmitContract: (contractId: string) => Promise<void>;
+  onSignContract: (contract: { id: string; contractNo: string }) => void;
+  onActivateContract: (contractId: string) => Promise<void>;
   permissions: string[];
 }) {
   const version = quote.versions[0];
   if (!version) return null;
-  const isBusy = busyKey?.startsWith(`${version.id}:`) ?? false;
+  const isBusy =
+    busyKey?.startsWith(`${version.id}:`) ||
+    (version.contract
+      ? busyKey?.startsWith(`${version.contract.id}:`)
+      : false) ||
+    false;
   const canCreateVersion = ['SENT', 'REJECTED', 'EXPIRED'].includes(
     version.status,
   );
@@ -1038,6 +1146,22 @@ function QuoteSummary({
             <QuoteActionButton label="商务通过" disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'business', 'APPROVE')} />
             <QuoteActionButton label="商务退回" danger disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'business', 'REJECT')} />
           </>
+        ) : null}
+        {contract?.status === 'APPROVED' && can('contract:sign') ? (
+          <QuoteActionButton
+            label="上传签署件"
+            disabled={isBusy}
+            onClick={() =>
+              onSignContract({ id: contract.id, contractNo: contract.contractNo })
+            }
+          />
+        ) : null}
+        {contract?.status === 'SIGNED' && can('contract:activate') ? (
+          <QuoteActionButton
+            label="生效合同"
+            disabled={isBusy}
+            onClick={() => void onActivateContract(contract.id)}
+          />
         ) : null}
         {version.status === 'DRAFT' ? (
           <QuoteActionButton

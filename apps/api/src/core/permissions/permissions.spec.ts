@@ -9,6 +9,9 @@ describe('contract approval role templates', () => {
     expect(rolePermissions('Sales')).toContain('contract:submit');
     expect(rolePermissions('Sales')).not.toContain('contract:approve-sales');
     expect(rolePermissions('SalesManager')).toContain('contract:approve-sales');
+    expect(rolePermissions('SalesManager')).toEqual(
+      expect.arrayContaining(['contract:sign', 'contract:activate']),
+    );
     expect(rolePermissions('Finance')).toContain('contract:review-finance');
     expect(rolePermissions('BusinessReview')).toContain(
       'contract:review-business',

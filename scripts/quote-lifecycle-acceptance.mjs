@@ -34,6 +34,30 @@ async function request(path, options = {}) {
   return body;
 }
 
+async function uploadSignedPdf(contractNo) {
+  const form = new FormData();
+  form.append(
+    'file',
+    new Blob([`%PDF-1.4\nSigned contract ${contractNo}\n%%EOF\n`], {
+      type: 'application/pdf',
+    }),
+    `${contractNo}-signed.pdf`,
+  );
+  const response = await fetch(`${apiBaseUrl}/files/upload?folder=contracts`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'x-company-id': companyId,
+    },
+    body: form,
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`signed PDF upload failed (${response.status}): ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
 const login = await request('/auth/login', {
   method: 'POST',
   body: JSON.stringify({ email, password }),
@@ -137,6 +161,22 @@ const businessApproved = await request(`/presales/contracts/${contract.id}/busin
 if (businessApproved?.status !== 'APPROVED') {
   throw new Error('Contract did not reach APPROVED');
 }
+const signedFile = await uploadSignedPdf(contract.contractNo);
+if (!signedFile?.id) throw new Error('Signed PDF upload did not return file id');
+const signed = await request(`/presales/contracts/${contract.id}/sign`, {
+  method: 'POST',
+  body: JSON.stringify({ fileRecordId: signedFile.id }),
+});
+if (signed?.status !== 'SIGNED' || signed?.signedFileId !== signedFile.id) {
+  throw new Error('Contract did not bind the signed PDF');
+}
+const activated = await request(`/presales/contracts/${contract.id}/activate`, {
+  method: 'POST',
+  body: '{}',
+});
+if (activated?.status !== 'ACTIVE') {
+  throw new Error('Signed contract did not reach ACTIVE');
+}
 
 console.log(JSON.stringify({
   passed: true,
@@ -148,12 +188,15 @@ console.log(JSON.stringify({
     contractNo: contract.contractNo,
     status: contract.status,
     versionNo: contractV1.versionNo,
-    versionStatus: 'APPROVED',
+    versionStatus: 'ACTIVE',
+    signedFileId: signedFile.id,
     approvalPath: [
       submitted.status,
       salesApproved.status,
       financeApproved.status,
       businessApproved.status,
+      signed.status,
+      activated.status,
     ],
   },
   total: String(accepted.total),

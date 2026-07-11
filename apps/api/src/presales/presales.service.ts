@@ -187,6 +187,9 @@ export class PresalesService {
                       contractNo: true,
                       status: true,
                       currentVersionNo: true,
+                      signedFileId: true,
+                      signedAt: true,
+                      activatedAt: true,
                     },
                   },
                 },
@@ -902,6 +905,196 @@ export class PresalesService {
         },
       });
       return { ...contract, status: nextStatus };
+    });
+  }
+
+  async signContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+    fileRecordId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+          signedFileId: true,
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== 'APPROVED') {
+        throw new BadRequestException('只有已批准合同可以登记签署件');
+      }
+      const file = await tx.fileRecord.findFirst({
+        where: { id: fileRecordId, companyId },
+        select: { id: true, fileName: true, mimeType: true },
+      });
+      if (!file) {
+        throw new NotFoundException('签署件不存在或无权访问');
+      }
+
+      try {
+        const claimed = await tx.salesContract.updateMany({
+          where: {
+            id: contract.id,
+            companyId,
+            status: 'APPROVED',
+            signedFileId: null,
+          },
+          data: {
+            status: 'SIGNED',
+            signedFileId: file.id,
+            signedById: operatorId,
+            signedAt: now,
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('合同状态已变化，请刷新后重试');
+        }
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('该签署件已关联其他合同');
+        }
+        throw error;
+      }
+      await tx.salesContractVersion.updateMany({
+        where: {
+          contractId: contract.id,
+          companyId,
+          versionNo: contract.currentVersionNo,
+          status: 'APPROVED',
+        },
+        data: { status: 'SIGNED', signedAt: now },
+      });
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage: 'SIGNATURE',
+          decision: 'SIGNED',
+          comment: file.fileName,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_SIGNED',
+          details: {
+            contractNo: contract.contractNo,
+            fileRecordId: file.id,
+            fileName: file.fileName,
+            mimeType: file.mimeType,
+          },
+        },
+      });
+      return {
+        ...contract,
+        status: 'SIGNED',
+        signedFileId: file.id,
+        signedAt: now,
+      };
+    });
+  }
+
+  async activateContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+          signedFileId: true,
+          versions: {
+            take: 1,
+            orderBy: { versionNo: 'desc' },
+            select: {
+              versionNo: true,
+              effectiveAt: true,
+              expiresAt: true,
+            },
+          },
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== 'SIGNED' || !contract.signedFileId) {
+        throw new BadRequestException('只有已关联签署件的合同可以生效');
+      }
+      const currentVersion = contract.versions[0];
+      if (
+        !currentVersion ||
+        currentVersion.versionNo !== contract.currentVersionNo
+      ) {
+        throw new ConflictException('合同当前版本数据不完整，请刷新后重试');
+      }
+      if (currentVersion.effectiveAt && currentVersion.effectiveAt > now) {
+        throw new BadRequestException('合同尚未到生效日期');
+      }
+      if (currentVersion.expiresAt && currentVersion.expiresAt <= now) {
+        throw new BadRequestException('合同已超过到期日期，不能生效');
+      }
+
+      const claimed = await tx.salesContract.updateMany({
+        where: { id: contract.id, companyId, status: 'SIGNED' },
+        data: { status: 'ACTIVE', activatedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+      }
+      await tx.salesContractVersion.updateMany({
+        where: {
+          contractId: contract.id,
+          companyId,
+          versionNo: contract.currentVersionNo,
+          status: 'SIGNED',
+        },
+        data: { status: 'ACTIVE' },
+      });
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage: 'ACTIVATION',
+          decision: 'ACTIVATED',
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_ACTIVATED',
+          details: {
+            contractNo: contract.contractNo,
+            signedFileId: contract.signedFileId,
+          },
+        },
+      });
+      return { ...contract, status: 'ACTIVE', activatedAt: now };
     });
   }
 

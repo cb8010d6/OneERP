@@ -43,6 +43,9 @@ describe('PresalesService', () => {
     salesContractApproval: {
       create: jest.fn(),
     },
+    fileRecord: {
+      findFirst: jest.fn(),
+    },
     auditLog: {
       create: jest.fn(),
     },
@@ -612,6 +615,93 @@ describe('PresalesService', () => {
         'SALES_MANAGER',
         { decision: 'REJECT' },
       ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('binds a company-scoped signed file to an approved contract', async () => {
+    tx.salesContract.findFirst.mockResolvedValue({
+      id: 'contract-1',
+      contractNo: 'CT-2026-000001',
+      status: 'APPROVED',
+      currentVersionNo: 1,
+      signedFileId: null,
+    });
+    tx.fileRecord.findFirst.mockResolvedValue({
+      id: 'file-1',
+      fileName: 'signed-contract.pdf',
+      mimeType: 'application/pdf',
+    });
+    tx.salesContract.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractVersion.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractApproval.create.mockResolvedValue({ id: 'signature-1' });
+
+    const result = await service.signContract(
+      'company-1',
+      'manager-1',
+      'contract-1',
+      'file-1',
+    );
+
+    expect(result).toMatchObject({
+      status: 'SIGNED',
+      signedFileId: 'file-1',
+    });
+    expect(tx.fileRecord.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'file-1', companyId: 'company-1' },
+      }),
+    );
+  });
+
+  it('activates a signed contract within its effective date window', async () => {
+    tx.salesContract.findFirst.mockResolvedValue({
+      id: 'contract-1',
+      contractNo: 'CT-2026-000001',
+      status: 'SIGNED',
+      currentVersionNo: 1,
+      signedFileId: 'file-1',
+      versions: [
+        {
+          versionNo: 1,
+          effectiveAt: new Date('2026-07-10T00:00:00.000Z'),
+          expiresAt: new Date('2026-08-10T00:00:00.000Z'),
+        },
+      ],
+    });
+    tx.salesContract.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractVersion.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractApproval.create.mockResolvedValue({ id: 'activation-1' });
+
+    const result = await service.activateContract(
+      'company-1',
+      'manager-1',
+      'contract-1',
+    );
+
+    expect(result).toMatchObject({ status: 'ACTIVE' });
+    expect(tx.salesContractVersion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'ACTIVE' } }),
+    );
+  });
+
+  it('does not activate a contract before its effective date', async () => {
+    tx.salesContract.findFirst.mockResolvedValue({
+      id: 'contract-1',
+      contractNo: 'CT-2026-000001',
+      status: 'SIGNED',
+      currentVersionNo: 1,
+      signedFileId: 'file-1',
+      versions: [
+        {
+          versionNo: 1,
+          effectiveAt: new Date('2026-07-12T12:00:00.000Z'),
+          expiresAt: null,
+        },
+      ],
+    });
+
+    await expect(
+      service.activateContract('company-1', 'manager-1', 'contract-1'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 

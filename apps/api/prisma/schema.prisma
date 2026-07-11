@@ -141,6 +141,7 @@ model User {
   ownedQuotes           Quote[]               @relation("QuoteOwner")
   ownedContracts        SalesContract[]       @relation("ContractOwner")
   contractApprovals     SalesContractApproval[] @relation("ContractApprovalActor")
+  signedContracts       SalesContract[]       @relation("ContractSigner")
 }
 
 model Role {
@@ -383,6 +384,10 @@ model SalesContract {
   submittedAt      DateTime?
   approvedAt       DateTime?
   rejectedAt       DateTime?
+  signedFileId     String?  @unique
+  signedById       String?
+  signedAt         DateTime?
+  activatedAt      DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -390,6 +395,8 @@ model SalesContract {
   quoteVersion QuoteVersion           @relation(fields: [quoteVersionId], references: [id])
   partner      Partner                @relation(fields: [partnerId], references: [id])
   owner        User                   @relation("ContractOwner", fields: [ownerId], references: [id])
+  signedFile   FileRecord?            @relation(fields: [signedFileId], references: [id], onDelete: Restrict)
+  signedBy     User?                  @relation("ContractSigner", fields: [signedById], references: [id])
   versions     SalesContractVersion[]
   approvals    SalesContractApproval[]
 
@@ -887,6 +894,7 @@ model FileRecord {
 
   company  Company @relation(fields: [companyId], references: [id])
   uploader User    @relation(fields: [uploaderId], references: [id])
+  signedContract SalesContract?
 }
 
 model InventoryTransaction {

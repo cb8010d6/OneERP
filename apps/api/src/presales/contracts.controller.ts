@@ -10,6 +10,7 @@ import type { JwtUserPayload } from '../core/http/request.types';
 import { Permission } from '../core/permissions/permissions';
 import { CreateContractDto } from './dto/create-contract.dto';
 import { ContractDecisionDto } from './dto/contract-decision.dto';
+import { SignContractDto } from './dto/sign-contract.dto';
 import { PresalesService } from './presales.service';
 
 @ApiTags('销售合同 (Contracts)')
@@ -98,6 +99,38 @@ export class ContractsController {
       contractId,
       'BUSINESS',
       data,
+    );
+  }
+
+  @Post(':contractId/sign')
+  @RequirePermissions(Permission.ContractSign)
+  @ApiOperation({ summary: '关联签署件并标记合同已签署' })
+  sign(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('contractId') contractId: string,
+    @Body() data: SignContractDto,
+  ) {
+    return this.presalesService.signContract(
+      companyId,
+      user.id,
+      contractId,
+      data.fileRecordId,
+    );
+  }
+
+  @Post(':contractId/activate')
+  @RequirePermissions(Permission.ContractActivate)
+  @ApiOperation({ summary: '生效已签署合同' })
+  activate(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('contractId') contractId: string,
+  ) {
+    return this.presalesService.activateContract(
+      companyId,
+      user.id,
+      contractId,
     );
   }
 }
