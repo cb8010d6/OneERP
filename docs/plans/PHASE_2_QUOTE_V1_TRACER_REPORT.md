@@ -6,6 +6,7 @@
 > 工作台提交：`fc32bcc`（`feat: add quote creation to requirement workbench`）
 > 版本生命周期提交：`bd7871d`（`feat: add quote version lifecycle commands`）
 > 生命周期验收提交：`09e0702`（`test: add quote lifecycle acceptance`）
+> 工作台生命周期提交：`73091da`（`feat: add quote lifecycle actions to workbench`）
 > 范围：客户需求单 -> 报价 V1；不包含 V2、发出、客户决策、合同或转订单
 
 ## 1. 已实现
@@ -61,6 +62,8 @@
 - `uat-fc32bcc` 部署后 11 步验收再次全部通过，报告为 `scripts/business-acceptance-report-fc32bcc.json`，新增记录为 `REQ-2026-000003 -> QT-2026-000002 / V1 / DRAFT / total 452`。
 - GitHub PR #15 在 `fc32bcc` 上的 validate、commitlint 和 CodeQL 全绿；PR 仍为 Draft，未合并。
 - 登录页已通过浏览器加载且无控制台错误；报价工作台登录后桌面/移动交互视觉验收仍待完成，不在本报告中提前标记通过。
+- 工作台已接入报价生命周期动作：草稿可发出，已发出版本可记录接受/拒绝并创建新版本，拒绝/过期版本可创建新版本；请求期间按钮锁定并在完成后刷新当前摘要。
+- `uat-73091da` 已部署 Web 工作台，API 保持 `uat-bd7871d` 生命周期版本；健康检查和 Web HTTP 200 通过。
 - 报价版本生命周期已部署为 `uat-bd7871d`，新增独立 `/presales/quotes` 命令接口，支持复制 V2、条件发出和记录客户接受/拒绝。
 - V2 创建使用 `currentVersionNo` 条件更新抢占版本号；发出和客户决策均使用状态条件 `updateMany`，并发状态变化返回明确冲突，不依赖数据库异常产生 500。
 - 远程生命周期验收通过：`REQ-2026-000004 -> QT-2026-000003 -> V1 SENT -> V2 DRAFT -> V2 SENT -> V2 ACCEPTED`，总额 250。
