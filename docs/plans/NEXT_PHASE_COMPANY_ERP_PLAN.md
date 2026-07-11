@@ -25,8 +25,8 @@ OneERP 已经是一个真实可运行的 ERP 技术与交易内核，不是页�
 ## 2. 证据基线
 
 - `npm run validate`：通过。
-  - API：40 个测试套件、385 个测试通过。
-  - Web：4 个测试套件、34 个测试通过。
+  - API：41 个测试套件、390 个测试通过。
+  - Web：5 个测试套件、35 个测试通过。
   - Prisma、typecheck、lint、API/Web build 均通过。
   - 当前仍有 API 7 个、Web 73 个 lint warning，主要是 `any` 和 Hook 依赖。
 - 依赖审计：Root/API/Web 为 0 漏洞；Mobile 有 9 个 moderate 漏洞，无 high/critical。
@@ -34,6 +34,7 @@ OneERP 已经是一个真实可运行的 ERP 技术与交易内核，不是页�
 - GitHub Draft PR：[#15](https://github.com/cb8010d6/OneERP/pull/15)，CI/CodeQL 基线通过，尚未合并；精确提交数和文件数以 PR 当前页面为准。
 - 当前能力仍位于 `refactor/remaining-tasks`，GitHub 默认分支不能代表本分支尚未合并的能力。
 - 2026-07-10 远程 UAT：API、Web、PostgreSQL、Redis、MinIO 均健康且无重启；现有 9 步 `business-acceptance` 两次通过，覆盖健康、登录、主数据、采购入库、销售订单、库存不足默认拒绝且库存不变、正常发货、发票过账和试算平衡。结果报告保留在 UAT 主机，使用的是临时 overlay API 镜像，不作为正式发布物。
+- 2026-07-11 客户需求 tracer：提交 `d0ee161` 已实现需求单年度顺序号、公司隔离、创建/查询/跟进/关闭 API 和 Web 工作台；空库 29 个 migration、本地数据库 E2E、远程 2 GB UAT 生命周期及原 9 步业务验收均通过。
 
 ## 3. 目标业务闭环与当前断点
 

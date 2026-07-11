@@ -1,8 +1,22 @@
 # Phase 2 售前到订单纵向切片技术边界
 
-> 状态：技术评审稿，尚未授权创建 Prisma migration  
+> 状态：客户需求 tracer bullet 已在 `d0ee161` 实现并通过本地/远程 UAT；报价与合同切片待实施  
 > 业务输入：[`PHASE_1_BUSINESS_SEMANTICS.md`](./PHASE_1_BUSINESS_SEMANTICS.md)  
 > 目标：以最小可审计链路实现“客户需求 -> 报价版本 -> 合同版本 -> 销售订单”，不扩张为完整 CRM、电子签章或通用流程平台。
+
+## 0. 2026-07-11 实施证据
+
+详细记录：[`PHASE_2_REQUIREMENT_TRACER_REPORT.md`](./PHASE_2_REQUIREMENT_TRACER_REPORT.md)。
+
+- 实现提交：`d0ee161`（`feat: add customer requirement tracer`）。
+- 新增 `DocumentSequence`、`CustomerRequirement`、`RequirementActivity`，以及公司级索引、外键和 Prisma 租户白名单。
+- 单号使用数据库原子年度序列，格式为 `REQ-YYYY-######`，不复用随机四位订单号逻辑。
+- API 已覆盖创建、分页/搜索、追加不可变跟进、丢单/取消关闭；写动作在同一事务内写业务记录和 `AuditLog`。
+- Web 新增 `/dashboard/sales/requirements`，支持列表、搜索、状态筛选、创建、跟进和标记丢单。
+- 本地空 PostgreSQL 15 容器成功应用全部 29 个 migration；真实数据库 E2E 通过创建、查询、跟进和关闭生命周期，测试容器已删除。
+- 仓库门禁：API 41 套件/390 测试、Web 5 套件/35 测试通过；API/Web build 与五种 Compose 组合通过。
+- 远程 2 GB UAT：migration `20260711001000_presales_customer_requirements` 已完成；API/Web 健康；原 9 步业务验收再次 `passed=true`；认证 HTTP 验收单 `REQ-2026-000001` 完成 `DRAFT -> FOLLOWING -> LOST`。
+- UAT 镜像标签 `uat-d0ee161` 为本地离线构建/overlay 后传输的临时测试镜像，不是 GHCR 正式发布物。
 
 ## 1. 已核对的现有边界
 
@@ -148,7 +162,7 @@ Sales 模板默认获得需求、报价和合同草稿权限；合同批准/终�
 
 ## 9. 分批实施顺序
 
-1. **需求 tracer bullet**：模型、API、最小工作台、公司隔离、跟进时间线和测试。
+1. **需求 tracer bullet（已完成，`d0ee161`）**：模型、API、最小工作台、公司隔离、跟进时间线、关闭原因和测试。
 2. **报价 tracer bullet**：版本与行快照、汇率端口、发出/接受动作、不可变测试和 UI。
 3. **合同转单 tracer bullet**：合同版本、签署件、幂等分批转订单、事务审计/事件和 E2E。
 
@@ -156,10 +170,10 @@ Sales 模板默认获得需求、报价和合同草稿权限；合同批准/终�
 
 ## 10. 实施前剩余门禁
 
-- 确认本位币和首个实时汇率服务商，以及行情超时/最大年龄。
-- 确认需求、报价、合同编号前缀和是否按年度重置。
+- 确认首个实时汇率服务商，以及行情超时/最大年龄；本位币已确认 CNY。
+- 报价和合同沿用已确认的年度编号规则；需求编号 `REQ-YYYY-######` 已实现。
 - 确认合同批准、签署、终止的岗位成员和金额阈值。
 - 评审新表、可空 Order 来源字段、复合唯一键、索引和前滚/回滚 SQL。
 - 先处理或明确接受现有 `Order.orderNo @unique` 的跨公司全局唯一边界；新单号生成不得继续依赖随机四位数。
 
-以上门禁未完成前，不创建 Prisma migration。
+以上门禁未完成前，不创建报价/合同相关 Prisma migration；客户需求 migration 已独立完成并验证。

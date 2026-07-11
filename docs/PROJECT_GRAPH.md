@@ -8,7 +8,7 @@
 
 Graphify 本次结构图谱记录：
 
-- 最新 `graphify update .`：3147 nodes、6395 edges、228 communities；本次 AST 更新覆盖 382 个文件。
+- 最新 `graphify update .`：3246 nodes、6583 edges、258 communities；本次 AST 更新覆盖 396 个文件。
 - 图片等二进制资产已通过 `.graphifyignore` 排除；当前未使用外部 LLM 做文档/图片语义抽取，避免把 API key 引入图谱生成流程。
 - 图谱可用于导航和缩小检索范围，但精确依赖、事务和权限判断仍需回到源码验证。
 - 本地入口：`graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/GRAPH_TREE.html`。
@@ -26,7 +26,7 @@ Graphify 本次结构图谱记录：
 
 ## 二、API 模块图谱
 
-`apps/api/src/app.module.ts` 聚合 22 个模块、17 个 controller、34 个 service。主干关系：
+`apps/api/src/app.module.ts` 已接入 23 个业务/基础模块；本轮新增 `PresalesModule`，显式承载客户需求写流程，不通过通用 CRUD 执行状态变更。主干关系：
 
 ```mermaid
 flowchart TD
@@ -40,6 +40,7 @@ flowchart TD
   AppModule --> WorkflowModule
   AppModule --> AIModule
   AppModule --> AuditModule
+  AppModule --> PresalesModule
   AppModule --> MetricsModule
   AppModule --> ConfigValidationModule
   AppModule --> EventQueueModule
@@ -89,7 +90,7 @@ flowchart TD
 
 ## 四、Web 路由图谱
 
-Next.js App Router 当前有 18 个页面/布局入口：
+Next.js App Router 当前有 19 个页面/布局入口：
 
 - `/`
 - `/login`
@@ -106,6 +107,7 @@ Next.js App Router 当前有 18 个页面/布局入口：
 - `/dashboard/production`
 - `/dashboard/purchase`
 - `/dashboard/sales`
+- `/dashboard/sales/requirements`
 - `/dashboard/settings`
 - root layout + dashboard layout
 
