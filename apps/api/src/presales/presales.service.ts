@@ -138,6 +138,27 @@ export class PresalesService {
         include: {
           partner: { select: { id: true, name: true, code: true } },
           owner: { select: { id: true, name: true, email: true } },
+          quotes: {
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              id: true,
+              quoteNo: true,
+              currentVersionNo: true,
+              versions: {
+                take: 1,
+                orderBy: { versionNo: 'desc' },
+                select: {
+                  id: true,
+                  versionNo: true,
+                  status: true,
+                  currencyCode: true,
+                  total: true,
+                  validUntil: true,
+                },
+              },
+            },
+          },
         },
         orderBy: [{ updatedAt: 'desc' }, { requirementNo: 'desc' }],
         skip: (page - 1) * limit,

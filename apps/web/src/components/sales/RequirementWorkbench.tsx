@@ -1,7 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ClipboardList, Loader2, Plus, Search } from 'lucide-react';
+import {
+  ClipboardList,
+  FilePlus2,
+  Loader2,
+  Plus,
+  Search,
+  Trash2,
+} from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
 import { AsyncSelect } from '@/components/core/AsyncSelect';
@@ -20,6 +27,27 @@ interface RequirementListItem {
   updatedAt: string;
   partner?: { id: string; name: string; code?: string | null };
   owner?: { id: string; name: string; email: string };
+  quotes?: Array<{
+    id: string;
+    quoteNo: string;
+    currentVersionNo: number;
+    versions: Array<{
+      id: string;
+      versionNo: number;
+      status: string;
+      currencyCode: string;
+      total: string | number;
+      validUntil: string;
+    }>;
+  }>;
+}
+
+interface QuoteItemDraft {
+  rowId: string;
+  productId: string;
+  quantity: string;
+  unitPrice: string;
+  taxRate: string;
 }
 
 interface RequirementListResponse {
@@ -39,6 +67,8 @@ const STATUS_OPTIONS = [
   { value: 'LOST', label: '已丢单' },
   { value: 'CANCELLED', label: '已取消' },
 ] as const;
+
+let quoteItemSequence = 0;
 
 function statusClass(status: string) {
   if (status === 'FOLLOWING') return 'bg-sky-100 text-sky-700';
@@ -73,6 +103,15 @@ export function RequirementWorkbench() {
   const [nextFollowUpAt, setNextFollowUpAt] = useState('');
   const [actionContent, setActionContent] = useState('');
   const [actionNextFollowUpAt, setActionNextFollowUpAt] = useState('');
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [quoteRequirement, setQuoteRequirement] =
+    useState<RequirementListItem | null>(null);
+  const [quoteValidUntil, setQuoteValidUntil] = useState('');
+  const [quotePaymentTerms, setQuotePaymentTerms] = useState('');
+  const [quoteDeliveryTerms, setQuoteDeliveryTerms] = useState('');
+  const [quoteItems, setQuoteItems] = useState<QuoteItemDraft[]>([
+    createQuoteItemDraft(),
+  ]);
 
   const fetchRequirements = useCallback(async () => {
     setLoading(true);
@@ -184,6 +223,81 @@ export function RequirementWorkbench() {
     }
   };
 
+  const openQuote = (item: RequirementListItem) => {
+    const validUntil = new Date();
+    validUntil.setDate(validUntil.getDate() + 14);
+    setQuoteRequirement(item);
+    setQuoteValidUntil(validUntil.toISOString().slice(0, 10));
+    setQuotePaymentTerms('');
+    setQuoteDeliveryTerms('');
+    setQuoteItems([createQuoteItemDraft()]);
+    setQuoteOpen(true);
+  };
+
+  const updateQuoteItem = (rowId: string, patch: Partial<QuoteItemDraft>) => {
+    setQuoteItems((items) =>
+      items.map((item) =>
+        item.rowId === rowId ? { ...item, ...patch } : item,
+      ),
+    );
+  };
+
+  const quoteTotal = useMemo(
+    () =>
+      quoteItems.reduce((sum, item) => {
+        const quantity = Number(item.quantity);
+        const unitPrice = Number(item.unitPrice);
+        const taxRate = Number(item.taxRate || 0) / 100;
+        if (!Number.isFinite(quantity) || !Number.isFinite(unitPrice))
+          return sum;
+        return sum + quantity * unitPrice * (1 + taxRate);
+      }, 0),
+    [quoteItems],
+  );
+
+  const submitQuote = async () => {
+    if (!quoteRequirement || !quoteValidUntil) {
+      toast.error('请选择报价有效期');
+      return;
+    }
+    const invalidItem = quoteItems.some(
+      (item) =>
+        !item.productId ||
+        Number(item.quantity) <= 0 ||
+        Number(item.unitPrice) < 0 ||
+        Number(item.taxRate || 0) < 0 ||
+        Number(item.taxRate || 0) > 100,
+    );
+    if (invalidItem) {
+      toast.error('请完整填写产品、数量、单价和税率');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await api.post(`/presales/requirements/${quoteRequirement.id}/quotes`, {
+        currencyCode: 'CNY',
+        validUntil: new Date(`${quoteValidUntil}T23:59:59`).toISOString(),
+        paymentTerms: quotePaymentTerms.trim() || undefined,
+        deliveryTerms: quoteDeliveryTerms.trim() || undefined,
+        items: quoteItems.map((item) => ({
+          productId: item.productId,
+          quantity: Number(item.quantity),
+          unitPrice: Number(item.unitPrice),
+          taxRate: Number(item.taxRate || 0) / 100,
+        })),
+      });
+      toast.success('报价 V1 已创建');
+      setQuoteOpen(false);
+      setQuoteRequirement(null);
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '报价创建失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -275,11 +389,39 @@ export function RequirementWorkbench() {
                       负责人：{item.owner?.name ?? '-'} · 下次跟进：
                       {dateLabel(item.nextFollowUpAt)}
                     </p>
+                    {item.quotes?.[0]?.versions?.[0] ? (
+                      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 border-emerald-500 pl-3 text-xs">
+                        <span className="font-mono font-bold text-emerald-700">
+                          {item.quotes[0].quoteNo}
+                        </span>
+                        <span className="font-semibold text-slate-700">
+                          V{item.quotes[0].versions[0].versionNo} ·{' '}
+                          {item.quotes[0].versions[0].status}
+                        </span>
+                        <span className="text-slate-500">
+                          {item.quotes[0].versions[0].currencyCode}{' '}
+                          {Number(
+                            item.quotes[0].versions[0].total,
+                          ).toLocaleString('zh-CN', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                   {!['LOST', 'CANCELLED', 'CONVERTED'].includes(
                     item.status,
                   ) && (
                     <div className="flex gap-2">
+                      {!item.quotes?.length ? (
+                        <button
+                          type="button"
+                          onClick={() => openQuote(item)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-1.5 text-sm font-medium text-emerald-700"
+                        >
+                          <FilePlus2 className="h-4 w-4" /> 创建报价
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => openAction(item, 'follow-up')}
@@ -381,6 +523,198 @@ export function RequirementWorkbench() {
       </Sheet>
 
       <Sheet
+        open={quoteOpen}
+        title="创建报价 V1"
+        onClose={() => setQuoteOpen(false)}
+      >
+        <div className="space-y-5">
+          <div className="border-b border-slate-200 pb-4">
+            <p className="font-mono text-sm font-bold text-blue-700">
+              {quoteRequirement?.requirementNo}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">
+              {quoteRequirement?.partner?.name}
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              客户与负责人将从需求单固化，报价创建后不能通过界面覆盖。
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="币种">
+              <input
+                value="CNY"
+                disabled
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600"
+              />
+            </FormField>
+            <FormField label="有效期" htmlFor="quote-valid-until">
+              <input
+                id="quote-valid-until"
+                type="date"
+                value={quoteValidUntil}
+                onChange={(event) => setQuoteValidUntil(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+              />
+            </FormField>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-900">报价明细</h3>
+              <button
+                type="button"
+                onClick={() =>
+                  setQuoteItems((items) => [...items, createQuoteItemDraft()])
+                }
+                className="inline-flex items-center gap-1 text-sm font-semibold text-blue-700"
+              >
+                <Plus className="h-4 w-4" /> 添加一行
+              </button>
+            </div>
+            {quoteItems.map((item, index) => (
+              <div
+                key={item.rowId}
+                className="space-y-3 border-t border-slate-200 pt-3 first:border-t-0 first:pt-0"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-500">
+                    明细 {index + 1}
+                  </span>
+                  {quoteItems.length > 1 ? (
+                    <button
+                      type="button"
+                      title="删除明细"
+                      onClick={() =>
+                        setQuoteItems((items) =>
+                          items.filter(
+                            (candidate) => candidate.rowId !== item.rowId,
+                          ),
+                        )
+                      }
+                      className="text-rose-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  ) : null}
+                </div>
+                <FormField label="产品">
+                  <AsyncSelect
+                    id={`quote-product-${item.rowId}`}
+                    value={item.productId}
+                    reference={{
+                      model: 'product',
+                      labelField: 'name',
+                      valueField: 'id',
+                    }}
+                    onChange={(productId) =>
+                      updateQuoteItem(item.rowId, { productId })
+                    }
+                    onSelectRecord={(record) =>
+                      updateQuoteItem(item.rowId, {
+                        unitPrice: String(record.listPrice ?? item.unitPrice),
+                      })
+                    }
+                    placeholder="搜索产品或 SKU"
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                  />
+                </FormField>
+                <div className="grid grid-cols-3 gap-3">
+                  <FormField label="数量" htmlFor={`quote-qty-${item.rowId}`}>
+                    <input
+                      id={`quote-qty-${item.rowId}`}
+                      type="number"
+                      min="0.0001"
+                      step="0.0001"
+                      value={item.quantity}
+                      onChange={(event) =>
+                        updateQuoteItem(item.rowId, {
+                          quantity: event.target.value,
+                        })
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    />
+                  </FormField>
+                  <FormField label="单价" htmlFor={`quote-price-${item.rowId}`}>
+                    <input
+                      id={`quote-price-${item.rowId}`}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={item.unitPrice}
+                      onChange={(event) =>
+                        updateQuoteItem(item.rowId, {
+                          unitPrice: event.target.value,
+                        })
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    />
+                  </FormField>
+                  <FormField label="税率 %" htmlFor={`quote-tax-${item.rowId}`}>
+                    <input
+                      id={`quote-tax-${item.rowId}`}
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      value={item.taxRate}
+                      onChange={(event) =>
+                        updateQuoteItem(item.rowId, {
+                          taxRate: event.target.value,
+                        })
+                      }
+                      className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                    />
+                  </FormField>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="付款条款" htmlFor="quote-payment-terms">
+              <textarea
+                id="quote-payment-terms"
+                rows={3}
+                value={quotePaymentTerms}
+                onChange={(event) => setQuotePaymentTerms(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+              />
+            </FormField>
+            <FormField label="交付条款" htmlFor="quote-delivery-terms">
+              <textarea
+                id="quote-delivery-terms"
+                rows={3}
+                value={quoteDeliveryTerms}
+                onChange={(event) => setQuoteDeliveryTerms(event.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+              />
+            </FormField>
+          </div>
+
+          <div className="flex items-center justify-between border-t border-slate-200 pt-4">
+            <div>
+              <p className="text-xs text-slate-500">预计含税总额</p>
+              <p className="text-xl font-black text-slate-900">
+                CNY{' '}
+                {quoteTotal.toLocaleString('zh-CN', {
+                  minimumFractionDigits: 2,
+                })}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void submitQuote()}
+              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50"
+            >
+              {saving ? '正在创建...' : '创建报价 V1'}
+            </button>
+          </div>
+        </div>
+      </Sheet>
+
+      <Sheet
         open={Boolean(actionMode && selected)}
         title={actionMode === 'close' ? '标记丢单' : '添加跟进'}
         onClose={() => setActionMode(null)}
@@ -426,6 +760,17 @@ export function RequirementWorkbench() {
       </Sheet>
     </div>
   );
+}
+
+function createQuoteItemDraft(): QuoteItemDraft {
+  quoteItemSequence += 1;
+  return {
+    rowId: `quote-item-${quoteItemSequence}`,
+    productId: '',
+    quantity: '1',
+    unitPrice: '',
+    taxRate: '0',
+  };
 }
 
 function FormField({

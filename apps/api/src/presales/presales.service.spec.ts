@@ -115,6 +115,12 @@ describe('PresalesService', () => {
     });
     const [findManyArgs] = prisma.customerRequirement.findMany.mock.calls[0];
     expect(findManyArgs.where).toMatchObject({ companyId: 'company-1' });
+    expect(findManyArgs.include).toMatchObject({
+      quotes: {
+        take: 1,
+        select: { versions: { take: 1 } },
+      },
+    });
   });
 
   it('creates Quote V1 from a company-scoped requirement and freezes ownership', async () => {
