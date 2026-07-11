@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,7 @@ import { ListRequirementsDto } from './dto/list-requirements.dto';
 import { AddFollowUpDto } from './dto/add-follow-up.dto';
 import { CloseRequirementDto } from './dto/close-requirement.dto';
 import { CreateQuoteDto } from './dto/create-quote.dto';
+import { CreateQuoteVersionDto } from './dto/create-quote-version.dto';
 
 const REQUIREMENT_DOCUMENT_TYPE = 'CUSTOMER_REQUIREMENT';
 const QUOTE_DOCUMENT_TYPE = 'QUOTE';
@@ -344,6 +346,224 @@ export class PresalesService {
       });
 
       return quote;
+    });
+  }
+
+  async createQuoteVersion(
+    companyId: string,
+    operatorId: string,
+    quoteId: string,
+    data: CreateQuoteVersionDto = {},
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const quote = await tx.quote.findFirst({
+        where: { id: quoteId, companyId },
+        select: {
+          id: true,
+          currentVersionNo: true,
+          versions: {
+            take: 1,
+            orderBy: { versionNo: 'desc' },
+            include: { items: true },
+          },
+        },
+      });
+      if (!quote) {
+        throw new NotFoundException('报价不存在或无权访问');
+      }
+      const currentVersion = quote.versions[0];
+      if (
+        !currentVersion ||
+        currentVersion.versionNo !== quote.currentVersionNo
+      ) {
+        throw new BadRequestException('报价当前版本数据不完整');
+      }
+      if (currentVersion.status === 'DRAFT') {
+        throw new BadRequestException('当前版本仍是草稿，请直接编辑该版本');
+      }
+      if (currentVersion.status === 'ACCEPTED') {
+        throw new BadRequestException('已接受的报价不能创建新版本');
+      }
+
+      const requestedValidUntil = data.validUntil
+        ? new Date(data.validUntil)
+        : null;
+      const fallbackValidUntil = new Date(now);
+      fallbackValidUntil.setDate(fallbackValidUntil.getDate() + 14);
+      const validUntil =
+        requestedValidUntil ??
+        (currentVersion.validUntil > now
+          ? currentVersion.validUntil
+          : fallbackValidUntil);
+      if (validUntil <= now) {
+        throw new BadRequestException('新版本有效期必须晚于当前时间');
+      }
+
+      const versionNo = quote.currentVersionNo + 1;
+      const claimed = await tx.quote.updateMany({
+        where: {
+          id: quote.id,
+          companyId,
+          currentVersionNo: quote.currentVersionNo,
+        },
+        data: { currentVersionNo: versionNo },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('报价当前版本已变化，请刷新后重试');
+      }
+      const version = await tx.quoteVersion.create({
+        data: {
+          quoteId: quote.id,
+          companyId,
+          versionNo,
+          status: 'DRAFT',
+          currencyCode: currentVersion.currencyCode,
+          baseCurrencyCode: currentVersion.baseCurrencyCode,
+          exchangeRate: currentVersion.exchangeRate,
+          exchangeRateAt: currentVersion.exchangeRateAt,
+          exchangeRateSource: currentVersion.exchangeRateSource,
+          validUntil,
+          paymentTerms: currentVersion.paymentTerms,
+          deliveryTerms: currentVersion.deliveryTerms,
+          subtotal: currentVersion.subtotal,
+          taxTotal: currentVersion.taxTotal,
+          total: currentVersion.total,
+          items: {
+            create: currentVersion.items.map((item) => ({
+              companyId,
+              productId: item.productId,
+              skuSnapshot: item.skuSnapshot,
+              nameSnapshot: item.nameSnapshot,
+              uomSnapshot: item.uomSnapshot,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              discountRate: item.discountRate,
+              taxRate: item.taxRate,
+              netAmount: item.netAmount,
+              taxAmount: item.taxAmount,
+              grossAmount: item.grossAmount,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quote',
+          entityId: quote.id,
+          action: 'QUOTE_VERSION_CREATED',
+          details: { fromVersionNo: currentVersion.versionNo, versionNo },
+        },
+      });
+      return version;
+    });
+  }
+
+  async sendQuoteVersion(
+    companyId: string,
+    operatorId: string,
+    versionId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const version = await tx.quoteVersion.findFirst({
+        where: { id: versionId, companyId },
+        include: { quote: { select: { currentVersionNo: true } }, items: true },
+      });
+      if (!version) throw new NotFoundException('报价版本不存在或无权访问');
+      if (version.status !== 'DRAFT') {
+        throw new BadRequestException('只有草稿报价版本可以发出');
+      }
+      if (version.versionNo !== version.quote.currentVersionNo) {
+        throw new BadRequestException('只能发出当前报价版本');
+      }
+      if (!version.items.length)
+        throw new BadRequestException('报价明细不能为空');
+      if (version.validUntil <= now)
+        throw new BadRequestException('报价已过有效期');
+
+      const sent = await tx.quoteVersion.updateMany({
+        where: { id: version.id, companyId, status: 'DRAFT' },
+        data: { status: 'SENT', sentAt: now },
+      });
+      if (sent.count !== 1) {
+        throw new ConflictException('报价版本状态已变化，请刷新后重试');
+      }
+      if (version.versionNo > 1) {
+        await tx.quoteVersion.updateMany({
+          where: {
+            quoteId: version.quoteId,
+            companyId,
+            status: 'SENT',
+            versionNo: { lt: version.versionNo },
+          },
+          data: { status: 'SUPERSEDED' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quoteVersion',
+          entityId: version.id,
+          action: 'QUOTE_SENT',
+          details: { quoteId: version.quoteId, versionNo: version.versionNo },
+        },
+      });
+      return tx.quoteVersion.findFirst({
+        where: { id: version.id, companyId },
+        include: { items: true },
+      });
+    });
+  }
+
+  async recordQuoteDecision(
+    companyId: string,
+    operatorId: string,
+    versionId: string,
+    decision: 'ACCEPTED' | 'REJECTED',
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const version = await tx.quoteVersion.findFirst({
+        where: { id: versionId, companyId },
+        select: { id: true, quoteId: true, versionNo: true, status: true },
+      });
+      if (!version) throw new NotFoundException('报价版本不存在或无权访问');
+      if (version.status !== 'SENT') {
+        throw new BadRequestException('只有已发出的报价可以记录客户决策');
+      }
+      const updated = await tx.quoteVersion.updateMany({
+        where: { id: version.id, companyId, status: 'SENT' },
+        data: {
+          status: decision,
+          acceptedAt: decision === 'ACCEPTED' ? now : null,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('报价版本状态已变化，请刷新后重试');
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quoteVersion',
+          entityId: version.id,
+          action: 'QUOTE_CUSTOMER_DECISION_RECORDED',
+          details: {
+            quoteId: version.quoteId,
+            versionNo: version.versionNo,
+            decision,
+          },
+        },
+      });
+      return tx.quoteVersion.findFirst({
+        where: { id: version.id, companyId },
+        include: { items: true },
+      });
     });
   }
 

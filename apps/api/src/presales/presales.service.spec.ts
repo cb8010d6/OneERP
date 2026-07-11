@@ -24,6 +24,13 @@ describe('PresalesService', () => {
     quote: {
       create: jest.fn(),
       findFirst: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    quoteVersion: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      updateMany: jest.fn(),
     },
     auditLog: {
       create: jest.fn(),
@@ -269,6 +276,157 @@ describe('PresalesService', () => {
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(tx.quote.create).not.toHaveBeenCalled();
+  });
+
+  it('copies the current sent version into a new draft V2', async () => {
+    tx.quote.findFirst.mockResolvedValue({
+      id: 'quote-1',
+      companyId: 'company-1',
+      currentVersionNo: 1,
+      versions: [
+        {
+          id: 'version-1',
+          versionNo: 1,
+          status: 'SENT',
+          currencyCode: 'CNY',
+          baseCurrencyCode: 'CNY',
+          exchangeRate: 1,
+          exchangeRateAt: new Date('2026-07-11T01:00:00.000Z'),
+          exchangeRateSource: 'SYSTEM_BASE',
+          validUntil: new Date('2026-08-10T00:00:00.000Z'),
+          paymentTerms: '预付 30%',
+          deliveryTerms: '送货上门',
+          subtotal: 200,
+          taxTotal: 0,
+          total: 200,
+          items: [
+            {
+              productId: 'product-1',
+              skuSnapshot: 'P-001',
+              nameSnapshot: '精密零件',
+              uomSnapshot: 'pcs',
+              quantity: 2,
+              unitPrice: 100,
+              discountRate: 0,
+              taxRate: 0,
+              netAmount: 200,
+              taxAmount: 0,
+              grossAmount: 200,
+            },
+          ],
+        },
+      ],
+    });
+    tx.quoteVersion.create.mockResolvedValue({
+      id: 'version-2',
+      quoteId: 'quote-1',
+      versionNo: 2,
+      status: 'DRAFT',
+    });
+    tx.quote.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.createQuoteVersion(
+      'company-1',
+      'operator-1',
+      'quote-1',
+    );
+
+    expect(result).toMatchObject({
+      id: 'version-2',
+      versionNo: 2,
+      status: 'DRAFT',
+    });
+    const [createArgs] = tx.quoteVersion.create.mock.calls[0] as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(createArgs.data).toMatchObject({
+      quoteId: 'quote-1',
+      companyId: 'company-1',
+      versionNo: 2,
+      status: 'DRAFT',
+    });
+    expect(tx.quote.updateMany).toHaveBeenCalledWith({
+      where: { id: 'quote-1', companyId: 'company-1', currentVersionNo: 1 },
+      data: { currentVersionNo: 2 },
+    });
+  });
+
+  it('sends V2 once and supersedes the older sent version', async () => {
+    tx.quoteVersion.findFirst
+      .mockResolvedValueOnce({
+        id: 'version-2',
+        quoteId: 'quote-1',
+        companyId: 'company-1',
+        versionNo: 2,
+        status: 'DRAFT',
+        validUntil: new Date('2026-08-10T00:00:00.000Z'),
+        quote: { currentVersionNo: 2 },
+        items: [{ id: 'item-2' }],
+      })
+      .mockResolvedValueOnce({
+        id: 'version-2',
+        versionNo: 2,
+        status: 'SENT',
+      });
+    tx.quoteVersion.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await service.sendQuoteVersion(
+      'company-1',
+      'operator-1',
+      'version-2',
+    );
+
+    expect(result).toMatchObject({ id: 'version-2', status: 'SENT' });
+    expect(tx.quoteVersion.updateMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: {
+          quoteId: 'quote-1',
+          companyId: 'company-1',
+          status: 'SENT',
+          versionNo: { lt: 2 },
+        },
+        data: { status: 'SUPERSEDED' },
+      }),
+    );
+  });
+
+  it('records an accepted customer decision only from SENT', async () => {
+    tx.quoteVersion.findFirst
+      .mockResolvedValueOnce({
+        id: 'version-2',
+        quoteId: 'quote-1',
+        companyId: 'company-1',
+        versionNo: 2,
+        status: 'SENT',
+      })
+      .mockResolvedValueOnce({
+        id: 'version-2',
+        versionNo: 2,
+        status: 'ACCEPTED',
+      });
+    tx.quoteVersion.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const result = await service.recordQuoteDecision(
+      'company-1',
+      'operator-1',
+      'version-2',
+      'ACCEPTED',
+    );
+
+    expect(result).toMatchObject({ id: 'version-2', status: 'ACCEPTED' });
+    const [decisionArgs] = tx.quoteVersion.updateMany.mock
+      .calls[0] as unknown as [
+      { where: Record<string, unknown>; data: Record<string, unknown> },
+    ];
+    expect(decisionArgs.where).toEqual({
+      id: 'version-2',
+      companyId: 'company-1',
+      status: 'SENT',
+    });
+    expect(decisionArgs.data).toMatchObject({ status: 'ACCEPTED' });
   });
 
   it('adds an immutable follow-up and advances a draft requirement', async () => {
