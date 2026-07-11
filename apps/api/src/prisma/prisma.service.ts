@@ -43,6 +43,9 @@ const COMPANY_SCOPED_MODELS = new Set([
   'DocumentSequence',
   'CustomerRequirement',
   'RequirementActivity',
+  'Quote',
+  'QuoteVersion',
+  'QuoteVersionItem',
 ]);
 
 @Injectable()

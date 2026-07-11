@@ -67,6 +67,9 @@ model Company {
   documentSequences          DocumentSequence[]
   customerRequirements       CustomerRequirement[]
   requirementActivities      RequirementActivity[]
+  quotes                     Quote[]
+  quoteVersions              QuoteVersion[]
+  quoteVersionItems          QuoteVersionItem[]
 }
 
 enum PartnerType {
@@ -132,6 +135,7 @@ model User {
   acceptedInvitations   UserInvitation[]      @relation("InvitationAcceptedBy")
   ownedRequirements     CustomerRequirement[] @relation("RequirementOwner")
   requirementActivities RequirementActivity[] @relation("RequirementActivityCreator")
+  ownedQuotes           Quote[]               @relation("QuoteOwner")
 }
 
 model Role {
@@ -215,6 +219,7 @@ model Partner {
   customerRefunds      CustomerRefund[]
   supplierCreditNotes  SupplierCreditNote[]
   customerRequirements CustomerRequirement[]
+  quotes               Quote[]
 
   @@unique([companyId, code])
   @@index([companyId, type])
@@ -255,6 +260,7 @@ model CustomerRequirement {
   partner    Partner               @relation(fields: [partnerId], references: [id])
   owner      User                  @relation("RequirementOwner", fields: [ownerId], references: [id])
   activities RequirementActivity[]
+  quotes     Quote[]
 
   @@unique([companyId, requirementNo])
   @@index([companyId, status, updatedAt])
@@ -278,6 +284,84 @@ model RequirementActivity {
 
   @@index([companyId, requirementId, createdAt])
   @@index([createdById, createdAt])
+}
+
+model Quote {
+  id               String   @id @default(uuid())
+  quoteNo          String
+  companyId        String
+  requirementId    String
+  partnerId        String
+  ownerId          String
+  currentVersionNo Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  requirement CustomerRequirement @relation(fields: [requirementId], references: [id])
+  partner     Partner             @relation(fields: [partnerId], references: [id])
+  owner       User                @relation("QuoteOwner", fields: [ownerId], references: [id])
+  versions    QuoteVersion[]
+
+  @@unique([companyId, quoteNo])
+  @@unique([companyId, requirementId])
+  @@index([companyId, partnerId, updatedAt])
+  @@index([companyId, ownerId, updatedAt])
+}
+
+model QuoteVersion {
+  id                 String    @id @default(uuid())
+  quoteId            String
+  companyId          String
+  versionNo          Int
+  status             String    @default("DRAFT")
+  currencyCode       String
+  baseCurrencyCode   String
+  exchangeRate       Decimal   @db.Decimal(18, 8)
+  exchangeRateAt     DateTime
+  exchangeRateSource String
+  validUntil         DateTime
+  paymentTerms       String?
+  deliveryTerms      String?
+  subtotal           Decimal   @db.Decimal(18, 4)
+  taxTotal           Decimal   @db.Decimal(18, 4)
+  total              Decimal   @db.Decimal(18, 4)
+  sentAt             DateTime?
+  acceptedAt         DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  quote   Quote              @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  company Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  items   QuoteVersionItem[]
+
+  @@unique([quoteId, versionNo])
+  @@index([companyId, status, updatedAt])
+}
+
+model QuoteVersionItem {
+  id             String   @id @default(uuid())
+  quoteVersionId String
+  companyId      String
+  productId      String
+  skuSnapshot    String
+  nameSnapshot   String
+  uomSnapshot    String
+  quantity       Decimal  @db.Decimal(18, 4)
+  unitPrice      Decimal  @db.Decimal(18, 4)
+  discountRate   Decimal  @default(0) @db.Decimal(18, 8)
+  taxRate        Decimal  @default(0) @db.Decimal(18, 8)
+  netAmount      Decimal  @db.Decimal(18, 4)
+  taxAmount      Decimal  @db.Decimal(18, 4)
+  grossAmount    Decimal  @db.Decimal(18, 4)
+  createdAt      DateTime @default(now())
+
+  quoteVersion QuoteVersion @relation(fields: [quoteVersionId], references: [id], onDelete: Cascade)
+  company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+
+  @@index([companyId, quoteVersionId])
+  @@index([companyId, productId])
 }
 
 model TaxCode {
@@ -568,11 +652,12 @@ model Product {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  company    Company          @relation(fields: [companyId], references: [id])
-  category   ProductCategory? @relation(fields: [categoryId], references: [id])
-  material   Material?        @relation(fields: [materialId], references: [id])
-  boms       Bom[]
-  workOrders WorkOrder[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  category          ProductCategory?   @relation(fields: [categoryId], references: [id])
+  material          Material?          @relation(fields: [materialId], references: [id])
+  boms              Bom[]
+  workOrders        WorkOrder[]
+  quoteVersionItems QuoteVersionItem[]
 
   @@unique([companyId, sku])
   @@index([companyId, categoryId])

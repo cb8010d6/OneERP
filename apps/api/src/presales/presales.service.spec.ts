@@ -18,6 +18,13 @@ describe('PresalesService', () => {
     requirementActivity: {
       create: jest.fn(),
     },
+    product: {
+      findMany: jest.fn(),
+    },
+    quote: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+    },
     auditLog: {
       create: jest.fn(),
     },
@@ -108,6 +115,154 @@ describe('PresalesService', () => {
     });
     const [findManyArgs] = prisma.customerRequirement.findMany.mock.calls[0];
     expect(findManyArgs.where).toMatchObject({ companyId: 'company-1' });
+  });
+
+  it('creates Quote V1 from a company-scoped requirement and freezes ownership', async () => {
+    tx.customerRequirement.findFirst.mockResolvedValue({
+      id: 'requirement-1',
+      companyId: 'company-1',
+      partnerId: 'partner-1',
+      ownerId: 'owner-1',
+      status: 'FOLLOWING',
+    });
+    tx.product.findMany.mockResolvedValue([
+      {
+        id: 'product-1',
+        sku: 'P-001',
+        name: '精密零件',
+        uom: 'pcs',
+        listPrice: 80,
+      },
+    ]);
+    tx.documentSequence.upsert.mockResolvedValue({ lastValue: 1 });
+    tx.quote.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'quote-1',
+        ...data,
+      }),
+    );
+    tx.auditLog.create.mockResolvedValue({ id: 'audit-quote-1' });
+
+    const result = await service.createQuoteFromRequirement(
+      'company-1',
+      'operator-1',
+      'requirement-1',
+      {
+        currencyCode: 'CNY',
+        validUntil: '2026-08-10',
+        items: [{ productId: 'product-1', quantity: 2, unitPrice: 100 }],
+      },
+    );
+
+    expect(result).toMatchObject({
+      id: 'quote-1',
+      quoteNo: 'QT-2026-000001',
+      companyId: 'company-1',
+      requirementId: 'requirement-1',
+      partnerId: 'partner-1',
+      ownerId: 'owner-1',
+      currentVersionNo: 1,
+    });
+    const [createArgs] = tx.quote.create.mock.calls[0] as unknown as [
+      {
+        data: {
+          versions: {
+            create: Record<string, unknown>;
+          };
+        };
+      },
+    ];
+    const version = createArgs.data.versions.create;
+    expect(version).toMatchObject({
+      versionNo: 1,
+      status: 'DRAFT',
+      currencyCode: 'CNY',
+      baseCurrencyCode: 'CNY',
+      exchangeRateSource: 'SYSTEM_BASE',
+    });
+    expect(String(version.exchangeRate)).toBe('1');
+    expect(String(version.subtotal)).toBe('200');
+    expect(String(version.taxTotal)).toBe('0');
+    expect(String(version.total)).toBe('200');
+    expect(tx.customerRequirement.update).toHaveBeenCalledWith({
+      where: { id: 'requirement-1' },
+      data: { status: 'QUOTING' },
+    });
+    const [auditArgs] = tx.auditLog.create.mock.calls.at(-1) as unknown as [
+      { data: Record<string, unknown> },
+    ];
+    expect(auditArgs.data).toMatchObject({
+      userId: 'operator-1',
+      companyId: 'company-1',
+      entity: 'quote',
+      entityId: 'quote-1',
+      action: 'QUOTE_V1_CREATED',
+    });
+  });
+
+  it('rejects non-CNY quote creation until an exchange-rate provider is configured', async () => {
+    await expect(
+      service.createQuoteFromRequirement(
+        'company-1',
+        'operator-1',
+        'requirement-1',
+        {
+          currencyCode: 'USD',
+          validUntil: '2026-08-10',
+          items: [{ productId: 'product-1', quantity: 1, unitPrice: 100 }],
+        },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects quote creation from a terminal requirement', async () => {
+    tx.customerRequirement.findFirst.mockResolvedValue({
+      id: 'requirement-1',
+      companyId: 'company-1',
+      partnerId: 'partner-1',
+      ownerId: 'owner-1',
+      status: 'LOST',
+    });
+
+    await expect(
+      service.createQuoteFromRequirement(
+        'company-1',
+        'operator-1',
+        'requirement-1',
+        {
+          currencyCode: 'CNY',
+          validUntil: '2026-08-10',
+          items: [{ productId: 'product-1', quantity: 1, unitPrice: 100 }],
+        },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.quote.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a second quote header for the same requirement', async () => {
+    tx.customerRequirement.findFirst.mockResolvedValue({
+      id: 'requirement-1',
+      companyId: 'company-1',
+      partnerId: 'partner-1',
+      ownerId: 'owner-1',
+      status: 'QUOTING',
+    });
+    tx.quote.findFirst.mockResolvedValue({ id: 'quote-existing' });
+
+    await expect(
+      service.createQuoteFromRequirement(
+        'company-1',
+        'operator-1',
+        'requirement-1',
+        {
+          currencyCode: 'CNY',
+          validUntil: '2026-08-10',
+          items: [{ productId: 'product-1', quantity: 1, unitPrice: 100 }],
+        },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(tx.quote.create).not.toHaveBeenCalled();
   });
 
   it('adds an immutable follow-up and advances a draft requirement', async () => {

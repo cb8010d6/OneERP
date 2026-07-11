@@ -9,8 +9,10 @@ import { CreateRequirementDto } from './dto/create-requirement.dto';
 import { ListRequirementsDto } from './dto/list-requirements.dto';
 import { AddFollowUpDto } from './dto/add-follow-up.dto';
 import { CloseRequirementDto } from './dto/close-requirement.dto';
+import { CreateQuoteDto } from './dto/create-quote.dto';
 
 const REQUIREMENT_DOCUMENT_TYPE = 'CUSTOMER_REQUIREMENT';
+const QUOTE_DOCUMENT_TYPE = 'QUOTE';
 
 @Injectable()
 export class PresalesService {
@@ -151,6 +153,177 @@ export class PresalesService {
       limit,
       totalPages: Math.max(1, Math.ceil(total / limit)),
     };
+  }
+
+  async createQuoteFromRequirement(
+    companyId: string,
+    operatorId: string,
+    requirementId: string,
+    data: CreateQuoteDto,
+  ) {
+    const currencyCode = data.currencyCode.trim().toUpperCase();
+    if (currencyCode !== 'CNY') {
+      throw new BadRequestException('非 CNY 报价需配置汇率服务后才能创建');
+    }
+
+    const now = new Date();
+    const validUntil = new Date(data.validUntil);
+    if (validUntil <= now) {
+      throw new BadRequestException('报价有效期必须晚于当前时间');
+    }
+    if (
+      new Set(data.items.map((item) => item.productId)).size !==
+      data.items.length
+    ) {
+      throw new BadRequestException('同一产品不能在报价明细中重复出现');
+    }
+    const year = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+      }).format(now),
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const requirement = await tx.customerRequirement.findFirst({
+        where: { id: requirementId, companyId },
+        select: {
+          id: true,
+          partnerId: true,
+          ownerId: true,
+          status: true,
+        },
+      });
+      if (!requirement) {
+        throw new NotFoundException('客户需求单不存在或无权访问');
+      }
+      if (['LOST', 'CANCELLED', 'CONVERTED'].includes(requirement.status)) {
+        throw new BadRequestException('已关闭的客户需求单不能创建报价');
+      }
+      const existingQuote = await tx.quote.findFirst({
+        where: { companyId, requirementId: requirement.id },
+        select: { id: true },
+      });
+      if (existingQuote) {
+        throw new BadRequestException(
+          '该客户需求单已经创建报价，请新增报价版本',
+        );
+      }
+
+      const products = await tx.product.findMany({
+        where: {
+          companyId,
+          isActive: true,
+          id: { in: data.items.map((item) => item.productId) },
+        },
+        select: { id: true, sku: true, name: true, uom: true, listPrice: true },
+      });
+      if (products.length !== data.items.length) {
+        throw new BadRequestException('报价包含不存在、已停用或跨公司的产品');
+      }
+      const productsById = new Map(
+        products.map((product) => [product.id, product]),
+      );
+
+      let subtotal = new Prisma.Decimal(0);
+      let taxTotal = new Prisma.Decimal(0);
+      const items = data.items.map((item) => {
+        const product = productsById.get(item.productId)!;
+        const quantity = new Prisma.Decimal(item.quantity);
+        const unitPrice = new Prisma.Decimal(item.unitPrice);
+        const discountRate = new Prisma.Decimal(item.discountRate ?? 0);
+        const taxRate = new Prisma.Decimal(item.taxRate ?? 0);
+        const netAmount = quantity
+          .mul(unitPrice)
+          .mul(new Prisma.Decimal(1).minus(discountRate))
+          .toDecimalPlaces(4);
+        const taxAmount = netAmount.mul(taxRate).toDecimalPlaces(4);
+        const grossAmount = netAmount.plus(taxAmount).toDecimalPlaces(4);
+        subtotal = subtotal.plus(netAmount);
+        taxTotal = taxTotal.plus(taxAmount);
+        return {
+          companyId,
+          productId: product.id,
+          skuSnapshot: product.sku,
+          nameSnapshot: product.name,
+          uomSnapshot: product.uom,
+          quantity,
+          unitPrice,
+          discountRate,
+          taxRate,
+          netAmount,
+          taxAmount,
+          grossAmount,
+        };
+      });
+
+      const sequence = await tx.documentSequence.upsert({
+        where: {
+          companyId_documentType_year: {
+            companyId,
+            documentType: QUOTE_DOCUMENT_TYPE,
+            year,
+          },
+        },
+        create: {
+          companyId,
+          documentType: QUOTE_DOCUMENT_TYPE,
+          year,
+          lastValue: 1,
+        },
+        update: { lastValue: { increment: 1 } },
+        select: { lastValue: true },
+      });
+      const quoteNo = `QT-${year}-${String(sequence.lastValue).padStart(6, '0')}`;
+
+      const quote = await tx.quote.create({
+        data: {
+          quoteNo,
+          companyId,
+          requirementId: requirement.id,
+          partnerId: requirement.partnerId,
+          ownerId: requirement.ownerId,
+          currentVersionNo: 1,
+          versions: {
+            create: {
+              companyId,
+              versionNo: 1,
+              status: 'DRAFT',
+              currencyCode,
+              baseCurrencyCode: 'CNY',
+              exchangeRate: new Prisma.Decimal(1),
+              exchangeRateAt: now,
+              exchangeRateSource: 'SYSTEM_BASE',
+              validUntil,
+              paymentTerms: data.paymentTerms?.trim() || null,
+              deliveryTerms: data.deliveryTerms?.trim() || null,
+              subtotal: subtotal.toDecimalPlaces(4),
+              taxTotal: taxTotal.toDecimalPlaces(4),
+              total: subtotal.plus(taxTotal).toDecimalPlaces(4),
+              items: { create: items },
+            },
+          },
+        },
+        include: { versions: { include: { items: true } } },
+      });
+
+      await tx.customerRequirement.update({
+        where: { id: requirement.id },
+        data: { status: 'QUOTING' },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quote',
+          entityId: quote.id,
+          action: 'QUOTE_V1_CREATED',
+          details: { quoteNo, requirementId, versionNo: 1, currencyCode },
+        },
+      });
+
+      return quote;
+    });
   }
 
   async addFollowUp(

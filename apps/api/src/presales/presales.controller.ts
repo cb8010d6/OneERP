@@ -21,6 +21,7 @@ import { ListRequirementsDto } from './dto/list-requirements.dto';
 import { PresalesService } from './presales.service';
 import { AddFollowUpDto } from './dto/add-follow-up.dto';
 import { CloseRequirementDto } from './dto/close-requirement.dto';
+import { CreateQuoteDto } from './dto/create-quote.dto';
 
 @ApiTags('售前管理 (Presales)')
 @ApiBearerAuth()
@@ -60,6 +61,23 @@ export class PresalesController {
     @Body() data: AddFollowUpDto,
   ) {
     return this.presalesService.addFollowUp(
+      companyId,
+      user.id,
+      requirementId,
+      data,
+    );
+  }
+
+  @Post(':id/quotes')
+  @RequirePermissions(Permission.QuoteCreate)
+  @ApiOperation({ summary: '从客户需求单创建报价 V1' })
+  createQuoteFromRequirement(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') requirementId: string,
+    @Body() data: CreateQuoteDto,
+  ) {
+    return this.presalesService.createQuoteFromRequirement(
       companyId,
       user.id,
       requirementId,
