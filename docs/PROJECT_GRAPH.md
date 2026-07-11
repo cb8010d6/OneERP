@@ -125,7 +125,7 @@ Next.js App Router 当前有 19 个页面/布局入口：
 
 | 命令 | 作用 |
 |------|------|
-| `npm run validate` | Prisma validate/generate、API/Web typecheck、lint、test、build |
+| `npm run validate` | Prisma validate/generate、API/Web typecheck、lint、test、build；本地未设置 `DATABASE_URL` 时，Prisma 静态检查使用不会连接数据库的占位 URL，已有环境变量始终优先 |
 | `npm run audit:security` | Root/API/Web/Mobile high/critical 依赖审计门禁 |
 | `npm run risk:preflight` | 剩余风险扫描 + enum dirty SQL 生成 |
 | `npm run risk:preflight:db` | 在目标数据库上生成 enum dirty JSON 报告 |
