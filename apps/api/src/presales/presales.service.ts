@@ -12,9 +12,11 @@ import { AddFollowUpDto } from './dto/add-follow-up.dto';
 import { CloseRequirementDto } from './dto/close-requirement.dto';
 import { CreateQuoteDto } from './dto/create-quote.dto';
 import { CreateQuoteVersionDto } from './dto/create-quote-version.dto';
+import { CreateContractDto } from './dto/create-contract.dto';
 
 const REQUIREMENT_DOCUMENT_TYPE = 'CUSTOMER_REQUIREMENT';
 const QUOTE_DOCUMENT_TYPE = 'QUOTE';
+const CONTRACT_DOCUMENT_TYPE = 'SALES_CONTRACT';
 
 @Injectable()
 export class PresalesService {
@@ -564,6 +566,137 @@ export class PresalesService {
         where: { id: version.id, companyId },
         include: { items: true },
       });
+    });
+  }
+
+  async createContractFromQuoteVersion(
+    companyId: string,
+    operatorId: string,
+    quoteVersionId: string,
+    data: CreateContractDto,
+  ) {
+    const now = new Date();
+    const year = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+      }).format(now),
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const quoteVersion = await tx.quoteVersion.findFirst({
+        where: { id: quoteVersionId, companyId },
+        select: {
+          id: true,
+          status: true,
+          currencyCode: true,
+          baseCurrencyCode: true,
+          exchangeRate: true,
+          exchangeRateAt: true,
+          exchangeRateSource: true,
+          total: true,
+          paymentTerms: true,
+          deliveryTerms: true,
+          quote: {
+            select: { id: true, partnerId: true, ownerId: true },
+          },
+        },
+      });
+      if (!quoteVersion) {
+        throw new NotFoundException('报价版本不存在或无权访问');
+      }
+      if (quoteVersion.status !== 'ACCEPTED') {
+        throw new BadRequestException('只有客户已接受的报价版本可以登记合同');
+      }
+
+      const existingContract = await tx.salesContract.findFirst({
+        where: { companyId, quoteVersionId: quoteVersion.id },
+        select: { id: true },
+      });
+      if (existingContract) {
+        throw new BadRequestException('该报价版本已经登记合同');
+      }
+
+      const sequence = await tx.documentSequence.upsert({
+        where: {
+          companyId_documentType_year: {
+            companyId,
+            documentType: CONTRACT_DOCUMENT_TYPE,
+            year,
+          },
+        },
+        create: {
+          companyId,
+          documentType: CONTRACT_DOCUMENT_TYPE,
+          year,
+          lastValue: 1,
+        },
+        update: { lastValue: { increment: 1 } },
+        select: { lastValue: true },
+      });
+      const contractNo = `CT-${year}-${String(sequence.lastValue).padStart(6, '0')}`;
+      const effectiveAt = data.effectiveAt ? new Date(data.effectiveAt) : null;
+      const expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+      if (effectiveAt && expiresAt && expiresAt <= effectiveAt) {
+        throw new BadRequestException('合同到期日期必须晚于生效日期');
+      }
+
+      let contract;
+      try {
+        contract = await tx.salesContract.create({
+          data: {
+            contractNo,
+            companyId,
+            quoteVersionId: quoteVersion.id,
+            partnerId: quoteVersion.quote.partnerId,
+            ownerId: quoteVersion.quote.ownerId,
+            status: 'DRAFT',
+            currentVersionNo: 1,
+            versions: {
+              create: {
+                companyId,
+                versionNo: 1,
+                title: data.title.trim(),
+                status: 'DRAFT',
+                currencyCode: quoteVersion.currencyCode,
+                baseCurrencyCode: quoteVersion.baseCurrencyCode,
+                exchangeRate: quoteVersion.exchangeRate,
+                exchangeRateAt: quoteVersion.exchangeRateAt,
+                exchangeRateSource: quoteVersion.exchangeRateSource,
+                total: quoteVersion.total,
+                paymentTerms: quoteVersion.paymentTerms,
+                deliveryTerms: quoteVersion.deliveryTerms,
+                effectiveAt,
+                expiresAt,
+              },
+            },
+          },
+          include: { versions: true },
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('该报价版本已经登记合同');
+        }
+        throw error;
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_V1_CREATED',
+          details: {
+            contractNo,
+            quoteVersionId: quoteVersion.id,
+            sourceQuoteId: quoteVersion.quote.id,
+          },
+        },
+      });
+      return contract;
     });
   }
 

@@ -32,6 +32,10 @@ describe('PresalesService', () => {
       findFirst: jest.fn(),
       updateMany: jest.fn(),
     },
+    salesContract: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+    },
     auditLog: {
       create: jest.fn(),
     },
@@ -427,6 +431,62 @@ describe('PresalesService', () => {
       status: 'SENT',
     });
     expect(decisionArgs.data).toMatchObject({ status: 'ACCEPTED' });
+  });
+
+  it('creates Contract V1 from a unique accepted quote version snapshot', async () => {
+    tx.quoteVersion.findFirst.mockResolvedValue({
+      id: 'version-2',
+      companyId: 'company-1',
+      versionNo: 2,
+      status: 'ACCEPTED',
+      currencyCode: 'CNY',
+      baseCurrencyCode: 'CNY',
+      exchangeRate: 1,
+      exchangeRateAt: new Date('2026-07-11T01:00:00.000Z'),
+      exchangeRateSource: 'SYSTEM_BASE',
+      paymentTerms: '到货付款',
+      deliveryTerms: '送货上门',
+      total: 250,
+      quote: {
+        id: 'quote-1',
+        partnerId: 'partner-1',
+        ownerId: 'owner-1',
+      },
+    });
+    tx.salesContract.findFirst.mockResolvedValue(null);
+    tx.documentSequence.upsert.mockResolvedValue({ lastValue: 1 });
+    tx.salesContract.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'contract-1',
+        ...data,
+      }),
+    );
+
+    const result = await service.createContractFromQuoteVersion(
+      'company-1',
+      'operator-1',
+      'version-2',
+      { title: '设备零件销售合同' },
+    );
+
+    expect(result).toMatchObject({
+      id: 'contract-1',
+      contractNo: 'CT-2026-000001',
+      companyId: 'company-1',
+      quoteVersionId: 'version-2',
+      partnerId: 'partner-1',
+      ownerId: 'owner-1',
+      status: 'DRAFT',
+      currentVersionNo: 1,
+    });
+    const [contractAuditArgs] = tx.auditLog.create.mock.calls.at(
+      -1,
+    ) as unknown as [{ data: Record<string, unknown> }];
+    expect(contractAuditArgs.data).toMatchObject({
+      action: 'CONTRACT_V1_CREATED',
+      entity: 'salesContract',
+      entityId: 'contract-1',
+    });
   });
 
   it('adds an immutable follow-up and advances a draft requirement', async () => {

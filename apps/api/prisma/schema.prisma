@@ -70,6 +70,8 @@ model Company {
   quotes                     Quote[]
   quoteVersions              QuoteVersion[]
   quoteVersionItems          QuoteVersionItem[]
+  salesContracts             SalesContract[]
+  salesContractVersions      SalesContractVersion[]
 }
 
 enum PartnerType {
@@ -136,6 +138,7 @@ model User {
   ownedRequirements     CustomerRequirement[] @relation("RequirementOwner")
   requirementActivities RequirementActivity[] @relation("RequirementActivityCreator")
   ownedQuotes           Quote[]               @relation("QuoteOwner")
+  ownedContracts        SalesContract[]       @relation("ContractOwner")
 }
 
 model Role {
@@ -220,6 +223,7 @@ model Partner {
   supplierCreditNotes  SupplierCreditNote[]
   customerRequirements CustomerRequirement[]
   quotes               Quote[]
+  salesContracts       SalesContract[]
 
   @@unique([companyId, code])
   @@index([companyId, type])
@@ -331,9 +335,10 @@ model QuoteVersion {
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  quote   Quote              @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  company Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  items   QuoteVersionItem[]
+  quote    Quote              @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  company  Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  items    QuoteVersionItem[]
+  contract SalesContract?
 
   @@unique([quoteId, versionNo])
   @@index([companyId, status, updatedAt])
@@ -362,6 +367,57 @@ model QuoteVersionItem {
 
   @@index([companyId, quoteVersionId])
   @@index([companyId, productId])
+}
+
+model SalesContract {
+  id               String   @id @default(uuid())
+  contractNo       String
+  companyId        String
+  quoteVersionId   String   @unique
+  partnerId        String
+  ownerId          String
+  status           String   @default("DRAFT")
+  currentVersionNo Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company      Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  quoteVersion QuoteVersion           @relation(fields: [quoteVersionId], references: [id])
+  partner      Partner                @relation(fields: [partnerId], references: [id])
+  owner        User                   @relation("ContractOwner", fields: [ownerId], references: [id])
+  versions     SalesContractVersion[]
+
+  @@unique([companyId, contractNo])
+  @@index([companyId, partnerId, updatedAt])
+  @@index([companyId, status, updatedAt])
+}
+
+model SalesContractVersion {
+  id                 String    @id @default(uuid())
+  contractId         String
+  companyId          String
+  versionNo          Int
+  title              String
+  status             String    @default("DRAFT")
+  currencyCode       String
+  baseCurrencyCode   String
+  exchangeRate       Decimal   @db.Decimal(18, 8)
+  exchangeRateAt     DateTime
+  exchangeRateSource String
+  total              Decimal   @db.Decimal(18, 4)
+  paymentTerms       String?
+  deliveryTerms      String?
+  effectiveAt        DateTime?
+  expiresAt          DateTime?
+  signedAt           DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  contract SalesContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  company  Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([contractId, versionNo])
+  @@index([companyId, status, updatedAt])
 }
 
 model TaxCode {
