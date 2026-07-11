@@ -4,7 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SaleOrderDrawer } from '@/components/sales/SaleOrderDrawer';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
-import { ShoppingCart, Plus, Search, Filter, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import {
+  ClipboardList,
+  Filter,
+  Loader2,
+  Plus,
+  Search,
+  ShoppingCart,
+} from 'lucide-react';
 
 interface SalesOrderListItem {
   id: string;
@@ -92,6 +100,13 @@ export default function SalesModulePage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <Link
+            href="/dashboard/sales/requirements"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-5 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 sm:w-auto"
+          >
+            <ClipboardList className="h-4 w-4" />
+            客户需求
+          </Link>
           <button
             onClick={() => {
               setSelectedOrderId(null);

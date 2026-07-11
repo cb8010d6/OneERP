@@ -29,6 +29,7 @@ import { TenantContextMiddleware } from './core/middlewares/tenant-context.middl
 import { KyselyModule } from './core/prisma/kysely.module';
 import { ConfigValidationModule } from './core/config/config-validation.module';
 import { MetricsModule } from './core/metrics/metrics.module';
+import { PresalesModule } from './presales/presales.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { MetricsModule } from './core/metrics/metrics.module';
     FinanceModule,
     PurchaseModule,
     DepartmentsModule,
+    PresalesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -64,6 +64,9 @@ model Company {
   purchaseReceipts           PurchaseReceipt[]
   purchaseInvoices           PurchaseInvoice[]
   aiProviderSetting          AiProviderSetting?
+  documentSequences          DocumentSequence[]
+  customerRequirements       CustomerRequirement[]
+  requirementActivities      RequirementActivity[]
 }
 
 enum PartnerType {
@@ -118,15 +121,17 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  companies           UserCompanyRole[]
-  orders              Order[]           @relation("UserOrders")
-  purchaseOrders      PurchaseOrder[]   @relation("UserPurchaseOrders")
-  purchaseReceipts    PurchaseReceipt[] @relation("UserPurchaseReceipts")
-  FileRecord          FileRecord[]
-  WorkReport          WorkReport[]
-  auditLogs           AuditLog[]
-  createdInvitations  UserInvitation[]  @relation("InvitationCreatedBy")
-  acceptedInvitations UserInvitation[]  @relation("InvitationAcceptedBy")
+  companies             UserCompanyRole[]
+  orders                Order[]               @relation("UserOrders")
+  purchaseOrders        PurchaseOrder[]       @relation("UserPurchaseOrders")
+  purchaseReceipts      PurchaseReceipt[]     @relation("UserPurchaseReceipts")
+  FileRecord            FileRecord[]
+  WorkReport            WorkReport[]
+  auditLogs             AuditLog[]
+  createdInvitations    UserInvitation[]      @relation("InvitationCreatedBy")
+  acceptedInvitations   UserInvitation[]      @relation("InvitationAcceptedBy")
+  ownedRequirements     CustomerRequirement[] @relation("RequirementOwner")
+  requirementActivities RequirementActivity[] @relation("RequirementActivityCreator")
 }
 
 model Role {
@@ -199,19 +204,80 @@ model Partner {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  company             Company              @relation(fields: [companyId], references: [id])
-  orders              Order[]
-  purchaseOrders      PurchaseOrder[]
-  purchaseInvoices    PurchaseInvoice[]
-  journalEntryLines   JournalEntryLine[]
-  payments            Payment[]
-  supplierPayments    SupplierPayment[]
-  creditNotes         CreditNote[]
-  customerRefunds     CustomerRefund[]
-  supplierCreditNotes SupplierCreditNote[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  orders               Order[]
+  purchaseOrders       PurchaseOrder[]
+  purchaseInvoices     PurchaseInvoice[]
+  journalEntryLines    JournalEntryLine[]
+  payments             Payment[]
+  supplierPayments     SupplierPayment[]
+  creditNotes          CreditNote[]
+  customerRefunds      CustomerRefund[]
+  supplierCreditNotes  SupplierCreditNote[]
+  customerRequirements CustomerRequirement[]
 
   @@unique([companyId, code])
   @@index([companyId, type])
+}
+
+model DocumentSequence {
+  id           String   @id @default(uuid())
+  companyId    String
+  documentType String
+  year         Int
+  lastValue    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, documentType, year])
+  @@index([companyId, year])
+}
+
+model CustomerRequirement {
+  id                String    @id @default(uuid())
+  requirementNo     String
+  companyId         String
+  partnerId         String
+  ownerId           String
+  status            String    @default("DRAFT")
+  sourceChannel     String
+  summary           String
+  estimatedAmount   Decimal?  @db.Decimal(18, 4)
+  expectedCloseDate DateTime?
+  nextFollowUpAt    DateTime?
+  closeReason       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  company    Company               @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  partner    Partner               @relation(fields: [partnerId], references: [id])
+  owner      User                  @relation("RequirementOwner", fields: [ownerId], references: [id])
+  activities RequirementActivity[]
+
+  @@unique([companyId, requirementNo])
+  @@index([companyId, status, updatedAt])
+  @@index([companyId, ownerId, nextFollowUpAt])
+  @@index([partnerId, createdAt])
+}
+
+model RequirementActivity {
+  id             String    @id @default(uuid())
+  requirementId  String
+  companyId      String
+  activityType   String    @default("FOLLOW_UP")
+  content        String
+  nextFollowUpAt DateTime?
+  createdById    String
+  createdAt      DateTime  @default(now())
+
+  requirement CustomerRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy   User                @relation("RequirementActivityCreator", fields: [createdById], references: [id])
+
+  @@index([companyId, requirementId, createdAt])
+  @@index([createdById, createdAt])
 }
 
 model TaxCode {
@@ -940,9 +1006,9 @@ model SupplierPayment {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 
-  supplier    Partner                     @relation(fields: [supplierId], references: [id])
-  company     Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  allocations SupplierPaymentAllocation[]
+  supplier           Partner                     @relation(fields: [supplierId], references: [id])
+  company            Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  allocations        SupplierPaymentAllocation[]
   bankStatementLines BankStatementLine[]
 
   @@index([companyId, paymentDate])
@@ -979,10 +1045,10 @@ model Payment {
   postedAt      DateTime?
   companyId     String
 
-  invoice     Invoice?            @relation(fields: [invoiceId], references: [id])
-  partner     Partner             @relation(fields: [partnerId], references: [id])
-  company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  allocations PaymentAllocation[]
+  invoice            Invoice?            @relation(fields: [invoiceId], references: [id])
+  partner            Partner             @relation(fields: [partnerId], references: [id])
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  allocations        PaymentAllocation[]
   bankStatementLines BankStatementLine[]
 
   @@index([companyId, paymentDate])
