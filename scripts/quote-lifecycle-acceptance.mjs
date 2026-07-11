@@ -8,9 +8,9 @@ for (let index = 2; index < process.argv.length; index += 1) {
 
 const envPath = args.get('env-file') ?? '.env';
 const apiBaseUrl = (args.get('api-base-url') ?? 'http://127.0.0.1:18000/api').replace(/\/$/, '');
-const env = parseEnv(fs.readFileSync(envPath, 'utf8'));
-const email = env.INIT_ADMIN_EMAIL;
-const password = env.INIT_ADMIN_PASSWORD;
+const env = fs.existsSync(envPath) ? parseEnv(fs.readFileSync(envPath, 'utf8')) : {};
+const email = process.env.INIT_ADMIN_EMAIL ?? env.INIT_ADMIN_EMAIL;
+const password = process.env.INIT_ADMIN_PASSWORD ?? env.INIT_ADMIN_PASSWORD;
 if (!email || !password) throw new Error('INIT_ADMIN_EMAIL/INIT_ADMIN_PASSWORD are required');
 
 let token = '';
@@ -86,12 +86,39 @@ const accepted = await request(`/presales/quotes/versions/${v2.id}/decision`, {
 });
 if (accepted?.status !== 'ACCEPTED') throw new Error('V2 was not ACCEPTED');
 
+const contract = await request(`/presales/contracts/from-quote-version/${v2.id}`, {
+  method: 'POST',
+  body: JSON.stringify({
+    title: `${quote.quoteNo} 销售合同`,
+    effectiveAt: new Date().toISOString().slice(0, 10),
+  }),
+});
+const contractV1 = contract?.versions?.[0];
+if (!/^CT-\d{4}-\d{6}$/.test(contract?.contractNo ?? '')) {
+  throw new Error('Contract number does not match CT-YYYY-######');
+}
+if (contract?.quoteVersionId !== v2.id || contract?.status !== 'DRAFT') {
+  throw new Error('Contract was not created as DRAFT from accepted V2');
+}
+if (contractV1?.versionNo !== 1 || contractV1?.status !== 'DRAFT') {
+  throw new Error('Contract V1 was not created as DRAFT');
+}
+if (String(contractV1?.total) !== String(accepted.total)) {
+  throw new Error('Contract total does not match accepted quote total');
+}
+
 console.log(JSON.stringify({
   passed: true,
   requirementNo: requirement.requirementNo,
   quoteNo: quote.quoteNo,
   v1: { id: v1.id, status: sentV1.status },
   v2: { id: v2.id, status: accepted.status },
+  contract: {
+    contractNo: contract.contractNo,
+    status: contract.status,
+    versionNo: contractV1.versionNo,
+    versionStatus: contractV1.status,
+  },
   total: String(accepted.total),
 }));
 
