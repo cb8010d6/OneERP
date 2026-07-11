@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '@/lib/api';
+import { useAuthStore } from '@/store/authStore';
 import { AsyncSelect } from '@/components/core/AsyncSelect';
 import { Sheet } from '@/components/ui/Sheet';
 
@@ -39,6 +40,7 @@ interface RequirementListItem {
       total: string | number;
       validUntil: string;
       contract?: {
+        id: string;
         contractNo: string;
         status: string;
         currentVersionNo: number;
@@ -118,6 +120,12 @@ export function RequirementWorkbench() {
     createQuoteItemDraft(),
   ]);
   const [quoteActionBusy, setQuoteActionBusy] = useState<string | null>(null);
+  const currentCompanyId = useAuthStore((state) => state.currentCompanyId);
+  const companies = useAuthStore((state) => state.companies);
+  const permissions = useMemo(
+    () => companies.find((company) => company.id === currentCompanyId)?.permissions ?? [],
+    [companies, currentCompanyId],
+  );
   const [contractOpen, setContractOpen] = useState(false);
   const [contractVersion, setContractVersion] = useState<{
     quoteNo: string;
@@ -384,6 +392,39 @@ export function RequirementWorkbench() {
     }
   };
 
+  const decideContract = async (
+    contractId: string,
+    stage: 'sales-manager' | 'finance' | 'business',
+    decision: 'APPROVE' | 'REJECT',
+  ) => {
+    setQuoteActionBusy(`${contractId}:${stage}:${decision}`);
+    try {
+      await api.post(`/presales/contracts/${contractId}/${stage}/decision`, {
+        decision,
+        comment: decision === 'REJECT' ? '工作台审批退回' : undefined,
+      });
+      toast.success(decision === 'APPROVE' ? '合同审批已通过' : '合同已退回');
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '合同审批失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
+  const submitContractApproval = async (contractId: string) => {
+    setQuoteActionBusy(`${contractId}:submit`);
+    try {
+      await api.post(`/presales/contracts/${contractId}/submit`);
+      toast.success('合同已提交销售主管审批');
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '合同提交失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-5 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -481,6 +522,9 @@ export function RequirementWorkbench() {
                         busyKey={quoteActionBusy}
                         onAction={runQuoteAction}
                         onCreateContract={openContract}
+                        onDecideContract={decideContract}
+                        onSubmitContract={submitContractApproval}
+                        permissions={permissions}
                       />
                     ) : null}
                   </div>
@@ -909,6 +953,9 @@ function QuoteSummary({
   busyKey,
   onAction,
   onCreateContract,
+  onDecideContract,
+  onSubmitContract,
+  permissions,
 }: {
   quote: NonNullable<RequirementListItem['quotes']>[number];
   busyKey: string | null;
@@ -918,6 +965,13 @@ function QuoteSummary({
     action: 'send' | 'new-version' | 'accept' | 'reject',
   ) => Promise<void>;
   onCreateContract: (quote: NonNullable<RequirementListItem['quotes']>[number]) => void;
+  onDecideContract: (
+    contractId: string,
+    stage: 'sales-manager' | 'finance' | 'business',
+    decision: 'APPROVE' | 'REJECT',
+  ) => Promise<void>;
+  onSubmitContract: (contractId: string) => Promise<void>;
+  permissions: string[];
 }) {
   const version = quote.versions[0];
   if (!version) return null;
@@ -925,6 +979,11 @@ function QuoteSummary({
   const canCreateVersion = ['SENT', 'REJECTED', 'EXPIRED'].includes(
     version.status,
   );
+  const contract = version.contract;
+  const can = (permission: string) =>
+    permissions.includes('ALL') ||
+    permissions.includes(permission) ||
+    permissions.includes(permission.split(':')[0] + ':*');
 
   return (
     <div className="mt-3 space-y-2 border-l-2 border-emerald-500 pl-3 text-xs">
@@ -943,17 +1002,42 @@ function QuoteSummary({
         </span>
       </div>
       <div className="flex flex-wrap gap-2">
-        {version.status === 'ACCEPTED' && version.contract ? (
+        {version.status === 'ACCEPTED' && contract ? (
           <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-600">
-            {version.contract.contractNo} · V{version.contract.currentVersionNo} · {version.contract.status}
+            {contract.contractNo} · V{contract.currentVersionNo} · {contract.status}
           </span>
         ) : null}
-        {version.status === 'ACCEPTED' && !version.contract ? (
+        {version.status === 'ACCEPTED' && !contract ? (
           <QuoteActionButton
             label="登记合同 V1"
             disabled={isBusy}
             onClick={() => onCreateContract(quote)}
           />
+        ) : null}
+        {contract?.status === 'DRAFT' && can('contract:submit') ? (
+          <QuoteActionButton
+            label="提交审批"
+            disabled={isBusy}
+            onClick={() => void onSubmitContract(contract.id)}
+          />
+        ) : null}
+        {contract?.status === 'PENDING_SALES_MANAGER' && can('contract:approve-sales') ? (
+          <>
+            <QuoteActionButton label="主管批准" disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'sales-manager', 'APPROVE')} />
+            <QuoteActionButton label="主管退回" danger disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'sales-manager', 'REJECT')} />
+          </>
+        ) : null}
+        {contract?.status === 'PENDING_FINANCE_REVIEW' && can('contract:review-finance') ? (
+          <>
+            <QuoteActionButton label="财务通过" disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'finance', 'APPROVE')} />
+            <QuoteActionButton label="财务退回" danger disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'finance', 'REJECT')} />
+          </>
+        ) : null}
+        {contract?.status === 'PENDING_BUSINESS_REVIEW' && can('contract:review-business') ? (
+          <>
+            <QuoteActionButton label="商务通过" disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'business', 'APPROVE')} />
+            <QuoteActionButton label="商务退回" danger disabled={isBusy} onClick={() => void onDecideContract(contract.id, 'business', 'REJECT')} />
+          </>
         ) : null}
         {version.status === 'DRAFT' ? (
           <QuoteActionButton

@@ -48,6 +48,7 @@ const COMPANY_SCOPED_MODELS = new Set([
   'QuoteVersionItem',
   'SalesContract',
   'SalesContractVersion',
+  'SalesContractApproval',
 ]);
 
 @Injectable()

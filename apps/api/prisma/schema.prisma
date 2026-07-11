@@ -72,6 +72,7 @@ model Company {
   quoteVersionItems          QuoteVersionItem[]
   salesContracts             SalesContract[]
   salesContractVersions      SalesContractVersion[]
+  salesContractApprovals     SalesContractApproval[]
 }
 
 enum PartnerType {
@@ -139,6 +140,7 @@ model User {
   requirementActivities RequirementActivity[] @relation("RequirementActivityCreator")
   ownedQuotes           Quote[]               @relation("QuoteOwner")
   ownedContracts        SalesContract[]       @relation("ContractOwner")
+  contractApprovals     SalesContractApproval[] @relation("ContractApprovalActor")
 }
 
 model Role {
@@ -378,6 +380,9 @@ model SalesContract {
   ownerId          String
   status           String   @default("DRAFT")
   currentVersionNo Int      @default(1)
+  submittedAt      DateTime?
+  approvedAt       DateTime?
+  rejectedAt       DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -386,10 +391,29 @@ model SalesContract {
   partner      Partner                @relation(fields: [partnerId], references: [id])
   owner        User                   @relation("ContractOwner", fields: [ownerId], references: [id])
   versions     SalesContractVersion[]
+  approvals    SalesContractApproval[]
 
   @@unique([companyId, contractNo])
   @@index([companyId, partnerId, updatedAt])
   @@index([companyId, status, updatedAt])
+}
+
+model SalesContractApproval {
+  id         String   @id @default(uuid())
+  contractId String
+  companyId  String
+  actorId    String
+  stage      String
+  decision   String
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  contract SalesContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  company  Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  actor    User          @relation("ContractApprovalActor", fields: [actorId], references: [id])
+
+  @@index([companyId, contractId, createdAt])
+  @@index([actorId, createdAt])
 }
 
 model SalesContractVersion {

@@ -13,10 +13,32 @@ import { CloseRequirementDto } from './dto/close-requirement.dto';
 import { CreateQuoteDto } from './dto/create-quote.dto';
 import { CreateQuoteVersionDto } from './dto/create-quote-version.dto';
 import { CreateContractDto } from './dto/create-contract.dto';
+import { ContractDecisionDto } from './dto/contract-decision.dto';
 
 const REQUIREMENT_DOCUMENT_TYPE = 'CUSTOMER_REQUIREMENT';
 const QUOTE_DOCUMENT_TYPE = 'QUOTE';
 const CONTRACT_DOCUMENT_TYPE = 'SALES_CONTRACT';
+const CONTRACT_EXTRA_REVIEW_THRESHOLD = new Prisma.Decimal(100000);
+
+type ContractApprovalStage = 'SALES_MANAGER' | 'FINANCE' | 'BUSINESS';
+
+const CONTRACT_STAGE_CONFIG: Record<
+  ContractApprovalStage,
+  { expectedStatus: string; nextStatus: string }
+> = {
+  SALES_MANAGER: {
+    expectedStatus: 'PENDING_SALES_MANAGER',
+    nextStatus: 'APPROVED',
+  },
+  FINANCE: {
+    expectedStatus: 'PENDING_FINANCE_REVIEW',
+    nextStatus: 'PENDING_BUSINESS_REVIEW',
+  },
+  BUSINESS: {
+    expectedStatus: 'PENDING_BUSINESS_REVIEW',
+    nextStatus: 'APPROVED',
+  },
+};
 
 @Injectable()
 export class PresalesService {
@@ -161,6 +183,7 @@ export class PresalesService {
                   validUntil: true,
                   contract: {
                     select: {
+                      id: true,
                       contractNo: true,
                       status: true,
                       currentVersionNo: true,
@@ -704,6 +727,181 @@ export class PresalesService {
         },
       });
       return contract;
+    });
+  }
+
+  async submitContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== 'DRAFT') {
+        throw new BadRequestException('只有草稿合同可以提交审批');
+      }
+
+      const claimed = await tx.salesContract.updateMany({
+        where: { id: contract.id, companyId, status: 'DRAFT' },
+        data: { status: 'PENDING_SALES_MANAGER', submittedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+      }
+      await tx.salesContractVersion.updateMany({
+        where: {
+          contractId: contract.id,
+          companyId,
+          versionNo: contract.currentVersionNo,
+          status: 'DRAFT',
+        },
+        data: { status: 'PENDING_APPROVAL' },
+      });
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage: 'SALES_SUBMISSION',
+          decision: 'SUBMITTED',
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_SUBMITTED',
+          details: { contractNo: contract.contractNo },
+        },
+      });
+      return { ...contract, status: 'PENDING_SALES_MANAGER', submittedAt: now };
+    });
+  }
+
+  async decideContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+    stage: ContractApprovalStage,
+    data: ContractDecisionDto,
+  ) {
+    const comment = data.comment?.trim() || null;
+    if (data.decision === 'REJECT' && !comment) {
+      throw new BadRequestException('拒绝合同时必须填写审批意见');
+    }
+    const config = CONTRACT_STAGE_CONFIG[stage];
+    const now = new Date();
+
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+          versions: {
+            take: 1,
+            orderBy: { versionNo: 'desc' },
+            select: { versionNo: true, total: true },
+          },
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== config.expectedStatus) {
+        throw new BadRequestException('合同当前不在该审批阶段');
+      }
+      const currentVersion = contract.versions[0];
+      if (
+        !currentVersion ||
+        currentVersion.versionNo !== contract.currentVersionNo
+      ) {
+        throw new ConflictException('合同当前版本数据不完整，请刷新后重试');
+      }
+
+      let nextStatus = config.nextStatus;
+      if (data.decision === 'REJECT') {
+        nextStatus = 'REJECTED';
+      } else if (
+        stage === 'SALES_MANAGER' &&
+        new Prisma.Decimal(currentVersion.total).greaterThanOrEqualTo(
+          CONTRACT_EXTRA_REVIEW_THRESHOLD,
+        )
+      ) {
+        nextStatus = 'PENDING_FINANCE_REVIEW';
+      }
+
+      const claimed = await tx.salesContract.updateMany({
+        where: {
+          id: contract.id,
+          companyId,
+          status: config.expectedStatus,
+        },
+        data: {
+          status: nextStatus,
+          ...(nextStatus === 'APPROVED' ? { approvedAt: now } : {}),
+          ...(nextStatus === 'REJECTED' ? { rejectedAt: now } : {}),
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+      }
+      if (nextStatus === 'APPROVED' || nextStatus === 'REJECTED') {
+        await tx.salesContractVersion.updateMany({
+          where: {
+            contractId: contract.id,
+            companyId,
+            versionNo: contract.currentVersionNo,
+            status: 'PENDING_APPROVAL',
+          },
+          data: { status: nextStatus },
+        });
+      }
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage,
+          decision: data.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+          comment,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action:
+            data.decision === 'APPROVE'
+              ? `CONTRACT_${stage}_APPROVED`
+              : `CONTRACT_${stage}_REJECTED`,
+          details: {
+            contractNo: contract.contractNo,
+            fromStatus: config.expectedStatus,
+            toStatus: nextStatus,
+            comment,
+          },
+        },
+      });
+      return { ...contract, status: nextStatus };
     });
   }
 

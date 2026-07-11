@@ -35,6 +35,13 @@ describe('PresalesService', () => {
     salesContract: {
       create: jest.fn(),
       findFirst: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    salesContractVersion: {
+      updateMany: jest.fn(),
+    },
+    salesContractApproval: {
+      create: jest.fn(),
     },
     auditLog: {
       create: jest.fn(),
@@ -487,6 +494,125 @@ describe('PresalesService', () => {
       entity: 'salesContract',
       entityId: 'contract-1',
     });
+  });
+
+  it('submits a draft contract to sales manager approval', async () => {
+    tx.salesContract.findFirst.mockResolvedValue({
+      id: 'contract-1',
+      contractNo: 'CT-2026-000001',
+      status: 'DRAFT',
+      currentVersionNo: 1,
+    });
+    tx.salesContract.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractVersion.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractApproval.create.mockResolvedValue({ id: 'approval-1' });
+
+    const result = await service.submitContract(
+      'company-1',
+      'sales-1',
+      'contract-1',
+    );
+
+    expect(result).toMatchObject({ status: 'PENDING_SALES_MANAGER' });
+    const [approvalArgs] = tx.salesContractApproval.create.mock.calls[0] as [
+      { data: Record<string, unknown> },
+    ];
+    expect(approvalArgs.data).toMatchObject({
+      stage: 'SALES_SUBMISSION',
+      decision: 'SUBMITTED',
+    });
+  });
+
+  it('approves a contract below the threshold after sales manager review', async () => {
+    tx.salesContract.findFirst.mockResolvedValue({
+      id: 'contract-1',
+      contractNo: 'CT-2026-000001',
+      status: 'PENDING_SALES_MANAGER',
+      currentVersionNo: 1,
+      versions: [{ versionNo: 1, total: 99999.99 }],
+    });
+    tx.salesContract.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractVersion.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractApproval.create.mockResolvedValue({ id: 'approval-2' });
+
+    const result = await service.decideContract(
+      'company-1',
+      'manager-1',
+      'contract-1',
+      'SALES_MANAGER',
+      { decision: 'APPROVE' },
+    );
+
+    expect(result).toMatchObject({ status: 'APPROVED' });
+    expect(tx.salesContractVersion.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: 'APPROVED' } }),
+    );
+  });
+
+  it('routes a contract at the threshold through finance and business review', async () => {
+    tx.salesContract.findFirst
+      .mockResolvedValueOnce({
+        id: 'contract-1',
+        contractNo: 'CT-2026-000001',
+        status: 'PENDING_SALES_MANAGER',
+        currentVersionNo: 1,
+        versions: [{ versionNo: 1, total: 100000 }],
+      })
+      .mockResolvedValueOnce({
+        id: 'contract-1',
+        contractNo: 'CT-2026-000001',
+        status: 'PENDING_FINANCE_REVIEW',
+        currentVersionNo: 1,
+        versions: [{ versionNo: 1, total: 100000 }],
+      })
+      .mockResolvedValueOnce({
+        id: 'contract-1',
+        contractNo: 'CT-2026-000001',
+        status: 'PENDING_BUSINESS_REVIEW',
+        currentVersionNo: 1,
+        versions: [{ versionNo: 1, total: 100000 }],
+      });
+    tx.salesContract.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractVersion.updateMany.mockResolvedValue({ count: 1 });
+    tx.salesContractApproval.create.mockResolvedValue({ id: 'approval' });
+
+    const manager = await service.decideContract(
+      'company-1',
+      'manager-1',
+      'contract-1',
+      'SALES_MANAGER',
+      { decision: 'APPROVE' },
+    );
+    const finance = await service.decideContract(
+      'company-1',
+      'finance-1',
+      'contract-1',
+      'FINANCE',
+      { decision: 'APPROVE' },
+    );
+    const business = await service.decideContract(
+      'company-1',
+      'business-1',
+      'contract-1',
+      'BUSINESS',
+      { decision: 'APPROVE' },
+    );
+
+    expect(manager).toMatchObject({ status: 'PENDING_FINANCE_REVIEW' });
+    expect(finance).toMatchObject({ status: 'PENDING_BUSINESS_REVIEW' });
+    expect(business).toMatchObject({ status: 'APPROVED' });
+  });
+
+  it('requires a reason when rejecting a contract', async () => {
+    await expect(
+      service.decideContract(
+        'company-1',
+        'manager-1',
+        'contract-1',
+        'SALES_MANAGER',
+        { decision: 'REJECT' },
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('adds an immutable follow-up and advances a draft requirement', async () => {

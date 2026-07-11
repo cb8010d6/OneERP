@@ -45,6 +45,8 @@ if (!token || !companyId) throw new Error('Login did not return token and compan
 const partnerId = args.get('partner-id');
 const productId = args.get('product-id');
 if (!partnerId || !productId) throw new Error('--partner-id and --product-id are required');
+const unitPrice = Number(args.get('unit-price') ?? 50000);
+if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error('--unit-price must be non-negative');
 
 const suffix = Date.now();
 const requirement = await request('/presales/requirements', {
@@ -62,7 +64,7 @@ const quote = await request(`/presales/requirements/${requirement.id}/quotes`, {
   body: JSON.stringify({
     currencyCode: 'CNY',
     validUntil: new Date(Date.now() + 14 * 86400000).toISOString(),
-    items: [{ productId, quantity: 2, unitPrice: 125, taxRate: 0 }],
+    items: [{ productId, quantity: 2, unitPrice, taxRate: 0 }],
   }),
 });
 const v1 = quote.versions?.[0];
@@ -107,6 +109,35 @@ if (String(contractV1?.total) !== String(accepted.total)) {
   throw new Error('Contract total does not match accepted quote total');
 }
 
+const submitted = await request(`/presales/contracts/${contract.id}/submit`, {
+  method: 'POST',
+  body: '{}',
+});
+if (submitted?.status !== 'PENDING_SALES_MANAGER') {
+  throw new Error('Contract was not submitted to sales manager');
+}
+const salesApproved = await request(`/presales/contracts/${contract.id}/sales-manager/decision`, {
+  method: 'POST',
+  body: JSON.stringify({ decision: 'APPROVE', comment: '自动验收：销售主管通过' }),
+});
+if (salesApproved?.status !== 'PENDING_FINANCE_REVIEW') {
+  throw new Error('Threshold contract did not enter finance review');
+}
+const financeApproved = await request(`/presales/contracts/${contract.id}/finance/decision`, {
+  method: 'POST',
+  body: JSON.stringify({ decision: 'APPROVE', comment: '自动验收：财务通过' }),
+});
+if (financeApproved?.status !== 'PENDING_BUSINESS_REVIEW') {
+  throw new Error('Threshold contract did not enter business review');
+}
+const businessApproved = await request(`/presales/contracts/${contract.id}/business/decision`, {
+  method: 'POST',
+  body: JSON.stringify({ decision: 'APPROVE', comment: '自动验收：商务通过' }),
+});
+if (businessApproved?.status !== 'APPROVED') {
+  throw new Error('Contract did not reach APPROVED');
+}
+
 console.log(JSON.stringify({
   passed: true,
   requirementNo: requirement.requirementNo,
@@ -117,7 +148,13 @@ console.log(JSON.stringify({
     contractNo: contract.contractNo,
     status: contract.status,
     versionNo: contractV1.versionNo,
-    versionStatus: contractV1.status,
+    versionStatus: 'APPROVED',
+    approvalPath: [
+      submitted.status,
+      salesApproved.status,
+      financeApproved.status,
+      businessApproved.status,
+    ],
   },
   total: String(accepted.total),
 }));
