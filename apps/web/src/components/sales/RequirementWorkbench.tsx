@@ -112,6 +112,7 @@ export function RequirementWorkbench() {
   const [quoteItems, setQuoteItems] = useState<QuoteItemDraft[]>([
     createQuoteItemDraft(),
   ]);
+  const [quoteActionBusy, setQuoteActionBusy] = useState<string | null>(null);
 
   const fetchRequirements = useCallback(async () => {
     setLoading(true);
@@ -298,6 +299,35 @@ export function RequirementWorkbench() {
     }
   };
 
+  const runQuoteAction = async (
+    quoteId: string,
+    versionId: string,
+    action: 'send' | 'new-version' | 'accept' | 'reject',
+  ) => {
+    setQuoteActionBusy(`${versionId}:${action}`);
+    try {
+      if (action === 'send') {
+        await api.post(`/presales/quotes/versions/${versionId}/send`);
+        toast.success('报价已发出');
+      } else if (action === 'new-version') {
+        await api.post(`/presales/quotes/${quoteId}/versions`, {});
+        toast.success('新报价版本已创建');
+      } else {
+        await api.post(`/presales/quotes/versions/${versionId}/decision`, {
+          status: action === 'accept' ? 'ACCEPTED' : 'REJECTED',
+        });
+        toast.success(
+          action === 'accept' ? '已记录客户接受' : '已记录客户拒绝',
+        );
+      }
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '报价操作失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-5 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -390,23 +420,11 @@ export function RequirementWorkbench() {
                       {dateLabel(item.nextFollowUpAt)}
                     </p>
                     {item.quotes?.[0]?.versions?.[0] ? (
-                      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-l-2 border-emerald-500 pl-3 text-xs">
-                        <span className="font-mono font-bold text-emerald-700">
-                          {item.quotes[0].quoteNo}
-                        </span>
-                        <span className="font-semibold text-slate-700">
-                          V{item.quotes[0].versions[0].versionNo} ·{' '}
-                          {item.quotes[0].versions[0].status}
-                        </span>
-                        <span className="text-slate-500">
-                          {item.quotes[0].versions[0].currencyCode}{' '}
-                          {Number(
-                            item.quotes[0].versions[0].total,
-                          ).toLocaleString('zh-CN', {
-                            minimumFractionDigits: 2,
-                          })}
-                        </span>
-                      </div>
+                      <QuoteSummary
+                        quote={item.quotes[0]}
+                        busyKey={quoteActionBusy}
+                        onAction={runQuoteAction}
+                      />
                     ) : null}
                   </div>
                   {!['LOST', 'CANCELLED', 'CONVERTED'].includes(
@@ -771,6 +789,104 @@ function createQuoteItemDraft(): QuoteItemDraft {
     unitPrice: '',
     taxRate: '0',
   };
+}
+
+function QuoteSummary({
+  quote,
+  busyKey,
+  onAction,
+}: {
+  quote: NonNullable<RequirementListItem['quotes']>[number];
+  busyKey: string | null;
+  onAction: (
+    quoteId: string,
+    versionId: string,
+    action: 'send' | 'new-version' | 'accept' | 'reject',
+  ) => Promise<void>;
+}) {
+  const version = quote.versions[0];
+  if (!version) return null;
+  const isBusy = busyKey?.startsWith(`${version.id}:`) ?? false;
+  const canCreateVersion = ['SENT', 'REJECTED', 'EXPIRED'].includes(
+    version.status,
+  );
+
+  return (
+    <div className="mt-3 space-y-2 border-l-2 border-emerald-500 pl-3 text-xs">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="font-mono font-bold text-emerald-700">
+          {quote.quoteNo}
+        </span>
+        <span className="font-semibold text-slate-700">
+          V{version.versionNo} · {version.status}
+        </span>
+        <span className="text-slate-500">
+          {version.currencyCode}{' '}
+          {Number(version.total).toLocaleString('zh-CN', {
+            minimumFractionDigits: 2,
+          })}
+        </span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {version.status === 'DRAFT' ? (
+          <QuoteActionButton
+            label="发出报价"
+            disabled={isBusy}
+            onClick={() => void onAction(quote.id, version.id, 'send')}
+          />
+        ) : null}
+        {canCreateVersion ? (
+          <QuoteActionButton
+            label="新建版本"
+            disabled={isBusy}
+            onClick={() => void onAction(quote.id, version.id, 'new-version')}
+          />
+        ) : null}
+        {version.status === 'SENT' ? (
+          <>
+            <QuoteActionButton
+              label="客户接受"
+              disabled={isBusy}
+              onClick={() => void onAction(quote.id, version.id, 'accept')}
+            />
+            <QuoteActionButton
+              label="客户拒绝"
+              disabled={isBusy}
+              danger
+              onClick={() => void onAction(quote.id, version.id, 'reject')}
+            />
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function QuoteActionButton({
+  label,
+  disabled,
+  danger = false,
+  onClick,
+}: {
+  label: string;
+  disabled: boolean;
+  danger?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded-md border px-2.5 py-1 font-semibold disabled:opacity-50 ${
+        danger
+          ? 'border-rose-200 text-rose-700'
+          : 'border-emerald-200 text-emerald-700'
+      }`}
+    >
+      {disabled ? '处理中...' : label}
+    </button>
+  );
 }
 
 function FormField({
