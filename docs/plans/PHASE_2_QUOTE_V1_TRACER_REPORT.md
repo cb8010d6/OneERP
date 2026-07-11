@@ -3,6 +3,7 @@
 > 日期：2026-07-11
 > 实现提交：`8d4aec2`（`feat: add quote version one tracer`）
 > 验收脚本提交：`bb4eb1c`（`test: cover quote v1 in business acceptance`）
+> 工作台提交：`fc32bcc`（`feat: add quote creation to requirement workbench`）
 > 范围：客户需求单 -> 报价 V1；不包含 V2、发出、客户决策、合同或转订单
 
 ## 1. 已实现
@@ -54,10 +55,14 @@
 - 新增报价验收结果：`REQ-2026-000002 -> QT-2026-000001 / V1 / DRAFT / CNY / SYSTEM_BASE / total 452`。
 - 报价步骤之后的采购收货、库存不足拒绝、正常发货、发票过账和试算平衡仍全部通过，证明新 migration 未破坏原有交易链。
 - 迁移工具镜像是在远程既有 `uat-d0ee161` builder 镜像上追加本批纯 SQL migration 后生成的临时 overlay；它不是正式 GHCR 发布物。API/Web 镜像由当前工作树本地构建并离线上传。
+- 工作台批次已部署为 `uat-fc32bcc`：需求列表返回报价摘要，已报价需求显示报价号、版本、状态、币种和金额；未报价的活跃需求可打开多行报价 Sheet，选择产品并填写数量、单价、税率、有效期和条款。
+- `uat-fc32bcc` 部署后 11 步验收再次全部通过，报告为 `scripts/business-acceptance-report-fc32bcc.json`，新增记录为 `REQ-2026-000003 -> QT-2026-000002 / V1 / DRAFT / total 452`。
+- GitHub PR #15 在 `fc32bcc` 上的 validate、commitlint 和 CodeQL 全绿；PR 仍为 Draft，未合并。
+- 登录页已通过浏览器加载且无控制台错误；报价工作台登录后桌面/移动交互视觉验收仍待完成，不在本报告中提前标记通过。
 
 ## 5. 已知边界与下一批
 
-- 当前没有报价列表/详情 Web 工作台；创建入口将在下一批与 V2 行为一起接入需求页面。
+- 当前工作台已支持创建 V1 和查看当前报价摘要；报价详情编辑、V2、发出和客户决策仍待下一批。
 - 当前不允许非 CNY 报价，下一批先定义可替换汇率 provider，再实现明确失败、快照时间和来源。
 - 当前未实现 V2、发出后不可修改、接受/拒绝、V1 `SUPERSEDED`；这些必须继续以版本状态测试驱动实现。
 - 全仓 `prisma migrate diff` 仍显示早期 migration 与当前 schema 的历史漂移，包括旧表、旧索引和外键差异。报价 migration 已通过空库和定向数据库检查；历史 drift 应作为独立基线治理任务处理，不能通过改写已发布 migration 隐藏。

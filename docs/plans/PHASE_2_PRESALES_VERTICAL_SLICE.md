@@ -1,6 +1,6 @@
 # Phase 2 售前到订单纵向切片技术边界
 
-> 状态：客户需求与报价 V1 tracer 已完成本地及远程 UAT；V2/发出/决策与 Web 待实施；合同切片待实施
+> 状态：客户需求与报价 V1 tracer 已完成本地及远程 UAT；报价 V1 工作台已部署，登录后响应式视觉验收待完成；V2/发出/决策待实施；合同切片待实施
 > 业务输入：[`PHASE_1_BUSINESS_SEMANTICS.md`](./PHASE_1_BUSINESS_SEMANTICS.md)  
 > 目标：以最小可审计链路实现“客户需求 -> 报价版本 -> 合同版本 -> 销售订单”，不扩张为完整 CRM、电子签章或通用流程平台。
 
@@ -22,6 +22,7 @@
 - 报价 V1 新增 `Quote`、`QuoteVersion`、`QuoteVersionItem` 和 migration `20260711002000_presales_quotes`；空 PostgreSQL 15 已应用全部 30 个 migration，数据库 smoke 创建 `QT-2026-000001 / V1 / CNY / total 200` 成功。
 - 报价 V1 本地门禁通过：API 41 套件/394 测试、Web 5 套件/35 测试、五种 Compose 配置和安全审计通过。
 - 报价 V1 已部署远程 UAT：migration `20260711002000_presales_quotes` 成功，API/Web 健康；11 步业务验收全部通过，新增链路为 `REQ-2026-000002 -> QT-2026-000001 / V1 / DRAFT / CNY / total 452`。临时离线镜像不是正式 GHCR 发布物。
+- 报价工作台提交 `fc32bcc` 已部署为 `uat-fc32bcc`：需求列表显示报价摘要，未报价需求可创建多行 CNY V1。部署后 11 步验收再次通过（`REQ-2026-000003 -> QT-2026-000002`）；GitHub validate、commitlint、CodeQL 全绿。登录后桌面/移动视觉验收仍待完成。
 
 ## 1. 已核对的现有边界
 
