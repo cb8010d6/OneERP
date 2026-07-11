@@ -2,6 +2,7 @@
 
 > 日期：2026-07-11
 > 实现提交：`8d4aec2`（`feat: add quote version one tracer`）
+> 验收脚本提交：`bb4eb1c`（`test: cover quote v1 in business acceptance`）
 > 范围：客户需求单 -> 报价 V1；不包含 V2、发出、客户决策、合同或转订单
 
 ## 1. 已实现
@@ -43,10 +44,21 @@
 - PostgreSQL 定向索引检查确认：Quote 的需求复合索引为 UNIQUE；RequirementActivity 的跟进复合索引为普通 INDEX。
 - Graphify 更新后：3280 nodes、6638 edges、244 communities。
 
-## 4. 已知边界与下一批
+## 4. 远程 UAT
+
+- UAT 使用 `uat-8d4aec2` 临时离线镜像；API/Web 均健康，PostgreSQL、Redis、MinIO 未重建。
+- 远程成功应用 migration `20260711002000_presales_quotes`，数据库当前记录 30 个 migration。
+- `.env` 切换前已保留 `before-8d4aec2` 回滚备份。
+- `prod-smoke` 的健康、登录、Dashboard、订单、元数据、库存账和 Web API 代理全部通过。
+- `business-acceptance.mjs` 已扩展为 11 步并全部通过，报告为 `scripts/business-acceptance-report-bb4eb1c.json`。
+- 新增报价验收结果：`REQ-2026-000002 -> QT-2026-000001 / V1 / DRAFT / CNY / SYSTEM_BASE / total 452`。
+- 报价步骤之后的采购收货、库存不足拒绝、正常发货、发票过账和试算平衡仍全部通过，证明新 migration 未破坏原有交易链。
+- 迁移工具镜像是在远程既有 `uat-d0ee161` builder 镜像上追加本批纯 SQL migration 后生成的临时 overlay；它不是正式 GHCR 发布物。API/Web 镜像由当前工作树本地构建并离线上传。
+
+## 5. 已知边界与下一批
 
 - 当前没有报价列表/详情 Web 工作台；创建入口将在下一批与 V2 行为一起接入需求页面。
 - 当前不允许非 CNY 报价，下一批先定义可替换汇率 provider，再实现明确失败、快照时间和来源。
 - 当前未实现 V2、发出后不可修改、接受/拒绝、V1 `SUPERSEDED`；这些必须继续以版本状态测试驱动实现。
 - 全仓 `prisma migrate diff` 仍显示早期 migration 与当前 schema 的历史漂移，包括旧表、旧索引和外键差异。报价 migration 已通过空库和定向数据库检查；历史 drift 应作为独立基线治理任务处理，不能通过改写已发布 migration 隐藏。
-- 本报告只证明报价 V1 tracer 和本地门禁，不代表完整售前链或生产就绪。
+- 本报告只证明报价 V1 tracer 的本地门禁和远程 UAT，不代表完整售前链或生产就绪。

@@ -1,6 +1,6 @@
 # Phase 2 售前到订单纵向切片技术边界
 
-> 状态：客户需求 tracer 已完成远程 UAT；报价 V1 tracer 已在 `8d4aec2` 完成本地验证，V2/发出/决策、Web 和远程 UAT 待实施；合同切片待实施
+> 状态：客户需求与报价 V1 tracer 已完成本地及远程 UAT；V2/发出/决策与 Web 待实施；合同切片待实施
 > 业务输入：[`PHASE_1_BUSINESS_SEMANTICS.md`](./PHASE_1_BUSINESS_SEMANTICS.md)  
 > 目标：以最小可审计链路实现“客户需求 -> 报价版本 -> 合同版本 -> 销售订单”，不扩张为完整 CRM、电子签章或通用流程平台。
 
@@ -20,7 +20,8 @@
 - 远程 2 GB UAT：migration `20260711001000_presales_customer_requirements` 已完成；API/Web 健康；原 9 步业务验收再次 `passed=true`；认证 HTTP 验收单 `REQ-2026-000001` 完成 `DRAFT -> FOLLOWING -> LOST`。
 - UAT 镜像标签 `uat-d0ee161` 为本地离线构建/overlay 后传输的临时测试镜像，不是 GHCR 正式发布物。
 - 报价 V1 新增 `Quote`、`QuoteVersion`、`QuoteVersionItem` 和 migration `20260711002000_presales_quotes`；空 PostgreSQL 15 已应用全部 30 个 migration，数据库 smoke 创建 `QT-2026-000001 / V1 / CNY / total 200` 成功。
-- 报价 V1 本地门禁通过：API 41 套件/394 测试、Web 5 套件/35 测试、五种 Compose 配置和安全审计通过；尚未部署远程 UAT，不得把该批描述为已远程验收。
+- 报价 V1 本地门禁通过：API 41 套件/394 测试、Web 5 套件/35 测试、五种 Compose 配置和安全审计通过。
+- 报价 V1 已部署远程 UAT：migration `20260711002000_presales_quotes` 成功，API/Web 健康；11 步业务验收全部通过，新增链路为 `REQ-2026-000002 -> QT-2026-000001 / V1 / DRAFT / CNY / total 452`。临时离线镜像不是正式 GHCR 发布物。
 
 ## 1. 已核对的现有边界
 
