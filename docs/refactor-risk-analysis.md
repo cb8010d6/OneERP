@@ -172,8 +172,8 @@ select 'EventDlq.status' as field, status, count(*) from "EventDlq" group by sta
 
 涉及方法：`createStockMove`、`postSaleOrderShipment`、`reverseSaleOrderShipment`、`reversePurchaseInbound`
 
-- 事务边界：`createStockMove` 使用 `$transaction` 包装 `executeStockMove`；销售发货逐行事务；销售出库冲销和采购入库冲销已改为整单 `Serializable` 事务。
+- 事务边界：`createStockMove` 使用 `$transaction` 包装 `executeStockMove`；默认销售发货、销售出库冲销和采购入库冲销已改为整单 `Serializable` 事务；显式 `allowPartial=true` 的销售发货保留逐行成功/跳过语义。
 - 事件发布：出库后发送 `inventory.stock_depleted`。
 - 幂等性：部分流程通过 referenceNo/count 跳过重复冲销或重复入库。
-- 失败回滚：销售和采购冲销的全部反向流水、状态/退货单和事务内 outbox 任一步失败时整单回滚；事件仅在提交后派发。销售发货的逐行事务边界仍需独立评估。
-- 结论：冲销循环部分成功风险已由 `351ab57` / `52c5c50` 收口并完成真实 UAT。仍暂不拆 InventoryService；应继续增强 `executeStockMove` 和销售发货的事务测试，再做服务拆分。
+- 失败回滚：默认销售发货及销售/采购冲销的全部库存流水、状态/退货单和事务内 outbox 任一步失败时整单回滚；事件仅在提交后派发。显式部分发货的逐行提交属于调用方主动选择的业务语义。
+- 结论：冲销循环部分成功风险由 `351ab57` / `52c5c50` 收口，默认销售发货部分成功风险由 `1c000e7` 收口，均已完成真实 UAT。仍暂不拆 InventoryService；后续拆分必须保留两种发货模式的不同事务语义。
