@@ -44,6 +44,12 @@ type MockPrisma = {
 };
 
 type MockTx = {
+  order: {
+    update: jest.Mock;
+  };
+  stockLocation: {
+    findFirst: jest.Mock;
+  };
   material: {
     findFirst: jest.Mock;
   };
@@ -60,7 +66,13 @@ type MockTx = {
     count: jest.Mock;
   };
   inventoryTransaction: {
+    count: jest.Mock;
+    findMany: jest.Mock;
     create: jest.Mock;
+  };
+  inventoryReturnDocument: {
+    findUnique: jest.Mock;
+    upsert: jest.Mock;
   };
   inventoryLedgerSnapshot: {
     upsert: jest.Mock;
@@ -106,6 +118,12 @@ describe('InventoryService', () => {
   };
 
   const tx: MockTx = {
+    order: {
+      update: jest.fn(),
+    },
+    stockLocation: {
+      findFirst: jest.fn(),
+    },
     material: {
       findFirst: jest.fn(),
     },
@@ -122,7 +140,13 @@ describe('InventoryService', () => {
       count: jest.fn(),
     },
     inventoryTransaction: {
+      count: jest.fn(),
+      findMany: jest.fn(),
       create: jest.fn(),
+    },
+    inventoryReturnDocument: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
     },
     inventoryLedgerSnapshot: {
       upsert: jest.fn(),
@@ -320,18 +344,18 @@ describe('InventoryService', () => {
 
   it('skips reverse when reverse moves already exist', async () => {
     prisma.order.findFirst.mockResolvedValue({ id: 'o1', orderNo: 'ORD-001' });
-    prisma.inventoryTransaction.count.mockResolvedValue(1);
+    tx.inventoryTransaction.count.mockResolvedValue(1);
 
     const result = await service.reverseSaleOrderShipment('c1', 'o1', {}, 'u1');
 
     expect(result.message).toContain('已存在');
-    expect(prisma.inventoryTransaction.findMany).not.toHaveBeenCalled();
+    expect(tx.inventoryTransaction.findMany).not.toHaveBeenCalled();
   });
 
   it('throws when no shipped outbound moves found', async () => {
     prisma.order.findFirst.mockResolvedValue({ id: 'o1', orderNo: 'ORD-001' });
-    prisma.inventoryTransaction.count.mockResolvedValue(0);
-    prisma.inventoryTransaction.findMany.mockResolvedValue([]);
+    tx.inventoryTransaction.count.mockResolvedValue(0);
+    tx.inventoryTransaction.findMany.mockResolvedValue([]);
 
     await expect(
       service.reverseSaleOrderShipment('c1', 'o1', {}, 'u1'),
@@ -340,28 +364,30 @@ describe('InventoryService', () => {
 
   it('creates a sales return document after reversing shipped stock', async () => {
     prisma.order.findFirst.mockResolvedValue({ id: 'o1', orderNo: 'ORD-001' });
-    prisma.inventoryTransaction.count.mockResolvedValue(0);
-    prisma.inventoryTransaction.findMany.mockResolvedValue([
+    tx.inventoryTransaction.count.mockResolvedValue(0);
+    tx.inventoryTransaction.findMany.mockResolvedValue([
       {
         materialId: 'm1',
         quantity: 2,
         sourceLocationId: 'loc-ship',
       },
     ]);
-    prisma.inventoryReturnDocument.upsert.mockResolvedValue({
+    tx.inventoryReturnDocument.upsert.mockResolvedValue({
       id: 'ret1',
       returnNo: 'SR-1',
       lines: [{ id: 'rl1' }],
     });
-    const moveSpy = jest.spyOn(service, 'createStockMove').mockResolvedValue({
-      id: 'move-rev-1',
-      type: 'INBOUND',
-      materialId: 'm1',
-      quantity: 2,
-      destLocationId: 'loc-return',
-      batchNo: 'B1',
-      referenceNo: 'SALE-SHIP-REV-ORD-001',
-    });
+    const moveSpy = jest
+      .spyOn(service, 'createStockMoveInTransaction')
+      .mockResolvedValue({
+        id: 'move-rev-1',
+        type: 'INBOUND',
+        materialId: 'm1',
+        quantity: 2,
+        destLocationId: 'loc-return',
+        batchNo: 'B1',
+        referenceNo: 'SALE-SHIP-REV-ORD-001',
+      });
 
     try {
       const result = await service.reverseSaleOrderShipment(
@@ -374,7 +400,7 @@ describe('InventoryService', () => {
       expect(result.returnDocument).toEqual(
         expect.objectContaining({ id: 'ret1', returnNo: 'SR-1' }),
       );
-      expect(prisma.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
+      expect(tx.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             companyId_referenceNo: {
@@ -398,6 +424,44 @@ describe('InventoryService', () => {
           }),
         }),
       );
+    } finally {
+      moveSpy.mockRestore();
+    }
+  });
+
+  it('keeps a multi-line sales reversal inside one serializable transaction', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'o1',
+      orderNo: 'ORD-ATOMIC',
+    });
+    tx.inventoryTransaction.count.mockResolvedValue(0);
+    tx.inventoryTransaction.findMany.mockResolvedValue([
+      { materialId: 'm1', quantity: 2, sourceLocationId: 'loc-1' },
+      { materialId: 'm2', quantity: 1, sourceLocationId: 'loc-1' },
+    ]);
+    const moveSpy = jest
+      .spyOn(service, 'createStockMoveInTransaction')
+      .mockResolvedValueOnce({
+        id: 'reverse-1',
+        type: 'INBOUND',
+        materialId: 'm1',
+        quantity: 2,
+        destLocationId: 'loc-1',
+      })
+      .mockRejectedValueOnce(new BadRequestException('第二行回库失败'));
+
+    try {
+      await expect(
+        service.reverseSaleOrderShipment('c1', 'o1', {}, 'u1'),
+      ).rejects.toThrow('第二行回库失败');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ isolationLevel: 'Serializable' }),
+      );
+      expect(tx.order.update).not.toHaveBeenCalled();
+      expect(tx.inventoryReturnDocument.upsert).not.toHaveBeenCalled();
     } finally {
       moveSpy.mockRestore();
     }
@@ -609,7 +673,7 @@ describe('InventoryService', () => {
   });
 
   it('skips purchase reverse when reverse moves already exist', async () => {
-    prisma.inventoryTransaction.count.mockResolvedValue(1);
+    tx.inventoryTransaction.count.mockResolvedValue(1);
 
     const result = await service.reversePurchaseInbound(
       'c1',
@@ -619,12 +683,12 @@ describe('InventoryService', () => {
     );
 
     expect(result.message).toContain('已存在');
-    expect(prisma.inventoryTransaction.findMany).not.toHaveBeenCalled();
+    expect(tx.inventoryTransaction.findMany).not.toHaveBeenCalled();
   });
 
   it('throws when purchase inbound moves are missing', async () => {
-    prisma.inventoryTransaction.count.mockResolvedValue(0);
-    prisma.inventoryTransaction.findMany.mockResolvedValue([]);
+    tx.inventoryTransaction.count.mockResolvedValue(0);
+    tx.inventoryTransaction.findMany.mockResolvedValue([]);
 
     await expect(
       service.reversePurchaseInbound('c1', 'PO-001', {}, 'u1'),
@@ -632,28 +696,30 @@ describe('InventoryService', () => {
   });
 
   it('creates a purchase return document after reversing inbound stock', async () => {
-    prisma.inventoryTransaction.count.mockResolvedValue(0);
-    prisma.inventoryTransaction.findMany.mockResolvedValue([
+    tx.inventoryTransaction.count.mockResolvedValue(0);
+    tx.inventoryTransaction.findMany.mockResolvedValue([
       {
         materialId: 'm1',
         quantity: 3,
         destLocationId: 'loc-receive',
       },
     ]);
-    prisma.inventoryReturnDocument.upsert.mockResolvedValue({
+    tx.inventoryReturnDocument.upsert.mockResolvedValue({
       id: 'ret2',
       returnNo: 'PR-1',
       lines: [{ id: 'rl2' }],
     });
-    const moveSpy = jest.spyOn(service, 'createStockMove').mockResolvedValue({
-      id: 'move-rev-2',
-      type: 'OUTBOUND',
-      materialId: 'm1',
-      quantity: 3,
-      sourceLocationId: 'loc-receive',
-      batchNo: 'B2',
-      referenceNo: 'PURCHASE-IN-REV-PO-001',
-    });
+    const moveSpy = jest
+      .spyOn(service, 'createStockMoveInTransaction')
+      .mockResolvedValue({
+        id: 'move-rev-2',
+        type: 'OUTBOUND',
+        materialId: 'm1',
+        quantity: 3,
+        sourceLocationId: 'loc-receive',
+        batchNo: 'B2',
+        referenceNo: 'PURCHASE-IN-REV-PO-001',
+      });
 
     try {
       const result = await service.reversePurchaseInbound(
@@ -666,7 +732,7 @@ describe('InventoryService', () => {
       expect(result.returnDocument).toEqual(
         expect.objectContaining({ id: 'ret2', returnNo: 'PR-1' }),
       );
-      expect(prisma.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
+      expect(tx.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
             companyId_referenceNo: {
@@ -690,6 +756,40 @@ describe('InventoryService', () => {
           }),
         }),
       );
+    } finally {
+      moveSpy.mockRestore();
+    }
+  });
+
+  it('does not publish purchase reversal events before the whole transaction succeeds', async () => {
+    tx.inventoryTransaction.count.mockResolvedValue(0);
+    tx.inventoryTransaction.findMany.mockResolvedValue([
+      { materialId: 'm1', quantity: 3, destLocationId: 'loc-1' },
+      { materialId: 'm2', quantity: 2, destLocationId: 'loc-1' },
+    ]);
+    const moveSpy = jest
+      .spyOn(service, 'createStockMoveInTransaction')
+      .mockResolvedValueOnce({
+        id: 'reverse-1',
+        type: 'OUTBOUND',
+        materialId: 'm1',
+        quantity: 3,
+        sourceLocationId: 'loc-1',
+      })
+      .mockRejectedValueOnce(new BadRequestException('第二行出库失败'));
+
+    try {
+      await expect(
+        service.reversePurchaseInbound('c1', 'PO-ATOMIC', {}, 'u1'),
+      ).rejects.toThrow('第二行出库失败');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ isolationLevel: 'Serializable' }),
+      );
+      expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+      expect(tx.inventoryReturnDocument.upsert).not.toHaveBeenCalled();
     } finally {
       moveSpy.mockRestore();
     }

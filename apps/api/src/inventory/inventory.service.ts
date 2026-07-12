@@ -765,98 +765,118 @@ export class InventoryService {
     const shipmentReferenceNo = `SALE-SHIP-${order.orderNo}`;
     const reverseReferenceNo = `SALE-SHIP-REV-${order.orderNo}`;
 
-    const existedReverse = await this.prisma.inventoryTransaction.count({
-      where: { companyId, referenceNo: reverseReferenceNo },
-    });
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const existedReverse = await tx.inventoryTransaction.count({
+          where: { companyId, referenceNo: reverseReferenceNo },
+        });
 
-    if (existedReverse > 0) {
-      const returnDocument = await this.findReturnDocumentByReference(
-        companyId,
-        reverseReferenceNo,
-      );
+        if (existedReverse > 0) {
+          const returnDocument = await this.findReturnDocumentByReference(
+            companyId,
+            reverseReferenceNo,
+            tx,
+          );
+          return { alreadyReversed: true as const, returnDocument };
+        }
+
+        const shippedMoves = await tx.inventoryTransaction.findMany({
+          where: {
+            companyId,
+            referenceNo: shipmentReferenceNo,
+            type: 'OUTBOUND',
+          },
+          select: {
+            materialId: true,
+            quantity: true,
+            sourceLocationId: true,
+          },
+        });
+
+        if (!shippedMoves.length) {
+          throw new BadRequestException('未找到可冲销的销售出库流水');
+        }
+
+        const reversedLines: Array<{
+          materialId: string;
+          quantity: number;
+          transactionId: string;
+          locationId?: string | null;
+          batchNo?: string | null;
+        }> = [];
+
+        for (const move of shippedMoves) {
+          const transaction = await this.createStockMoveInTransaction(
+            tx,
+            companyId,
+            {
+              materialId: move.materialId,
+              quantity: Number(move.quantity),
+              destLocationId:
+                payload.destLocationId ?? move.sourceLocationId ?? undefined,
+              batchNo: payload.batchNo,
+              referenceNo: reverseReferenceNo,
+              documentType: 'SALE_ORDER_REVERSE',
+              documentId: order.id,
+              note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+            },
+            operatorId,
+          );
+
+          reversedLines.push({
+            materialId: move.materialId,
+            quantity: Number(move.quantity),
+            transactionId: transaction.id,
+            locationId: transaction.destLocationId ?? null,
+            batchNo: transaction.batchNo ?? null,
+          });
+        }
+
+        if (options?.rollbackStatus !== false) {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: 'IN_PRODUCTION' },
+          });
+        }
+
+        const returnDocument = await this.createReturnDocument(
+          {
+            companyId,
+            returnType: 'SALES',
+            sourceDocumentId: order.id,
+            sourceDocumentNo: order.orderNo,
+            referenceNo: reverseReferenceNo,
+            note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+            operatorId,
+            lines: reversedLines,
+          },
+          tx,
+        );
+
+        return {
+          alreadyReversed: false as const,
+          reversedLines,
+          returnDocument,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if (result.alreadyReversed) {
       return {
         orderId: order.id,
         orderNo: order.orderNo,
         reversedLines: [],
-        returnDocument,
+        returnDocument: result.returnDocument,
         message: '销售订单冲销已存在，已跳过重复处理',
       };
     }
 
-    const shippedMoves = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        companyId,
-        referenceNo: shipmentReferenceNo,
-        type: 'OUTBOUND',
-      },
-      select: {
-        materialId: true,
-        quantity: true,
-        sourceLocationId: true,
-      },
-    });
-
-    if (!shippedMoves.length) {
-      throw new BadRequestException('未找到可冲销的销售出库流水');
-    }
-
-    const reversedLines: Array<{
-      materialId: string;
-      quantity: number;
-      transactionId: string;
-      locationId?: string | null;
-      batchNo?: string | null;
-    }> = [];
-
-    for (const move of shippedMoves) {
-      const transaction = await this.createStockMove(
-        companyId,
-        {
-          materialId: move.materialId,
-          quantity: Number(move.quantity),
-          destLocationId:
-            payload.destLocationId ?? move.sourceLocationId ?? undefined,
-          batchNo: payload.batchNo,
-          referenceNo: reverseReferenceNo,
-          documentType: 'SALE_ORDER_REVERSE',
-          documentId: order.id,
-          note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
-        },
-        operatorId,
-      );
-
-      reversedLines.push({
-        materialId: move.materialId,
-        quantity: Number(move.quantity),
-        transactionId: transaction.id,
-        locationId: transaction.destLocationId ?? null,
-        batchNo: transaction.batchNo ?? null,
-      });
-    }
-
-    if (options?.rollbackStatus !== false) {
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: { status: 'IN_PRODUCTION' },
-      });
-    }
-
-    const returnDocument = await this.createReturnDocument({
-      companyId,
-      returnType: 'SALES',
-      sourceDocumentId: order.id,
-      sourceDocumentNo: order.orderNo,
-      referenceNo: reverseReferenceNo,
-      note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
-      operatorId,
-      lines: reversedLines,
-    });
-
     return {
       orderId: order.id,
       orderNo: order.orderNo,
-      reversedLines,
-      returnDocument,
+      reversedLines: result.reversedLines,
+      returnDocument: result.returnDocument,
       message:
         options?.rollbackStatus === false
           ? '销售订单冲销完成'
@@ -873,91 +893,133 @@ export class InventoryService {
     const purchaseReferenceNo = `PURCHASE-IN-${purchaseNo}`;
     const reverseReferenceNo = `PURCHASE-IN-REV-${purchaseNo}`;
 
-    const existedReverse = await this.prisma.inventoryTransaction.count({
-      where: { companyId, referenceNo: reverseReferenceNo },
-    });
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const existedReverse = await tx.inventoryTransaction.count({
+          where: { companyId, referenceNo: reverseReferenceNo },
+        });
 
-    if (existedReverse > 0) {
-      const returnDocument = await this.findReturnDocumentByReference(
-        companyId,
-        reverseReferenceNo,
-      );
+        if (existedReverse > 0) {
+          const returnDocument = await this.findReturnDocumentByReference(
+            companyId,
+            reverseReferenceNo,
+            tx,
+          );
+          return {
+            alreadyReversed: true as const,
+            returnDocument,
+            queuedEventIds: [] as string[],
+          };
+        }
+
+        const inboundMoves = await tx.inventoryTransaction.findMany({
+          where: {
+            companyId,
+            OR: [
+              { referenceNo: purchaseReferenceNo },
+              { referenceNo: { startsWith: `${purchaseReferenceNo}-` } },
+            ],
+            type: 'INBOUND',
+          },
+          select: {
+            materialId: true,
+            quantity: true,
+            destLocationId: true,
+          },
+        });
+
+        if (!inboundMoves.length) {
+          throw new BadRequestException('未找到可冲销的采购入库流水');
+        }
+
+        const reversedLines: Array<{
+          materialId: string;
+          quantity: number;
+          transactionId: string;
+          locationId?: string | null;
+          batchNo?: string | null;
+        }> = [];
+        const queuedEventIds: string[] = [];
+
+        for (const move of inboundMoves) {
+          const transaction = await this.createStockMoveInTransaction(
+            tx,
+            companyId,
+            {
+              materialId: move.materialId,
+              quantity: Number(move.quantity),
+              sourceLocationId:
+                payload.sourceLocationId ?? move.destLocationId ?? undefined,
+              batchNo: payload.batchNo,
+              referenceNo: reverseReferenceNo,
+              documentType: 'PURCHASE_ORDER_REVERSE',
+              documentId: purchaseNo,
+              note: payload.note ?? `采购入库冲销：${purchaseNo}`,
+            },
+            operatorId,
+          );
+          const material = await tx.material.findFirst({
+            where: { id: move.materialId },
+            select: { unitPrice: true },
+          });
+          const queuedEvent = await this.queueStockDepletedInTransaction(
+            tx,
+            companyId,
+            transaction,
+            operatorId,
+            Number(material?.unitPrice ?? 0),
+          );
+          if (queuedEvent?.id) queuedEventIds.push(queuedEvent.id);
+
+          reversedLines.push({
+            materialId: move.materialId,
+            quantity: Number(move.quantity),
+            transactionId: transaction.id,
+            locationId: transaction.sourceLocationId ?? null,
+            batchNo: transaction.batchNo ?? null,
+          });
+        }
+
+        const returnDocument = await this.createReturnDocument(
+          {
+            companyId,
+            returnType: 'PURCHASE',
+            sourceDocumentNo: purchaseNo,
+            referenceNo: reverseReferenceNo,
+            note: payload.note ?? `采购入库冲销：${purchaseNo}`,
+            operatorId,
+            lines: reversedLines,
+          },
+          tx,
+        );
+
+        return {
+          alreadyReversed: false as const,
+          reversedLines,
+          returnDocument,
+          queuedEventIds,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    for (const eventId of result.queuedEventIds) {
+      await this.eventQueueService.dispatchById(eventId);
+    }
+
+    if (result.alreadyReversed) {
       return {
         purchaseNo,
         reversedLines: [],
-        returnDocument,
+        returnDocument: result.returnDocument,
         message: '采购入库冲销已存在，已跳过重复处理',
       };
     }
 
-    const inboundMoves = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        companyId,
-        OR: [
-          { referenceNo: purchaseReferenceNo },
-          { referenceNo: { startsWith: `${purchaseReferenceNo}-` } },
-        ],
-        type: 'INBOUND',
-      },
-      select: {
-        materialId: true,
-        quantity: true,
-        destLocationId: true,
-      },
-    });
-
-    if (!inboundMoves.length) {
-      throw new BadRequestException('未找到可冲销的采购入库流水');
-    }
-
-    const reversedLines: Array<{
-      materialId: string;
-      quantity: number;
-      transactionId: string;
-      locationId?: string | null;
-      batchNo?: string | null;
-    }> = [];
-
-    for (const move of inboundMoves) {
-      const transaction = await this.createStockMove(
-        companyId,
-        {
-          materialId: move.materialId,
-          quantity: Number(move.quantity),
-          sourceLocationId:
-            payload.sourceLocationId ?? move.destLocationId ?? undefined,
-          batchNo: payload.batchNo,
-          referenceNo: reverseReferenceNo,
-          documentType: 'PURCHASE_ORDER_REVERSE',
-          documentId: purchaseNo,
-          note: payload.note ?? `采购入库冲销：${purchaseNo}`,
-        },
-        operatorId,
-      );
-
-      reversedLines.push({
-        materialId: move.materialId,
-        quantity: Number(move.quantity),
-        transactionId: transaction.id,
-        locationId: transaction.sourceLocationId ?? null,
-        batchNo: transaction.batchNo ?? null,
-      });
-    }
-
-    const returnDocument = await this.createReturnDocument({
-      companyId,
-      returnType: 'PURCHASE',
-      sourceDocumentNo: purchaseNo,
-      referenceNo: reverseReferenceNo,
-      note: payload.note ?? `采购入库冲销：${purchaseNo}`,
-      operatorId,
-      lines: reversedLines,
-    });
-
     return {
       purchaseNo,
-      reversedLines,
-      returnDocument,
+      reversedLines: result.reversedLines,
+      returnDocument: result.returnDocument,
       message: '采购入库冲销完成',
     };
   }
@@ -965,32 +1027,69 @@ export class InventoryService {
   private async findReturnDocumentByReference(
     companyId: string,
     referenceNo: string,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
   ) {
-    return this.prisma.inventoryReturnDocument.findUnique({
+    return client.inventoryReturnDocument.findUnique({
       where: { companyId_referenceNo: { companyId, referenceNo } },
       include: { lines: { orderBy: { createdAt: 'asc' } } },
     });
   }
 
-  private async createReturnDocument(input: {
-    companyId: string;
-    returnType: 'SALES' | 'PURCHASE';
-    sourceDocumentId?: string;
-    sourceDocumentNo: string;
-    referenceNo: string;
-    note?: string;
-    operatorId?: string;
-    lines: Array<{
-      materialId: string;
-      quantity: number;
-      transactionId: string;
-      locationId?: string | null;
-      batchNo?: string | null;
-    }>;
-  }) {
+  private async createReturnDocument(
+    input: {
+      companyId: string;
+      returnType: 'SALES' | 'PURCHASE';
+      sourceDocumentId?: string;
+      sourceDocumentNo: string;
+      referenceNo: string;
+      note?: string;
+      operatorId?: string;
+      lines: Array<{
+        materialId: string;
+        quantity: number;
+        transactionId: string;
+        locationId?: string | null;
+        batchNo?: string | null;
+      }>;
+    },
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ) {
+    if (client !== this.prisma) {
+      return client.inventoryReturnDocument.upsert({
+        where: {
+          companyId_referenceNo: {
+            companyId: input.companyId,
+            referenceNo: input.referenceNo,
+          },
+        },
+        update: { note: input.note, status: 'POSTED' },
+        create: {
+          returnNo: this.generateReturnNo(input.returnType),
+          returnType: input.returnType,
+          sourceDocumentId: input.sourceDocumentId,
+          sourceDocumentNo: input.sourceDocumentNo,
+          referenceNo: input.referenceNo,
+          status: 'POSTED',
+          note: input.note,
+          operatorId: input.operatorId,
+          companyId: input.companyId,
+          lines: {
+            create: input.lines.map((line) => ({
+              materialId: line.materialId,
+              quantity: line.quantity,
+              locationId: line.locationId,
+              inventoryMoveId: line.transactionId,
+              batchNo: line.batchNo,
+            })),
+          },
+        },
+        include: { lines: { orderBy: { createdAt: 'asc' } } },
+      });
+    }
+
     return withUniqueConstraintRetry(
       (attempt) =>
-        this.prisma.inventoryReturnDocument.upsert({
+        client.inventoryReturnDocument.upsert({
           where: {
             companyId_referenceNo: {
               companyId: input.companyId,
