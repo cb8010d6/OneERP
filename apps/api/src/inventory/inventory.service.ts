@@ -206,6 +206,16 @@ export class InventoryService {
       requestedQuantity: number;
       reason: string;
     }> = [];
+    const atomicPlans: Array<{
+      product: { id: string; materialId: string; name: string };
+      requestedQuantity: number;
+      quantityRequestedThisRound: number;
+      allocations: Array<{
+        sourceLocationId: string;
+        batchNo: string;
+        quantity: number;
+      }>;
+    }> = [];
 
     if (!payload.allowPartial) {
       for (const requestItem of payload.items) {
@@ -251,7 +261,129 @@ export class InventoryService {
             `库存不足：产品 ${product.name} 请求发货 ${requestedQuantity}，当前可发 ${stockPlan.allocatedQuantity}；如需部分发货请显式设置 allowPartial=true`,
           );
         }
+
+        atomicPlans.push({
+          product: {
+            id: product.id,
+            materialId: product.materialId,
+            name: product.name,
+          },
+          requestedQuantity,
+          quantityRequestedThisRound: requestedQuantity,
+          allocations: stockPlan.allocations,
+        });
       }
+
+      const atomicResult = await this.prisma.$transaction(
+        async (tx) => {
+          const atomicPostedLines: typeof postedLines = [];
+          const queuedEventIds: string[] = [];
+          const nextShippedQuantityByProductId = new Map(
+            shippedQuantityByProductId,
+          );
+
+          for (const plan of atomicPlans) {
+            const lineTransactions: (typeof postedLines)[number]['allocations'] =
+              [];
+
+            for (const allocation of plan.allocations) {
+              const transaction = await this.executeStockMove(tx, {
+                companyId,
+                sourceLocationId: allocation.sourceLocationId,
+                materialId: plan.product.materialId,
+                quantity: allocation.quantity,
+                batchNo: allocation.batchNo,
+                referenceNo,
+                note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
+                operatorId: operatorId || 'SYSTEM',
+              });
+              const queuedEvent = await this.queueStockDepletedInTransaction(
+                tx,
+                companyId,
+                transaction,
+                operatorId,
+              );
+              if (queuedEvent?.id) queuedEventIds.push(queuedEvent.id);
+
+              lineTransactions.push({
+                sourceLocationId: allocation.sourceLocationId,
+                batchNo: transaction.batchNo ?? allocation.batchNo,
+                quantity: allocation.quantity,
+                transactionId: transaction.id,
+              });
+            }
+
+            const quantityToShip = roundDecimal(
+              lineTransactions.reduce(
+                (sum, allocation) => sum + Number(allocation.quantity ?? 0),
+                0,
+              ),
+            );
+            const currentShipped =
+              nextShippedQuantityByProductId.get(plan.product.id) ?? 0;
+            nextShippedQuantityByProductId.set(
+              plan.product.id,
+              roundDecimal(currentShipped + quantityToShip),
+            );
+            atomicPostedLines.push({
+              productId: plan.product.id,
+              materialId: plan.product.materialId,
+              requestedQuantity: plan.requestedQuantity,
+              quantity: quantityToShip,
+              remainingQuantity: roundDecimal(
+                Math.max(0, plan.quantityRequestedThisRound - quantityToShip),
+              ),
+              sourceLocationId:
+                lineTransactions[0]?.sourceLocationId ??
+                payload.sourceLocationId ??
+                '',
+              batchNo: lineTransactions[0]?.batchNo ?? payload.batchNo ?? '',
+              transactionId: lineTransactions[0]?.transactionId ?? '',
+              allocations: lineTransactions,
+            });
+          }
+
+          const totalShippedAfterPosting = roundDecimal(
+            [...nextShippedQuantityByProductId.values()].reduce(
+              (sum, quantity) => sum + Number(quantity ?? 0),
+              0,
+            ),
+          );
+          const nextStatus =
+            totalShippedAfterPosting >= totalOrdered
+              ? 'SHIPPED'
+              : 'PARTIAL_SHIPPED';
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: nextStatus },
+          });
+
+          return {
+            postedLines: atomicPostedLines,
+            queuedEventIds,
+            totalShipped: totalShippedAfterPosting,
+            nextStatus,
+          };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+
+      await this.dispatchQueuedEvents(atomicResult.queuedEventIds);
+
+      return {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        totalOrdered,
+        totalShipped: atomicResult.totalShipped,
+        status: atomicResult.nextStatus,
+        postingStatus: 'POSTED',
+        postedLines: atomicResult.postedLines,
+        skippedLines,
+        message:
+          atomicResult.nextStatus === 'SHIPPED'
+            ? '销售订单自动过账完成，订单状态已更新为 SHIPPED'
+            : '销售订单部分发货完成，订单状态已更新为 PARTIAL_SHIPPED',
+      };
     }
 
     for (const requestItem of payload.items) {

@@ -643,6 +643,68 @@ describe('InventoryService', () => {
     expect(eventQueueService.publish).not.toHaveBeenCalled();
   });
 
+  it('rolls back the default multi-line shipment when a later line fails', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'o1',
+      orderNo: 'ORD-ATOMIC-SHIP',
+      status: 'DRAFT',
+      items: [
+        { productId: 'p1', quantity: 1 },
+        { productId: 'p2', quantity: 1 },
+      ],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
+      { id: 'p2', materialId: 'm2', name: 'Case', sku: 'SKU-002' },
+    ]);
+    prisma.inventoryTransaction.findMany.mockResolvedValue([]);
+    prisma.stockQuant.findMany.mockImplementation(
+      ({ where }: { where: { materialId: string } }) => [
+        {
+          locationId: 'loc-1',
+          batchNo: `BATCH-${where.materialId}`,
+          quantity: 1,
+          location: { name: '主仓' },
+        },
+      ],
+    );
+    tx.stockQuant.updateMany.mockResolvedValue({ count: 1 });
+    tx.inventoryTransaction.create
+      .mockResolvedValueOnce({
+        id: 'ship-1',
+        type: 'OUTBOUND',
+        materialId: 'm1',
+        quantity: 1,
+        sourceLocationId: 'loc-1',
+        batchNo: 'BATCH-m1',
+        referenceNo: 'SALE-SHIP-ORD-ATOMIC-SHIP',
+      })
+      .mockRejectedValueOnce(new BadRequestException('第二行库存竞争失败'));
+
+    await expect(
+      service.postSaleOrderShipment(
+        'c1',
+        'o1',
+        {
+          sourceLocationId: 'loc-1',
+          items: [
+            { productId: 'p1', shipQuantity: 1 },
+            { productId: 'p2', shipQuantity: 1 },
+          ],
+        },
+        'u1',
+      ),
+    ).rejects.toThrow('第二行库存竞争失败');
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.$transaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.objectContaining({ isolationLevel: 'Serializable' }),
+    );
+    expect(tx.order.update).not.toHaveBeenCalled();
+    expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+  });
+
   it('keeps order status unchanged when no stock is posted', async () => {
     prisma.order.findFirst.mockResolvedValue({
       id: 'o1',
