@@ -26,56 +26,58 @@ model Company {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  users                      UserCompanyRole[]
-  departments                Department[]
-  orders                     Order[]
-  warehouses                 Warehouse[]
-  locations                  StockLocation[]
-  materials                  Material[]
-  partners                   Partner[]
-  products                   Product[]
-  categories                 ProductCategory[]
-  boms                       Bom[]
-  fileRecords                FileRecord[]
-  workflows                  Workflow[]
-  customFields               CustomFieldDefinition[]
-  auditLogs                  AuditLog[]
-  accounts                   Account[]
-  financeAccountMappings     FinanceAccountMapping[]
-  journals                   Journal[]
-  journalEntries             JournalEntry[]
-  accountingPeriods          AccountingPeriod[]
-  payments                   Payment[]
-  paymentAllocations         PaymentAllocation[]
-  supplierPayments           SupplierPayment[]
-  supplierPaymentAllocations SupplierPaymentAllocation[]
-  bankStatementLines         BankStatementLine[]
-  creditNotes                CreditNote[]
-  customerRefunds            CustomerRefund[]
-  eventDlqRecords            EventDlq[]
-  taxCodes                   TaxCode[]
-  userInvitations            UserInvitation[]
-  inventoryTransactions      InventoryTransaction[]
-  inventoryLedgerSnapshots   InventoryLedgerSnapshot[]
-  materialCosts              MaterialCost[]
-  inventoryReturnDocuments   InventoryReturnDocument[]
-  supplierCreditNotes        SupplierCreditNote[]
-  purchaseOrders             PurchaseOrder[]
-  purchaseReceipts           PurchaseReceipt[]
-  purchaseInvoices           PurchaseInvoice[]
-  aiProviderSetting          AiProviderSetting?
-  documentSequences          DocumentSequence[]
-  customerRequirements       CustomerRequirement[]
-  requirementActivities      RequirementActivity[]
-  quotes                     Quote[]
-  quoteVersions              QuoteVersion[]
-  quoteVersionItems          QuoteVersionItem[]
-  salesContracts             SalesContract[]
-  salesContractVersions      SalesContractVersion[]
-  salesContractApprovals     SalesContractApproval[]
-  engineeringDocuments       EngineeringDocument[]
-  engineeringDocumentRevisions EngineeringDocumentRevision[]
+  users                         UserCompanyRole[]
+  departments                   Department[]
+  orders                        Order[]
+  warehouses                    Warehouse[]
+  locations                     StockLocation[]
+  materials                     Material[]
+  partners                      Partner[]
+  products                      Product[]
+  categories                    ProductCategory[]
+  boms                          Bom[]
+  fileRecords                   FileRecord[]
+  workflows                     Workflow[]
+  customFields                  CustomFieldDefinition[]
+  auditLogs                     AuditLog[]
+  accounts                      Account[]
+  financeAccountMappings        FinanceAccountMapping[]
+  journals                      Journal[]
+  journalEntries                JournalEntry[]
+  accountingPeriods             AccountingPeriod[]
+  payments                      Payment[]
+  paymentAllocations            PaymentAllocation[]
+  supplierPayments              SupplierPayment[]
+  supplierPaymentAllocations    SupplierPaymentAllocation[]
+  bankStatementLines            BankStatementLine[]
+  creditNotes                   CreditNote[]
+  customerRefunds               CustomerRefund[]
+  eventDlqRecords               EventDlq[]
+  taxCodes                      TaxCode[]
+  userInvitations               UserInvitation[]
+  inventoryTransactions         InventoryTransaction[]
+  inventoryLedgerSnapshots      InventoryLedgerSnapshot[]
+  materialCosts                 MaterialCost[]
+  inventoryReturnDocuments      InventoryReturnDocument[]
+  supplierCreditNotes           SupplierCreditNote[]
+  purchaseOrders                PurchaseOrder[]
+  purchaseReceipts              PurchaseReceipt[]
+  purchaseInvoices              PurchaseInvoice[]
+  aiProviderSetting             AiProviderSetting?
+  documentSequences             DocumentSequence[]
+  customerRequirements          CustomerRequirement[]
+  requirementActivities         RequirementActivity[]
+  quotes                        Quote[]
+  quoteVersions                 QuoteVersion[]
+  quoteVersionItems             QuoteVersionItem[]
+  salesContracts                SalesContract[]
+  salesContractVersions         SalesContractVersion[]
+  salesContractApprovals        SalesContractApproval[]
+  engineeringDocuments          EngineeringDocument[]
+  engineeringDocumentRevisions  EngineeringDocumentRevision[]
   workOrderEngineeringRevisions WorkOrderEngineeringRevision[]
+  engineeringChangeOrders       EngineeringChangeOrder[]
+  engineeringChangeImpacts      EngineeringChangeImpact[]
 }
 
 enum PartnerType {
@@ -130,26 +132,28 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  companies             UserCompanyRole[]
-  orders                Order[]               @relation("UserOrders")
-  purchaseOrders        PurchaseOrder[]       @relation("UserPurchaseOrders")
-  purchaseReceipts      PurchaseReceipt[]     @relation("UserPurchaseReceipts")
-  FileRecord            FileRecord[]
-  WorkReport            WorkReport[]
-  auditLogs             AuditLog[]
-  createdInvitations    UserInvitation[]      @relation("InvitationCreatedBy")
-  acceptedInvitations   UserInvitation[]      @relation("InvitationAcceptedBy")
-  ownedRequirements     CustomerRequirement[] @relation("RequirementOwner")
-  requirementActivities RequirementActivity[] @relation("RequirementActivityCreator")
-  ownedQuotes           Quote[]               @relation("QuoteOwner")
-  ownedContracts        SalesContract[]       @relation("ContractOwner")
-  contractApprovals     SalesContractApproval[] @relation("ContractApprovalActor")
-  signedContracts       SalesContract[]       @relation("ContractSigner")
-  createdEngineeringDocuments EngineeringDocument[] @relation("EngineeringDocumentCreator")
-  createdEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionCreator")
-  reviewedEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionReviewer")
-  approvedEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionApprover")
-  pinnedEngineeringRevisions WorkOrderEngineeringRevision[] @relation("EngineeringRevisionPinnedBy")
+  companies                       UserCompanyRole[]
+  orders                          Order[]                        @relation("UserOrders")
+  purchaseOrders                  PurchaseOrder[]                @relation("UserPurchaseOrders")
+  purchaseReceipts                PurchaseReceipt[]              @relation("UserPurchaseReceipts")
+  FileRecord                      FileRecord[]
+  WorkReport                      WorkReport[]
+  auditLogs                       AuditLog[]
+  createdInvitations              UserInvitation[]               @relation("InvitationCreatedBy")
+  acceptedInvitations             UserInvitation[]               @relation("InvitationAcceptedBy")
+  ownedRequirements               CustomerRequirement[]          @relation("RequirementOwner")
+  requirementActivities           RequirementActivity[]          @relation("RequirementActivityCreator")
+  ownedQuotes                     Quote[]                        @relation("QuoteOwner")
+  ownedContracts                  SalesContract[]                @relation("ContractOwner")
+  contractApprovals               SalesContractApproval[]        @relation("ContractApprovalActor")
+  signedContracts                 SalesContract[]                @relation("ContractSigner")
+  createdEngineeringDocuments     EngineeringDocument[]          @relation("EngineeringDocumentCreator")
+  createdEngineeringRevisions     EngineeringDocumentRevision[]  @relation("EngineeringRevisionCreator")
+  reviewedEngineeringRevisions    EngineeringDocumentRevision[]  @relation("EngineeringRevisionReviewer")
+  approvedEngineeringRevisions    EngineeringDocumentRevision[]  @relation("EngineeringRevisionApprover")
+  pinnedEngineeringRevisions      WorkOrderEngineeringRevision[] @relation("EngineeringRevisionPinnedBy")
+  createdEngineeringChangeOrders  EngineeringChangeOrder[]       @relation("EngineeringChangeOrderCreator")
+  approvedEngineeringChangeOrders EngineeringChangeOrder[]       @relation("EngineeringChangeOrderApprover")
 }
 
 model Role {
@@ -382,30 +386,30 @@ model QuoteVersionItem {
 }
 
 model SalesContract {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   contractNo       String
   companyId        String
-  quoteVersionId   String   @unique
+  quoteVersionId   String    @unique
   partnerId        String
   ownerId          String
-  status           String   @default("DRAFT")
-  currentVersionNo Int      @default(1)
+  status           String    @default("DRAFT")
+  currentVersionNo Int       @default(1)
   submittedAt      DateTime?
   approvedAt       DateTime?
   rejectedAt       DateTime?
-  signedFileId     String?  @unique
+  signedFileId     String?   @unique
   signedById       String?
   signedAt         DateTime?
   activatedAt      DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  company      Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  quoteVersion QuoteVersion           @relation(fields: [quoteVersionId], references: [id])
-  partner      Partner                @relation(fields: [partnerId], references: [id])
-  owner        User                   @relation("ContractOwner", fields: [ownerId], references: [id])
-  signedFile   FileRecord?            @relation(fields: [signedFileId], references: [id], onDelete: Restrict)
-  signedBy     User?                  @relation("ContractSigner", fields: [signedById], references: [id])
+  company      Company                 @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  quoteVersion QuoteVersion            @relation(fields: [quoteVersionId], references: [id])
+  partner      Partner                 @relation(fields: [partnerId], references: [id])
+  owner        User                    @relation("ContractOwner", fields: [ownerId], references: [id])
+  signedFile   FileRecord?             @relation(fields: [signedFileId], references: [id], onDelete: Restrict)
+  signedBy     User?                   @relation("ContractSigner", fields: [signedById], references: [id])
   versions     SalesContractVersion[]
   approvals    SalesContractApproval[]
   orders       Order[]
@@ -492,37 +496,37 @@ model TaxCode {
 // ==========================================
 
 model Order {
-  id               String    @id @default(uuid())
-  orderNo          String    @unique
-  partnerId        String
-  salesId          String // 挂单销售员
-  companyId        String
-  status           String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
-  totalAmount      Decimal   @default(0) @db.Decimal(18, 4)
-  subTotal         Decimal   @default(0) @db.Decimal(18, 4)
-  taxTotal         Decimal   @default(0) @db.Decimal(18, 4)
-  taxCodeId        String?
-  aiSummary        Json? // 存放 AI 抓取的客户需求 JSON 结构
-  customAttributes Json?
-  expectedDate     DateTime? // 预计交付日期
-  notes            String? // 备注
-  salesContractId  String?
+  id                String    @id @default(uuid())
+  orderNo           String    @unique
+  partnerId         String
+  salesId           String // 挂单销售员
+  companyId         String
+  status            String // "DRAFT", "PENDING", "IN_PRODUCTION", "SHIPPED", "COMPLETED"
+  totalAmount       Decimal   @default(0) @db.Decimal(18, 4)
+  subTotal          Decimal   @default(0) @db.Decimal(18, 4)
+  taxTotal          Decimal   @default(0) @db.Decimal(18, 4)
+  taxCodeId         String?
+  aiSummary         Json? // 存放 AI 抓取的客户需求 JSON 结构
+  customAttributes  Json?
+  expectedDate      DateTime? // 预计交付日期
+  notes             String? // 备注
+  salesContractId   String?
   contractVersionId String?
-  sourceBatchKey   String?
-  sourceBatchHash  String?
+  sourceBatchKey    String?
+  sourceBatchHash   String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  partner     Partner     @relation(fields: [partnerId], references: [id])
-  salesPerson User        @relation("UserOrders", fields: [salesId], references: [id])
-  company     Company     @relation(fields: [companyId], references: [id])
-  taxCode     TaxCode?    @relation(fields: [taxCodeId], references: [id])
-  items       OrderItem[]
-  workOrders  WorkOrder[]
-  invoices    Invoice[]
-  salesContract SalesContract?        @relation(fields: [salesContractId], references: [id], onDelete: Restrict)
-  contractVersion SalesContractVersion? @relation(fields: [contractVersionId], references: [id], onDelete: Restrict)
+  partner              Partner               @relation(fields: [partnerId], references: [id])
+  salesPerson          User                  @relation("UserOrders", fields: [salesId], references: [id])
+  company              Company               @relation(fields: [companyId], references: [id])
+  taxCode              TaxCode?              @relation(fields: [taxCodeId], references: [id])
+  items                OrderItem[]
+  workOrders           WorkOrder[]
+  invoices             Invoice[]
+  salesContract        SalesContract?        @relation(fields: [salesContractId], references: [id], onDelete: Restrict)
+  contractVersion      SalesContractVersion? @relation(fields: [contractVersionId], references: [id], onDelete: Restrict)
   engineeringDocuments EngineeringDocument[]
 
   @@unique([companyId, sourceBatchKey])
@@ -532,21 +536,21 @@ model Order {
 }
 
 model OrderItem {
-  id               String  @id @default(uuid())
-  orderId          String
-  productId        String // 关联的产品/模型名称
-  quantity         Int
-  unitPrice        Decimal @db.Decimal(18, 4)
-  totalPrice       Decimal @db.Decimal(18, 4)
-  subTotal         Decimal @default(0) @db.Decimal(18, 4)
-  taxAmount        Decimal @default(0) @db.Decimal(18, 4)
-  taxRate          Decimal @default(0) @db.Decimal(18, 4)
-  taxCodeId        String?
-  customAttributes Json?
+  id                       String  @id @default(uuid())
+  orderId                  String
+  productId                String // 关联的产品/模型名称
+  quantity                 Int
+  unitPrice                Decimal @db.Decimal(18, 4)
+  totalPrice               Decimal @db.Decimal(18, 4)
+  subTotal                 Decimal @default(0) @db.Decimal(18, 4)
+  taxAmount                Decimal @default(0) @db.Decimal(18, 4)
+  taxRate                  Decimal @default(0) @db.Decimal(18, 4)
+  taxCodeId                String?
+  customAttributes         Json?
   sourceQuoteVersionItemId String?
 
-  order   Order    @relation(fields: [orderId], references: [id])
-  taxCode TaxCode? @relation(fields: [taxCodeId], references: [id])
+  order                  Order             @relation(fields: [orderId], references: [id])
+  taxCode                TaxCode?          @relation(fields: [taxCodeId], references: [id])
   sourceQuoteVersionItem QuoteVersionItem? @relation(fields: [sourceQuoteVersionItemId], references: [id], onDelete: Restrict)
 
   @@index([sourceQuoteVersionItemId])
@@ -763,12 +767,12 @@ model Product {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  company           Company            @relation(fields: [companyId], references: [id])
-  category          ProductCategory?   @relation(fields: [categoryId], references: [id])
-  material          Material?          @relation(fields: [materialId], references: [id])
-  boms              Bom[]
-  workOrders        WorkOrder[]
-  quoteVersionItems QuoteVersionItem[]
+  company              Company               @relation(fields: [companyId], references: [id])
+  category             ProductCategory?      @relation(fields: [categoryId], references: [id])
+  material             Material?             @relation(fields: [materialId], references: [id])
+  boms                 Bom[]
+  workOrders           WorkOrder[]
+  quoteVersionItems    QuoteVersionItem[]
   engineeringDocuments EngineeringDocument[]
 
   @@unique([companyId, sku])
@@ -908,19 +912,19 @@ model MaterialCost {
 // ==========================================
 
 model FileRecord {
-  id         String   @id @default(uuid())
-  fileName   String
-  fileSize   Int
-  mimeType   String
-  objectKey  String // MinIO object name
-  companyId  String
-  uploaderId String
+  id             String   @id @default(uuid())
+  fileName       String
+  fileSize       Int
+  mimeType       String
+  objectKey      String // MinIO object name
+  companyId      String
+  uploaderId     String
   checksumSha256 String?
-  createdAt  DateTime @default(now())
+  createdAt      DateTime @default(now())
 
-  company  Company @relation(fields: [companyId], references: [id])
-  uploader User    @relation(fields: [uploaderId], references: [id])
-  signedContract SalesContract?
+  company                     Company                      @relation(fields: [companyId], references: [id])
+  uploader                    User                         @relation(fields: [uploaderId], references: [id])
+  signedContract              SalesContract?
   engineeringDocumentRevision EngineeringDocumentRevision?
 }
 
@@ -945,6 +949,7 @@ model EngineeringDocument {
   order                   Order?                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
   revisions               EngineeringDocumentRevision[] @relation("EngineeringDocumentRevisions")
   currentReleasedRevision EngineeringDocumentRevision?  @relation("CurrentReleasedEngineeringRevision", fields: [currentReleasedRevisionId], references: [id], onDelete: Restrict)
+  engineeringChangeOrders EngineeringChangeOrder[]
 
   @@unique([companyId, documentNo])
   @@index([companyId, updatedAt])
@@ -953,12 +958,12 @@ model EngineeringDocument {
 }
 
 model EngineeringDocumentRevision {
-  id                    String   @id @default(uuid())
+  id                    String    @id @default(uuid())
   engineeringDocumentId String
   companyId             String
   revisionNo            Int
-  status                String   @default("DRAFT")
-  fileRecordId          String   @unique
+  status                String    @default("DRAFT")
+  fileRecordId          String    @unique
   checksumSha256        String
   notes                 String?
   createdById           String
@@ -970,16 +975,18 @@ model EngineeringDocumentRevision {
   approvedAt            DateTime?
   releasedAt            DateTime?
   obsoleteAt            DateTime?
-  createdAt             DateTime @default(now())
+  createdAt             DateTime  @default(now())
 
-  engineeringDocument EngineeringDocument  @relation("EngineeringDocumentRevisions", fields: [engineeringDocumentId], references: [id], onDelete: Restrict)
-  company               Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  fileRecord           FileRecord           @relation(fields: [fileRecordId], references: [id], onDelete: Restrict)
-  creator              User                 @relation("EngineeringRevisionCreator", fields: [createdById], references: [id], onDelete: Restrict)
-  reviewer             User?                @relation("EngineeringRevisionReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
-  approver             User?                @relation("EngineeringRevisionApprover", fields: [approvedById], references: [id], onDelete: Restrict)
-  releasedForDocument  EngineeringDocument? @relation("CurrentReleasedEngineeringRevision")
-  workOrderPins        WorkOrderEngineeringRevision[]
+  engineeringDocument EngineeringDocument            @relation("EngineeringDocumentRevisions", fields: [engineeringDocumentId], references: [id], onDelete: Restrict)
+  company             Company                        @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  fileRecord          FileRecord                     @relation(fields: [fileRecordId], references: [id], onDelete: Restrict)
+  creator             User                           @relation("EngineeringRevisionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewer            User?                          @relation("EngineeringRevisionReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  approver            User?                          @relation("EngineeringRevisionApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  releasedForDocument EngineeringDocument?           @relation("CurrentReleasedEngineeringRevision")
+  workOrderPins       WorkOrderEngineeringRevision[]
+  sourceChangeOrders  EngineeringChangeOrder[]       @relation("EngineeringChangeOrderSourceRevision")
+  targetChangeOrders  EngineeringChangeOrder[]       @relation("EngineeringChangeOrderTargetRevision")
 
   @@unique([engineeringDocumentId, revisionNo])
   @@index([companyId, createdAt])
@@ -1122,10 +1129,11 @@ model WorkOrder {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  order   Order        @relation(fields: [orderId], references: [id])
-  product Product      @relation(fields: [productId], references: [id])
-  reports WorkReport[]
-  engineeringRevisionPins WorkOrderEngineeringRevision[]
+  order                    Order                          @relation(fields: [orderId], references: [id])
+  product                  Product                        @relation(fields: [productId], references: [id])
+  reports                  WorkReport[]
+  engineeringRevisionPins  WorkOrderEngineeringRevision[]
+  engineeringChangeImpacts EngineeringChangeImpact[]
 }
 
 model WorkOrderEngineeringRevision {
@@ -1144,6 +1152,59 @@ model WorkOrderEngineeringRevision {
   @@unique([workOrderId, engineeringRevisionId])
   @@index([companyId, createdAt])
   @@index([engineeringRevisionId])
+}
+
+model EngineeringChangeOrder {
+  id                    String    @id @default(uuid())
+  ecoNo                 String
+  engineeringDocumentId String
+  sourceRevisionId      String
+  targetRevisionId      String    @unique
+  companyId             String
+  status                String    @default("DRAFT")
+  reason                String
+  impactAssessment      String
+  materialDisposition   String
+  createdById           String
+  submittedAt           DateTime?
+  approvedById          String?
+  approvedAt            DateTime?
+  rejectedAt            DateTime?
+  approvalComment       String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  engineeringDocument EngineeringDocument         @relation(fields: [engineeringDocumentId], references: [id], onDelete: Restrict)
+  sourceRevision      EngineeringDocumentRevision @relation("EngineeringChangeOrderSourceRevision", fields: [sourceRevisionId], references: [id], onDelete: Restrict)
+  targetRevision      EngineeringDocumentRevision @relation("EngineeringChangeOrderTargetRevision", fields: [targetRevisionId], references: [id], onDelete: Restrict)
+  company             Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  creator             User                        @relation("EngineeringChangeOrderCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  approver            User?                       @relation("EngineeringChangeOrderApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  impacts             EngineeringChangeImpact[]
+
+  @@unique([companyId, ecoNo])
+  @@index([companyId, status, createdAt])
+  @@index([engineeringDocumentId, createdAt])
+  @@index([sourceRevisionId])
+}
+
+model EngineeringChangeImpact {
+  id                       String    @id @default(uuid())
+  engineeringChangeOrderId String
+  workOrderId              String
+  companyId                String
+  decision                 String
+  note                     String?
+  appliedAt                DateTime?
+  createdAt                DateTime  @default(now())
+
+  engineeringChangeOrder EngineeringChangeOrder @relation(fields: [engineeringChangeOrderId], references: [id], onDelete: Restrict)
+  workOrder              WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  company                Company                @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@unique([engineeringChangeOrderId, workOrderId])
+  @@index([companyId, createdAt])
+  @@index([workOrderId])
 }
 
 model WorkReport {

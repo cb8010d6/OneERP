@@ -37,6 +37,25 @@ async function request(path, options = {}, session = {}) {
   return body;
 }
 
+async function expectFailure(path, expectedStatus, options = {}, session = {}) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      ...(session.token ? { Authorization: `Bearer ${session.token}` } : {}),
+      ...(session.companyId ? { 'x-company-id': session.companyId } : {}),
+      ...(options.headers ?? {}),
+    },
+  });
+  if (response.status !== expectedStatus) {
+    const body = await response.text();
+    throw new Error(
+      `${options.method ?? 'GET'} ${path} expected ${expectedStatus}, got ${response.status}: ${body}`,
+    );
+  }
+}
+
 async function login(email, password) {
   const body = await request('/auth/login', {
     method: 'POST',
@@ -183,6 +202,94 @@ if (
   throw new Error('Work order did not retain the released engineering revision');
 }
 
+const secondFile = await upload(
+  designer,
+  `engineering-${suffix}-r02.pdf`,
+  `%PDF-1.4\nControlled engineering drawing R02 ${suffix}\n%%EOF\n`,
+);
+const secondRevision = await request(
+  `/engineering-documents/${document.id}/revisions`,
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      fileRecordId: secondFile.id,
+      notes: '客户尺寸变更 R02',
+    }),
+  },
+  designer,
+);
+await request(
+  `/engineering-documents/revisions/${secondRevision.id}/submit`,
+  { method: 'POST', body: '{}' },
+  designer,
+);
+await request(
+  `/engineering-documents/revisions/${secondRevision.id}/review`,
+  {
+    method: 'POST',
+    body: JSON.stringify({ decision: 'APPROVE', comment: 'R02 校审通过' }),
+  },
+  reviewer,
+);
+await expectFailure(
+  `/engineering-documents/revisions/${secondRevision.id}/release`,
+  409,
+  { method: 'POST', body: '{}' },
+  approver,
+);
+
+const ecoPreview = await request(
+  `/engineering-change-orders/preview/${document.id}/${secondRevision.id}`,
+  {},
+  designer,
+);
+if (!ecoPreview.affectedWorkOrders?.some((item) => item.id === workOrder.id)) {
+  throw new Error('ECO preview did not include the affected work order');
+}
+const eco = await request(
+  `/engineering-change-orders/${document.id}`,
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      targetRevisionId: secondRevision.id,
+      reason: '客户确认尺寸变更',
+      impactAssessment: `在制工单 ${pinnedWorkOrder.workOrderNo} 需要切换 R02`,
+      materialDisposition: '旧版物料隔离，新版复核后继续生产',
+      impacts: [{ workOrderId: workOrder.id, decision: 'SWITCH_NEW' }],
+    }),
+  },
+  designer,
+);
+await request(
+  `/engineering-change-orders/${eco.id}/submit`,
+  { method: 'POST', body: '{}' },
+  designer,
+);
+await request(
+  `/engineering-change-orders/${eco.id}/decision`,
+  { method: 'POST', body: JSON.stringify({ decision: 'APPROVE', comment: '影响评估完整' }) },
+  approver,
+);
+
+const changedDocuments = await request('/engineering-documents', {}, designer);
+const changedDocument = changedDocuments.find((item) => item.id === document.id);
+const oldRevisionAfterEco = changedDocument?.revisions?.find((item) => item.id === revision.id);
+const newRevisionAfterEco = changedDocument?.revisions?.find(
+  (item) => item.id === secondRevision.id,
+);
+const changedWorkOrders = await request('/production/orders?page=1&limit=100', {}, admin);
+const changedWorkOrder = changedWorkOrders.data?.find((item) => item.id === workOrder.id);
+if (
+  changedDocument?.currentReleasedRevisionId !== secondRevision.id ||
+  oldRevisionAfterEco?.status !== 'OBSOLETE' ||
+  newRevisionAfterEco?.status !== 'RELEASED' ||
+  !changedWorkOrder?.engineeringRevisionPins?.some(
+    (pin) => pin.engineeringRevision?.id === secondRevision.id,
+  )
+) {
+  throw new Error('Approved ECO did not release R02 and switch the affected work order');
+}
+
 for (const actor of [designer, reviewer, approver]) {
   await request(
     `/users/${actor.userId}/toggle-active`,
@@ -195,13 +302,16 @@ console.log(
   JSON.stringify({
     passed: true,
     documentNo: released.documentNo,
-    revision: `R${String(releasedRevision.revisionNo).padStart(2, '0')}`,
-    status: releasedRevision.status,
+    revision: `R${String(newRevisionAfterEco.revisionNo).padStart(2, '0')}`,
+    status: newRevisionAfterEco.status,
     checksumVerified: true,
     linkedProductId: released.product?.id ?? null,
     linkedOrderId: released.order?.id ?? null,
     workOrderNo: pinnedWorkOrder.workOrderNo,
     pinnedRevisionVerified: true,
+    directReleaseBlocked: true,
+    ecoNo: eco.ecoNo,
+    ecoApplied: true,
     actorsDistinct: true,
     temporaryUsersDisabled: true,
   }),

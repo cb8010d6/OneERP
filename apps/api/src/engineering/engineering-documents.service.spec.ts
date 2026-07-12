@@ -11,6 +11,7 @@ describe('EngineeringDocumentsService', () => {
     fileRecord: { findFirst: jest.fn() },
     product: { findFirst: jest.fn() },
     order: { findFirst: jest.fn() },
+    workOrder: { count: jest.fn() },
     documentSequence: { upsert: jest.fn() },
     engineeringDocument: {
       create: jest.fn(),
@@ -57,6 +58,7 @@ describe('EngineeringDocumentsService', () => {
     );
     tx.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     tx.engineeringDocument.updateMany.mockResolvedValue({ count: 1 });
+    tx.workOrder.count.mockResolvedValue(0);
   });
 
   it('creates a document with an immutable draft revision and checksum', async () => {
@@ -186,6 +188,27 @@ describe('EngineeringDocumentsService', () => {
       },
       data: { status: 'OBSOLETE' },
     });
+  });
+
+  it('requires an ECO when active work orders still use the released revision', async () => {
+    tx.engineeringDocumentRevision.findFirst.mockResolvedValue({
+      id: 'revision-2',
+      revisionNo: 2,
+      status: 'PENDING_APPROVAL',
+      createdById: 'designer-1',
+      reviewedById: 'reviewer-1',
+      engineeringDocument: {
+        id: 'document-1',
+        companyId: 'company-1',
+        currentReleasedRevisionId: 'revision-1',
+      },
+    });
+    tx.workOrder.count.mockResolvedValue(1);
+
+    await expect(
+      service.releaseRevision('company-1', 'approver-1', 'revision-2'),
+    ).rejects.toThrow('工程变更单');
+    expect(tx.engineeringDocumentRevision.updateMany).not.toHaveBeenCalled();
   });
 
   it('rejects a concurrent state transition', async () => {

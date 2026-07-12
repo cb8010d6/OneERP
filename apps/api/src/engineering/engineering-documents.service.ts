@@ -305,6 +305,25 @@ export class EngineeringDocumentsService {
       ) {
         throw new BadRequestException('批准人必须与设计人、校审人不同');
       }
+      if (revision.engineeringDocument.currentReleasedRevisionId) {
+        const affectedWorkOrders = await tx.workOrder.count({
+          where: {
+            companyId,
+            status: { in: ['PENDING', 'IN_PROGRESS'] },
+            engineeringRevisionPins: {
+              some: {
+                engineeringRevisionId:
+                  revision.engineeringDocument.currentReleasedRevisionId,
+              },
+            },
+          },
+        });
+        if (affectedWorkOrders > 0) {
+          throw new ConflictException(
+            '当前发布版本仍被在制工单使用，请创建工程变更单并完成影响处置',
+          );
+        }
+      }
       const now = new Date();
       const changed = await tx.engineeringDocumentRevision.updateMany({
         where: { id: revision.id, status: 'PENDING_APPROVAL' },
@@ -412,7 +431,13 @@ export class EngineeringDocumentsService {
     const revision = await tx.engineeringDocumentRevision.findFirst({
       where: { id: revisionId, companyId },
       include: {
-        engineeringDocument: { select: { id: true, companyId: true } },
+        engineeringDocument: {
+          select: {
+            id: true,
+            companyId: true,
+            currentReleasedRevisionId: true,
+          },
+        },
       },
     });
     if (!revision) throw new NotFoundException('工程版本不存在或无权访问');
