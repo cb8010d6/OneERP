@@ -32,7 +32,7 @@ export default function SettingsPage() {
           : { id: currentCompanyId, name: t('settingsCompany') },
       );
     }
-  }, [currentCompanyId, companies]);
+  }, [currentCompanyId, companies, t]);
 
   const tabButtonClass = (tab: typeof activeTab) =>
     `flex shrink-0 items-center whitespace-nowrap px-4 py-3 text-sm font-medium sm:px-6 sm:py-4 ${

@@ -51,7 +51,7 @@ export function AsyncSelect({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const blurTimerRef = useRef<number | null>(null);
   const requestSeqRef = useRef(0);
-  const { language, t } = useI18n();
+  const { t } = useI18n();
 
   const modelName = reference.model;
   const labelField = reference.labelField ?? 'name';
@@ -59,7 +59,7 @@ export function AsyncSelect({
 
   const inputPlaceholder = useMemo(() => {
     return placeholder || t('selectPlaceholder');
-  }, [language, placeholder]);
+  }, [placeholder, t]);
 
   useEffect(() => {
     if (!value) {
@@ -105,7 +105,7 @@ export function AsyncSelect({
     return () => {
       cancelled = true;
     };
-  }, [labelField, language, modelName, value, valueField]);
+  }, [labelField, modelName, t, value, valueField]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -151,7 +151,7 @@ export function AsyncSelect({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isOpen, labelField, language, modelName, query, valueField]);
+  }, [isOpen, labelField, modelName, query, t, valueField]);
 
   useEffect(() => {
     return () => {

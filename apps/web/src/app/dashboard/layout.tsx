@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   Factory,
@@ -67,7 +67,7 @@ export default function DashboardLayout({
     (company) => company.id === currentCompanyId,
   );
 
-  const navItems = [
+  const navItems = useMemo(() => [
     { icon: LayoutDashboard, label: t('navOverview'), href: '/dashboard' },
     {
       icon: ShoppingCart,
@@ -123,7 +123,7 @@ export default function DashboardLayout({
       href: '/dashboard/lab/data-grid',
       permission: 'ALL',
     },
-  ];
+  ], [t]);
   const visibleNavItems = navItems.filter((item) =>
     hasPermission(currentPermissions, item.permission),
   );
@@ -167,7 +167,7 @@ export default function DashboardLayout({
       path: pathname,
       label: item?.label || pathname.split('/').slice(-1)[0] || t('workspace'),
     });
-  }, [pathname, language]);
+  }, [navItems, openTab, pathname, t]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

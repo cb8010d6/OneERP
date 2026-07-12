@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Command, Loader2, Mic, MicOff, Sparkles, X } from 'lucide-react';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
 type Message = {
@@ -84,7 +84,7 @@ export function CommandPalette() {
 
   const placeholder = useMemo(
     () => t('aiPlaceholder'),
-    [language],
+    [t],
   );
 
   const SpeechRecognition =
@@ -181,11 +181,11 @@ export function CommandPalette() {
         draft: response.data?.type === 'draft' ? response.data?.draft : undefined,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-    } catch (error: any) {
+    } catch (reason: unknown) {
       const assistantMessage: Message = {
         id: `a-${Date.now()}`,
         role: 'assistant',
-        text: error?.response?.data?.message || t('aiExecuteFailed'),
+        text: readApiError(reason, t('aiExecuteFailed')),
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } finally {
@@ -277,11 +277,11 @@ export function CommandPalette() {
                                   card: confirmResp.data?.card,
                                 };
                                 setMessages((prev) => [...prev, confirmed]);
-                              } catch (error: any) {
+                              } catch (reason: unknown) {
                                 const failed: Message = {
                                   id: `a-${Date.now()}-failed`,
                                   role: 'assistant',
-                                  text: error?.response?.data?.message || t('aiConfirmFailed'),
+                                  text: readApiError(reason, t('aiConfirmFailed')),
                                 };
                                 setMessages((prev) => [...prev, failed]);
                               } finally {

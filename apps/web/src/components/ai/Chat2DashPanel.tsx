@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 
 type ChartPoint = {
   status: string;
@@ -72,8 +72,8 @@ export function Chat2DashPanel() {
       const response = await api.post('/v1/ai/chat2dash', { input: prompt });
       setResult(response.data as Chat2DashResponse);
       setSqlResult(null);
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || '分析失败，请稍后重试。');
+    } catch (reason: unknown) {
+      setError(readApiError(reason, '分析失败，请稍后重试。'));
       setResult(null);
     } finally {
       setLoading(false);
@@ -90,8 +90,8 @@ export function Chat2DashPanel() {
       const response = await api.post('/v1/ai/chat2sql', { input: prompt });
       setSqlResult(response.data as Chat2SqlResponse);
       setResult(null);
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || 'Chat2SQL 查询失败。');
+    } catch (reason: unknown) {
+      setError(readApiError(reason, 'Chat2SQL 查询失败。'));
       setSqlResult(null);
     } finally {
       setLoading(false);

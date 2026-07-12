@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Copy,
@@ -12,7 +12,7 @@ import {
   UserCog,
   UserPlus,
 } from 'lucide-react';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 import { useAuthStore } from '@/store/authStore';
 
@@ -106,7 +106,7 @@ export function EmployeeManagement() {
   const canUpdate = hasPermission(permissions, 'user:update');
   const canReset = hasPermission(permissions, 'user:reset-password');
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!currentCompanyId) return;
     setLoading(true);
     setError('');
@@ -134,16 +134,16 @@ export function EmployeeManagement() {
         ...prev,
         roleId: prev.roleId || fallbackRole?.id || '',
       }));
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('employeeLoadFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('employeeLoadFailed')));
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentCompanyId, t]);
 
   useEffect(() => {
     void load();
-  }, [currentCompanyId]);
+  }, [load]);
 
   const createEmployee = async () => {
     setError('');
@@ -158,8 +158,8 @@ export function EmployeeManagement() {
         password: makePassword(),
       }));
       await load();
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('employeeCreateFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('employeeCreateFailed')));
     }
   };
 
@@ -175,8 +175,8 @@ export function EmployeeManagement() {
       setMessage(t('employeeInviteCreated'));
       setInviteForm((prev) => ({ ...prev, name: '', email: '' }));
       await load();
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('employeeInviteFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('employeeInviteFailed')));
     }
   };
 
@@ -185,8 +185,8 @@ export function EmployeeManagement() {
     try {
       await api.put(`/users/${userId}/role`, { roleId });
       await load();
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('employeeRoleFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('employeeRoleFailed')));
     }
   };
 
@@ -195,8 +195,8 @@ export function EmployeeManagement() {
     try {
       await api.put(`/users/${userId}/toggle-active`);
       await load();
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('employeeActiveFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('employeeActiveFailed')));
     }
   };
 
@@ -206,8 +206,8 @@ export function EmployeeManagement() {
     try {
       await api.post(`/users/${userId}/reset-password`, { password });
       setMessage(`临时密码已重置：${password}`);
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('employeePasswordResetFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('employeePasswordResetFailed')));
     }
   };
 

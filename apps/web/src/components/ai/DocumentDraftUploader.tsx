@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Loader2, UploadCloud } from 'lucide-react';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 
 interface DocumentDraftUploaderProps {
   onDraftReady: (draft: Record<string, unknown>) => void;
@@ -31,8 +31,8 @@ export function DocumentDraftUploader({ onDraftReady }: DocumentDraftUploaderPro
       const draft = (response.data?.draft ?? {}) as Record<string, unknown>;
       onDraftReady(draft);
       setSummary(response.data?.message || '单据解析完成，请确认草稿。');
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || '单据解析失败，请稍后重试。');
+    } catch (reason: unknown) {
+      setError(readApiError(reason, '单据解析失败，请稍后重试。'));
     } finally {
       setLoading(false);
     }
