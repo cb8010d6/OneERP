@@ -1,4 +1,4 @@
-# 销售发货工作台本地 UAT
+# 销售发货工作台受控 UAT
 
 日期：2026-07-13（Asia/Shanghai）
 部署标签：`uat-b13d122`
@@ -20,10 +20,12 @@
 - `npm run compose:config` 通过全部 Compose 配置。
 - Graphify 更新为 3672 nodes、7516 edges、279 communities。
 
-## 本地隔离部署
+## 部署验证
 
-- 远程 UAT SSH 端口持续重置连接，未切换远程 `oneerp_test`。
-- 已启动隔离的本地 PostgreSQL、Redis、API 和 Web 容器，成功应用全部 39 个 migration。
+- 镜像归档大小为 `465472112` 字节，本地与远端 SHA-256 均为 `f2078da7590eee2e527d7a487b90bb5ed8031721530a64751587aa0f5c9626a5`。
+- 远程 `oneerp_test` 已切换到 `IMAGE_TAG=uat-b13d122`；API、Web、PostgreSQL、Redis 和 MinIO 均为 healthy，migration 容器退出码为 0。
+- 远程 API `http://127.0.0.1:18000/api/health` 和 Web `http://127.0.0.1:13000/login` 均返回 HTTP 200。
+- 远程连接中断期间已启动隔离的本地 PostgreSQL、Redis、API 和 Web 回退容器，并成功应用全部 39 个 migration。
 - 本地 API `http://127.0.0.1:18001/api/health` 返回 HTTP 200。
 - 本地 Web `http://127.0.0.1:13001/dashboard/orders/{id}` 返回 HTTP 200。
 - Web `/api/proxy` 到 API 的登录请求成功，返回 access token 和公司上下文。
@@ -32,5 +34,6 @@
 ## 边界
 
 - 当前会话未提供浏览器控制运行时，因此没有把 HTTP、测试或构建结果冒充为视觉截图验收。
-- 远程 SSH 恢复后，仍需把相同标签上传到 `oneerp_test` 并完成一次浏览器视觉检查。
+- 自动交互测试覆盖请求模式和结果呈现，但真实浏览器视觉检查仍待具备浏览器控制运行时后补充。
 - 本地隔离栈仅用于受控界面验收，不代表生产就绪。
+- 远程部署为受控 UAT，不代表已完成生产上线门禁。
