@@ -30,6 +30,7 @@ import { KyselyModule } from './core/prisma/kysely.module';
 import { ConfigValidationModule } from './core/config/config-validation.module';
 import { MetricsModule } from './core/metrics/metrics.module';
 import { PresalesModule } from './presales/presales.module';
+import { EngineeringModule } from './engineering/engineering.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { PresalesModule } from './presales/presales.module';
     PurchaseModule,
     DepartmentsModule,
     PresalesModule,
+    EngineeringModule,
   ],
   controllers: [AppController],
   providers: [

@@ -4,6 +4,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import * as Minio from 'minio';
+import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -47,6 +48,9 @@ export class FilesService {
     // 按公司 ID 将图纸和文件隔离分发到不同目录夹，如 eip-files/CompanyID/2026-03/...
     const extension = file.originalname.split('.').pop();
     const objectName = `${companyId}/${customPath ? customPath + '/' : ''}${Date.now()}-${Math.round(Math.random() * 1e4)}.${extension}`;
+    const checksumSha256 = createHash('sha256')
+      .update(file.buffer)
+      .digest('hex');
 
     try {
       await this.minioClient.putObject(
@@ -66,6 +70,7 @@ export class FilesService {
           objectKey: objectName,
           companyId,
           uploaderId,
+          checksumSha256,
         },
       });
 
@@ -75,6 +80,7 @@ export class FilesService {
         url: objectName,
         fileName: file.originalname,
         size: file.size,
+        checksumSha256,
       };
     } catch (error) {
       this.logger.error(

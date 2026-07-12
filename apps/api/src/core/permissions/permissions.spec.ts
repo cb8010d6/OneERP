@@ -31,3 +31,33 @@ describe('contract approval role templates', () => {
     );
   });
 });
+
+describe('engineering document role templates', () => {
+  it('separates design, review, and approval permissions', () => {
+    expect(rolePermissions('EngineeringDesign')).toContain(
+      'engineeringDocument:create',
+    );
+    expect(rolePermissions('EngineeringDesign')).not.toContain(
+      'engineeringDocument:review',
+    );
+    expect(rolePermissions('EngineeringReview')).toContain(
+      'engineeringDocument:review',
+    );
+    expect(rolePermissions('EngineeringReview')).not.toContain(
+      'engineeringDocument:approve',
+    );
+    expect(rolePermissions('EngineeringApprover')).toContain(
+      'engineeringDocument:approve',
+    );
+  });
+
+  it('keeps readonly users out of engineering write actions', () => {
+    expect(rolePermissions('Readonly')).not.toEqual(
+      expect.arrayContaining([
+        'engineeringDocument:create',
+        'engineeringDocument:review',
+        'engineeringDocument:approve',
+      ]),
+    );
+  });
+});

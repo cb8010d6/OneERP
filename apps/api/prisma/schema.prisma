@@ -73,6 +73,8 @@ model Company {
   salesContracts             SalesContract[]
   salesContractVersions      SalesContractVersion[]
   salesContractApprovals     SalesContractApproval[]
+  engineeringDocuments       EngineeringDocument[]
+  engineeringDocumentRevisions EngineeringDocumentRevision[]
 }
 
 enum PartnerType {
@@ -142,6 +144,10 @@ model User {
   ownedContracts        SalesContract[]       @relation("ContractOwner")
   contractApprovals     SalesContractApproval[] @relation("ContractApprovalActor")
   signedContracts       SalesContract[]       @relation("ContractSigner")
+  createdEngineeringDocuments EngineeringDocument[] @relation("EngineeringDocumentCreator")
+  createdEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionCreator")
+  reviewedEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionReviewer")
+  approvedEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionApprover")
 }
 
 model Role {
@@ -515,6 +521,7 @@ model Order {
   invoices    Invoice[]
   salesContract SalesContract?        @relation(fields: [salesContractId], references: [id], onDelete: Restrict)
   contractVersion SalesContractVersion? @relation(fields: [contractVersionId], references: [id], onDelete: Restrict)
+  engineeringDocuments EngineeringDocument[]
 
   @@unique([companyId, sourceBatchKey])
   @@index([companyId, status])
@@ -760,6 +767,7 @@ model Product {
   boms              Bom[]
   workOrders        WorkOrder[]
   quoteVersionItems QuoteVersionItem[]
+  engineeringDocuments EngineeringDocument[]
 
   @@unique([companyId, sku])
   @@index([companyId, categoryId])
@@ -905,11 +913,74 @@ model FileRecord {
   objectKey  String // MinIO object name
   companyId  String
   uploaderId String
+  checksumSha256 String?
   createdAt  DateTime @default(now())
 
   company  Company @relation(fields: [companyId], references: [id])
   uploader User    @relation(fields: [uploaderId], references: [id])
   signedContract SalesContract?
+  engineeringDocumentRevision EngineeringDocumentRevision?
+}
+
+model EngineeringDocument {
+  id                        String   @id @default(uuid())
+  documentNo                String
+  title                     String
+  documentType              String
+  externalNo                String?
+  productId                 String?
+  orderId                   String?
+  currentRevisionNo         Int      @default(1)
+  currentReleasedRevisionId String?  @unique
+  companyId                 String
+  createdById               String
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  company                 Company                       @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  creator                 User                          @relation("EngineeringDocumentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  product                 Product?                      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  order                   Order?                        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  revisions               EngineeringDocumentRevision[] @relation("EngineeringDocumentRevisions")
+  currentReleasedRevision EngineeringDocumentRevision?  @relation("CurrentReleasedEngineeringRevision", fields: [currentReleasedRevisionId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, documentNo])
+  @@index([companyId, updatedAt])
+  @@index([companyId, productId])
+  @@index([companyId, orderId])
+}
+
+model EngineeringDocumentRevision {
+  id                    String   @id @default(uuid())
+  engineeringDocumentId String
+  companyId             String
+  revisionNo            Int
+  status                String   @default("DRAFT")
+  fileRecordId          String   @unique
+  checksumSha256        String
+  notes                 String?
+  createdById           String
+  submittedAt           DateTime?
+  reviewedById          String?
+  reviewedAt            DateTime?
+  reviewComment         String?
+  approvedById          String?
+  approvedAt            DateTime?
+  releasedAt            DateTime?
+  obsoleteAt            DateTime?
+  createdAt             DateTime @default(now())
+
+  engineeringDocument EngineeringDocument  @relation("EngineeringDocumentRevisions", fields: [engineeringDocumentId], references: [id], onDelete: Restrict)
+  company               Company              @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  fileRecord           FileRecord           @relation(fields: [fileRecordId], references: [id], onDelete: Restrict)
+  creator              User                 @relation("EngineeringRevisionCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  reviewer             User?                @relation("EngineeringRevisionReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
+  approver             User?                @relation("EngineeringRevisionApprover", fields: [approvedById], references: [id], onDelete: Restrict)
+  releasedForDocument  EngineeringDocument? @relation("CurrentReleasedEngineeringRevision")
+
+  @@unique([engineeringDocumentId, revisionNo])
+  @@index([companyId, createdAt])
+  @@index([engineeringDocumentId, status])
 }
 
 model InventoryTransaction {
