@@ -172,8 +172,8 @@ select 'EventDlq.status' as field, status, count(*) from "EventDlq" group by sta
 
 涉及方法：`createStockMove`、`postSaleOrderShipment`、`reverseSaleOrderShipment`、`reversePurchaseInbound`
 
-- 事务边界：`createStockMove` 使用 `$transaction` 包装 `executeStockMove`；销售发货逐行事务；冲销循环调用库存移动。
+- 事务边界：`createStockMove` 使用 `$transaction` 包装 `executeStockMove`；销售发货逐行事务；销售出库冲销和采购入库冲销已改为整单 `Serializable` 事务。
 - 事件发布：出库后发送 `inventory.stock_depleted`。
 - 幂等性：部分流程通过 referenceNo/count 跳过重复冲销或重复入库。
-- 失败回滚：单个事务内可回滚；循环场景可能出现部分成功，需要逐流程确认。
-- 结论：暂不拆。应先为 `executeStockMove` 建立更强的单元测试和事务边界说明，再做任何服务拆分。
+- 失败回滚：销售和采购冲销的全部反向流水、状态/退货单和事务内 outbox 任一步失败时整单回滚；事件仅在提交后派发。销售发货的逐行事务边界仍需独立评估。
+- 结论：冲销循环部分成功风险已由 `351ab57` / `52c5c50` 收口并完成真实 UAT。仍暂不拆 InventoryService；应继续增强 `executeStockMove` 和销售发货的事务测试，再做服务拆分。
