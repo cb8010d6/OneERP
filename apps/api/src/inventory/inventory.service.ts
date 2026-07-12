@@ -791,6 +791,7 @@ export class InventoryService {
             quantity: true,
             sourceLocationId: true,
           },
+          orderBy: { createdAt: 'asc' },
         });
 
         if (!shippedMoves.length) {
@@ -926,6 +927,7 @@ export class InventoryService {
             quantity: true,
             destLocationId: true,
           },
+          orderBy: { createdAt: 'asc' },
         });
 
         if (!inboundMoves.length) {
