@@ -79,6 +79,7 @@ model Company {
   engineeringChangeOrders       EngineeringChangeOrder[]
   engineeringChangeImpacts      EngineeringChangeImpact[]
   workReports                   WorkReport[]
+  workReportReversals           WorkReportReversal[]
 }
 
 enum PartnerType {
@@ -139,6 +140,7 @@ model User {
   purchaseReceipts                PurchaseReceipt[]              @relation("UserPurchaseReceipts")
   FileRecord                      FileRecord[]
   WorkReport                      WorkReport[]
+  workReportReversals             WorkReportReversal[]           @relation("WorkReportReversedBy")
   auditLogs                       AuditLog[]
   createdInvitations              UserInvitation[]               @relation("InvitationCreatedBy")
   acceptedInvitations             UserInvitation[]               @relation("InvitationAcceptedBy")
@@ -1220,13 +1222,33 @@ model WorkReport {
   inventoryTransactionIds Json     @default("[]")
   reportDate              DateTime @default(now())
 
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
-  worker    User      @relation(fields: [workerId], references: [id], onDelete: Restrict)
-  company   Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  workOrder WorkOrder           @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  worker    User                @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  company   Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  reversal  WorkReportReversal?
 
   @@unique([companyId, idempotencyKey])
   @@index([companyId, reportDate])
   @@index([workOrderId, reportDate])
+}
+
+model WorkReportReversal {
+  id                      String   @id @default(uuid())
+  workReportId            String   @unique
+  companyId               String
+  idempotencyKey          String
+  payloadHash             String
+  reason                  String
+  reversedById            String
+  inventoryTransactionIds Json     @default("[]")
+  createdAt               DateTime @default(now())
+
+  workReport WorkReport @relation(fields: [workReportId], references: [id], onDelete: Restrict)
+  company    Company    @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  reversedBy User       @relation("WorkReportReversedBy", fields: [reversedById], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, createdAt])
 }
 
 model Invoice {

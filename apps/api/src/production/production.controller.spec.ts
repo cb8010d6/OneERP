@@ -15,6 +15,7 @@ describe('ProductionController', () => {
     getMaterialAvailability: jest.fn(),
     createPurchaseOrderFromShortages: jest.fn(),
     submitWorkReport: jest.fn(),
+    reverseWorkReport: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -174,6 +175,28 @@ describe('ProductionController', () => {
         'wo1',
         'u1',
         { idempotencyKey: 'report-1', goodQty: 10, defectQty: 1 },
+      );
+    });
+  });
+
+  describe('reverseWorkReport', () => {
+    it('should reverse a work report', async () => {
+      const expected = { id: 'reversal-1', idempotentReplay: false };
+      mockProductionService.reverseWorkReport.mockResolvedValue(expected);
+
+      const result = await controller.reverseWorkReport(
+        'c1',
+        { id: 'u1', email: 'test@example.com' },
+        'wr1',
+        { idempotencyKey: 'reverse-1', reason: '数量录入错误' },
+      );
+
+      expect(result).toEqual(expected);
+      expect(mockProductionService.reverseWorkReport).toHaveBeenCalledWith(
+        'c1',
+        'wr1',
+        'u1',
+        { idempotencyKey: 'reverse-1', reason: '数量录入错误' },
       );
     });
   });

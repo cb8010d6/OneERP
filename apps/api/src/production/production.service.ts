@@ -14,6 +14,7 @@ import {
   CreateWorkOrderDto,
   CreateWorkReportDto,
   GenerateWorkOrdersFromOrderDto,
+  ReverseWorkReportDto,
 } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
@@ -336,7 +337,10 @@ export class ProductionService {
           order: {
             select: { orderNo: true, partner: { select: { name: true } } },
           },
-          reports: true,
+          reports: {
+            orderBy: { reportDate: 'desc' },
+            include: { reversal: true },
+          },
           engineeringRevisionPins: {
             include: {
               engineeringRevision: {
@@ -855,6 +859,196 @@ export class ProductionService {
       }
     }
     throw new ConflictException('并发报工冲突，请重试');
+  }
+
+  async reverseWorkReport(
+    companyId: string,
+    workReportId: string,
+    operatorId: string,
+    dto: ReverseWorkReportDto,
+  ) {
+    const normalized = {
+      workReportId,
+      reason: dto.reason.trim(),
+    };
+    const payloadHash = createHash('sha256')
+      .update(JSON.stringify(normalized))
+      .digest('hex');
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const result = await this.prisma.$transaction(
+          async (tx) => {
+            const existing = await tx.workReportReversal.findUnique({
+              where: {
+                companyId_idempotencyKey: {
+                  companyId,
+                  idempotencyKey: dto.idempotencyKey,
+                },
+              },
+            });
+            if (existing) {
+              if (
+                existing.workReportId !== workReportId ||
+                existing.payloadHash !== payloadHash
+              ) {
+                throw new ConflictException('冲销幂等键已用于不同的请求内容');
+              }
+              return {
+                reversal: existing,
+                eventIds: [] as string[],
+                idempotentReplay: true,
+              };
+            }
+
+            const report = await tx.workReport.findFirst({
+              where: { id: workReportId, companyId },
+              include: { reversal: true, workOrder: true },
+            });
+            if (!report)
+              throw new NotFoundException('报工记录不存在或无权访问');
+            if (report.reversal) {
+              throw new ConflictException('该报工记录已经冲销');
+            }
+            const originalIds = Array.isArray(report.inventoryTransactionIds)
+              ? (report.inventoryTransactionIds as string[])
+              : [];
+            if (report.goodQty > 0 && originalIds.length === 0) {
+              throw new ConflictException(
+                '历史报工缺少库存流水快照，不能自动冲销',
+              );
+            }
+            const originalTransactions = await tx.inventoryTransaction.findMany(
+              {
+                where: { id: { in: originalIds }, companyId },
+              },
+            );
+            if (originalTransactions.length !== originalIds.length) {
+              throw new ConflictException('原报工库存流水不完整，不能冲销');
+            }
+            const byId = new Map(
+              originalTransactions.map((transaction) => [
+                transaction.id,
+                transaction,
+              ]),
+            );
+            const reversedTransactionIds: string[] = [];
+            const eventIds: string[] = [];
+            for (const originalId of [...originalIds].reverse()) {
+              const original = byId.get(originalId);
+              if (!original) throw new ConflictException('原库存流水不存在');
+              const reversalData =
+                original.type === 'OUTBOUND'
+                  ? {
+                      materialId: original.materialId,
+                      destLocationId: original.sourceLocationId ?? undefined,
+                      quantity: Number(original.quantity),
+                      batchNo: original.batchNo ?? undefined,
+                    }
+                  : original.type === 'INBOUND'
+                    ? {
+                        materialId: original.materialId,
+                        sourceLocationId: original.destLocationId ?? undefined,
+                        quantity: Number(original.quantity),
+                        batchNo: original.batchNo ?? undefined,
+                      }
+                    : null;
+              if (!reversalData) {
+                throw new ConflictException('报工包含不支持自动冲销的调拨流水');
+              }
+              const transaction =
+                await this.inventoryService.createStockMoveInTransaction(
+                  tx,
+                  companyId,
+                  {
+                    ...reversalData,
+                    referenceNo: `PRODUCTION-REPORT-REV-${report.id}-${dto.idempotencyKey}`,
+                    documentType: 'WORK_REPORT_REVERSAL',
+                    documentId: report.id,
+                    note: `报工冲销：${report.id} · ${normalized.reason}`,
+                  },
+                  operatorId,
+                );
+              reversedTransactionIds.push(transaction.id);
+              const event =
+                await this.inventoryService.queueStockDepletedInTransaction(
+                  tx,
+                  companyId,
+                  transaction,
+                  operatorId,
+                );
+              if (event) eventIds.push(event.id);
+            }
+
+            const newActual = Math.max(
+              0,
+              report.workOrder.actualQty - report.goodQty,
+            );
+            const otherActiveReports = await tx.workReport.count({
+              where: {
+                workOrderId: report.workOrderId,
+                id: { not: report.id },
+                reversal: null,
+              },
+            });
+            const newStatus =
+              newActual === 0 && otherActiveReports === 0
+                ? 'PENDING'
+                : 'IN_PROGRESS';
+            const reversal = await tx.workReportReversal.create({
+              data: {
+                workReportId: report.id,
+                companyId,
+                idempotencyKey: dto.idempotencyKey,
+                payloadHash,
+                reason: normalized.reason,
+                reversedById: operatorId,
+                inventoryTransactionIds:
+                  reversedTransactionIds as Prisma.InputJsonValue,
+              },
+            });
+            await tx.workOrder.update({
+              where: { id: report.workOrderId },
+              data: { actualQty: newActual, status: newStatus },
+            });
+            await tx.auditLog.create({
+              data: {
+                companyId,
+                userId: operatorId,
+                entity: 'workReport',
+                entityId: report.id,
+                action: 'WORK_REPORT_REVERSED',
+                details: {
+                  reversalId: reversal.id,
+                  idempotencyKey: dto.idempotencyKey,
+                  reason: normalized.reason,
+                  originalInventoryTransactionIds: originalIds,
+                  reversalInventoryTransactionIds: reversedTransactionIds,
+                },
+              },
+            });
+            return { reversal, eventIds, idempotentReplay: false };
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        await this.inventoryService.dispatchQueuedEvents(result.eventIds);
+        return {
+          ...result.reversal,
+          inventoryTransactionIds: Array.isArray(
+            result.reversal.inventoryTransactionIds,
+          )
+            ? (result.reversal.inventoryTransactionIds as string[])
+            : [],
+          idempotentReplay: result.idempotentReplay,
+        };
+      } catch (error) {
+        const retryable =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          ['P2002', 'P2034'].includes(error.code);
+        if (!retryable || attempt === 3) throw error;
+      }
+    }
+    throw new ConflictException('并发冲销冲突，请重试');
   }
 
   private async postManufacturingInventoryInTransaction(

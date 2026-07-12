@@ -19,6 +19,7 @@ import {
   CreateWorkOrderDto,
   CreateWorkReportDto,
   GenerateWorkOrdersFromOrderDto,
+  ReverseWorkReportDto,
 } from './dto/production.dto';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import type { JwtUserPayload } from '../core/http/request.types';
@@ -104,6 +105,23 @@ export class ProductionController {
     return this.productionService.submitWorkReport(
       companyId,
       workOrderId,
+      user.id,
+      dto,
+    );
+  }
+
+  @Post('reports/:id/reverse')
+  @RequirePermissions(Permission.ProductionPost)
+  @ApiOperation({ summary: '冲销生产报工及其库存流水' })
+  reverseWorkReport(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('id') workReportId: string,
+    @Body() dto: ReverseWorkReportDto,
+  ) {
+    return this.productionService.reverseWorkReport(
+      companyId,
+      workReportId,
       user.id,
       dto,
     );

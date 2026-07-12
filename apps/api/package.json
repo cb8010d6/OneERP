@@ -100,6 +100,7 @@
     "typescript-eslint": "^8.20.0"
   },
   "jest": {
+    "maxWorkers": 2,
     "moduleFileExtensions": [
       "js",
       "json",

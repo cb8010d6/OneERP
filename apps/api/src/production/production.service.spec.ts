@@ -21,7 +21,11 @@ type MockPrisma = {
   workReport: {
     create: jest.Mock;
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    count: jest.Mock;
   };
+  workReportReversal: { findUnique: jest.Mock; create: jest.Mock };
+  inventoryTransaction: { findMany: jest.Mock };
   product: {
     findFirst: jest.Mock;
     findMany: jest.Mock;
@@ -49,7 +53,11 @@ type MockTx = {
   workReport: {
     create: jest.Mock;
     findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    count: jest.Mock;
   };
+  workReportReversal: { findUnique: jest.Mock; create: jest.Mock };
+  inventoryTransaction: { findMany: jest.Mock };
   workOrder: {
     update: jest.Mock;
     create: jest.Mock;
@@ -80,7 +88,11 @@ describe('ProductionService', () => {
     workReport: {
       create: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      count: jest.fn(),
     },
+    workReportReversal: { findUnique: jest.fn(), create: jest.fn() },
+    inventoryTransaction: { findMany: jest.fn() },
     product: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -119,7 +131,11 @@ describe('ProductionService', () => {
     workReport: {
       create: jest.fn(),
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      count: jest.fn(),
     },
+    workReportReversal: { findUnique: jest.fn(), create: jest.fn() },
+    inventoryTransaction: { findMany: jest.fn() },
     workOrder: {
       update: jest.fn(),
       create: jest.fn(),
@@ -151,6 +167,8 @@ describe('ProductionService', () => {
     prisma.engineeringDocumentRevision.findMany.mockResolvedValue([]);
     tx.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     tx.workReport.findUnique.mockResolvedValue(null);
+    tx.workReportReversal.findUnique.mockResolvedValue(null);
+    tx.workReport.count.mockResolvedValue(0);
     tx.workOrder.findFirst.mockImplementation((args) =>
       prisma.workOrder.findFirst(args),
     );
@@ -1005,6 +1023,138 @@ describe('ProductionService', () => {
           defectQty: 0,
         }),
       ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('reverseWorkReport', () => {
+    const report = {
+      id: 'wr1',
+      workOrderId: 'wo1',
+      companyId: 'c1',
+      goodQty: 1,
+      inventoryTransactionIds: ['issue-1', 'receipt-1'],
+      reversal: null,
+      workOrder: {
+        id: 'wo1',
+        actualQty: 1,
+        plannedQty: 2,
+        status: 'IN_PROGRESS',
+      },
+    };
+
+    beforeEach(() => {
+      tx.workReport.findFirst.mockResolvedValue(report);
+      tx.inventoryTransaction.findMany.mockResolvedValue([
+        {
+          id: 'issue-1',
+          companyId: 'c1',
+          type: 'OUTBOUND',
+          materialId: 'raw-1',
+          sourceLocationId: 'raw-loc',
+          destLocationId: null,
+          quantity: 1,
+          batchNo: 'RAW-B1',
+        },
+        {
+          id: 'receipt-1',
+          companyId: 'c1',
+          type: 'INBOUND',
+          materialId: 'fg-1',
+          sourceLocationId: null,
+          destLocationId: 'fg-loc',
+          quantity: 1,
+          batchNo: 'FG-B1',
+        },
+      ]);
+      tx.workReportReversal.create.mockResolvedValue({
+        id: 'reversal-1',
+        workReportId: 'wr1',
+        inventoryTransactionIds: ['reverse-fg', 'reverse-raw'],
+      });
+    });
+
+    it('reverses inventory and restores work order progress atomically', async () => {
+      const result = await service.reverseWorkReport('c1', 'wr1', 'u1', {
+        idempotencyKey: 'reverse-1',
+        reason: '数量录入错误',
+      });
+
+      expect(result).toMatchObject({
+        id: 'reversal-1',
+        idempotentReplay: false,
+      });
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenNthCalledWith(
+        1,
+        tx,
+        'c1',
+        expect.objectContaining({
+          materialId: 'fg-1',
+          sourceLocationId: 'fg-loc',
+          quantity: 1,
+          batchNo: 'FG-B1',
+        }),
+        'u1',
+      );
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenNthCalledWith(
+        2,
+        tx,
+        'c1',
+        expect.objectContaining({
+          materialId: 'raw-1',
+          destLocationId: 'raw-loc',
+          quantity: 1,
+          batchNo: 'RAW-B1',
+        }),
+        'u1',
+      );
+      expect(tx.workOrder.update).toHaveBeenCalledWith({
+        where: { id: 'wo1' },
+        data: { actualQty: 0, status: 'PENDING' },
+      });
+    });
+
+    it('replays the same reversal idempotency key without new stock moves', async () => {
+      const normalized = { workReportId: 'wr1', reason: '数量录入错误' };
+      tx.workReportReversal.findUnique.mockResolvedValue({
+        id: 'reversal-existing',
+        workReportId: 'wr1',
+        payloadHash: createHash('sha256')
+          .update(JSON.stringify(normalized))
+          .digest('hex'),
+        inventoryTransactionIds: ['reverse-1', 'reverse-2'],
+      });
+
+      await expect(
+        service.reverseWorkReport('c1', 'wr1', 'u1', {
+          idempotencyKey: 'reverse-replay',
+          reason: '数量录入错误',
+        }),
+      ).resolves.toMatchObject({
+        id: 'reversal-existing',
+        idempotentReplay: true,
+      });
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('does not create a reversal when reverse inventory posting fails', async () => {
+      inventoryService.createStockMoveInTransaction.mockRejectedValueOnce(
+        new BadRequestException('成品库存不足，无法冲销'),
+      );
+
+      await expect(
+        service.reverseWorkReport('c1', 'wr1', 'u1', {
+          idempotencyKey: 'reverse-fail',
+          reason: '数量录入错误',
+        }),
+      ).rejects.toThrow('成品库存不足');
+      expect(tx.workReportReversal.create).not.toHaveBeenCalled();
+      expect(tx.workOrder.update).not.toHaveBeenCalled();
     });
   });
 });

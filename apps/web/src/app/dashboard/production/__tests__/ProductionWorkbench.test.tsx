@@ -176,4 +176,80 @@ describe("ProductionWorkbench engineering revisions", () => {
       );
     });
   });
+
+  it("shows report history and keeps the reversal key across a retry", async () => {
+    mockGet.mockImplementation((path: string) => {
+      if (path === "/production/orders") {
+        return Promise.resolve({
+          data: {
+            data: [
+              {
+                id: "work-order-1",
+                workOrderNo: "WO-001",
+                plannedQty: 2,
+                actualQty: 1,
+                status: "IN_PROGRESS",
+                order: { orderNo: "ORD-001", partner: { name: "示例客户" } },
+                reports: [
+                  {
+                    id: "report-1",
+                    goodQty: 1,
+                    defectQty: 0,
+                    reportDate: "2026-07-12T12:00:00.000Z",
+                    reversal: null,
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      }
+      if (path === "/inventory/locations") return Promise.resolve({ data: [] });
+      if (path === "/production/material-availability") {
+        return Promise.resolve({
+          data: {
+            rows: [],
+            shortageCount: 0,
+            totalOpenWorkOrders: 1,
+            missingBomWorkOrders: [],
+          },
+        });
+      }
+      if (path === "/orders") return Promise.resolve({ data: { data: [] } });
+      if (path === "/purchase/supplier-options")
+        return Promise.resolve({ data: [] });
+      return Promise.reject(new Error(`Unexpected GET ${path}`));
+    });
+    mockPost
+      .mockRejectedValueOnce({
+        response: { data: { message: "冲销网络中断" } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          id: "reversal-1",
+          idempotentReplay: true,
+          inventoryTransactionIds: ["r1", "r2"],
+        },
+      });
+    const prompt = jest.spyOn(window, "prompt").mockReturnValue("数量录入错误");
+    const user = userEvent.setup();
+    render(<ProductionWorkbench />);
+
+    expect(await screen.findByText(/良品 1 · 不良 0/)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "冲销" }));
+    expect(await screen.findByText("冲销网络中断")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "冲销" }));
+
+    await waitFor(() => {
+      const reversalCalls = mockPost.mock.calls.filter(
+        ([path]) => path === "/production/reports/report-1/reverse",
+      );
+      expect(reversalCalls).toHaveLength(2);
+      expect(reversalCalls[0]?.[1].reason).toBe("数量录入错误");
+      expect(reversalCalls[1]?.[1].idempotencyKey).toBe(
+        reversalCalls[0]?.[1].idempotencyKey,
+      );
+    });
+    prompt.mockRestore();
+  });
 });

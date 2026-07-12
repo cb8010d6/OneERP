@@ -28,6 +28,9 @@ function getConnectSrc() {
 }
 
 const nextConfig: NextConfig = {
+  experimental: {
+    cpus: Number(process.env.NEXT_BUILD_CPUS ?? 2),
+  },
   turbopack: {
     root: resolve(appDir, "..", ".."),
   },

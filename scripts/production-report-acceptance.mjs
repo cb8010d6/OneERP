@@ -270,6 +270,75 @@ if (
   );
 }
 
+const reversalPayload = {
+  idempotencyKey: crypto.randomUUID(),
+  reason: 'UAT 验证错误报工冲销',
+};
+const reversal = await request(
+  `/production/reports/${second.id}/reverse`,
+  { method: 'POST', body: JSON.stringify(reversalPayload) },
+  admin,
+);
+currentWorkOrder = await readWorkOrder(admin, workOrder.id);
+const stockAfterReversal = {
+  raw: await ledgerQty(admin, rawMaterial.id, rawLocation.id),
+  finished: await ledgerQty(admin, finishedMaterial.id, finishedLocation.id),
+};
+if (
+  reversal.idempotentReplay ||
+  reversal.inventoryTransactionIds?.length !== 2 ||
+  currentWorkOrder?.actualQty !== 1 ||
+  currentWorkOrder?.status !== 'IN_PROGRESS' ||
+  stockAfterReversal.raw !== 4 ||
+  stockAfterReversal.finished !== 1
+) {
+  throw new Error(
+    `Work report reversal did not restore stock and progress: ${JSON.stringify({ currentWorkOrder, stockAfterReversal })}`,
+  );
+}
+const reversalReplay = await request(
+  `/production/reports/${second.id}/reverse`,
+  { method: 'POST', body: JSON.stringify(reversalPayload) },
+  admin,
+);
+if (!reversalReplay.idempotentReplay || reversalReplay.id !== reversal.id) {
+  throw new Error('Work report reversal replay was not idempotent');
+}
+const reversalConflict = await request(
+  `/production/reports/${second.id}/reverse`,
+  {
+    method: 'POST',
+    allowFailure: true,
+    body: JSON.stringify({ ...reversalPayload, reason: '不同冲销原因' }),
+  },
+  admin,
+);
+if (reversalConflict.status !== 409) {
+  throw new Error(`Different-payload reversal expected 409, got ${reversalConflict.status}`);
+}
+
+await request(
+  `/production/orders/${workOrder.id}/report`,
+  {
+    method: 'POST',
+    body: JSON.stringify({ ...firstPayload, idempotencyKey: crypto.randomUUID() }),
+  },
+  admin,
+);
+currentWorkOrder = await readWorkOrder(admin, workOrder.id);
+const stockAfterRepost = {
+  raw: await ledgerQty(admin, rawMaterial.id, rawLocation.id),
+  finished: await ledgerQty(admin, finishedMaterial.id, finishedLocation.id),
+};
+if (
+  currentWorkOrder?.actualQty !== 2 ||
+  currentWorkOrder?.status !== 'COMPLETED' ||
+  stockAfterRepost.raw !== 3 ||
+  stockAfterRepost.finished !== 2
+) {
+  throw new Error('Re-report after reversal did not complete the work order');
+}
+
 console.log(
   JSON.stringify({
     passed: true,
@@ -283,6 +352,11 @@ console.log(
     finalStatus: currentWorkOrder.status,
     finalRawQty: finalStock.raw,
     finalFinishedQty: finalStock.finished,
+    reversalInventoryTransactions: reversal.inventoryTransactionIds.length,
+    reversalReplay: true,
+    reversalDifferentPayloadConflict: true,
+    stockRestoredAfterReversal: true,
+    repostAfterReversal: true,
   }),
 );
 

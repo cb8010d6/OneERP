@@ -71,6 +71,20 @@ export class CreateWorkReportDto {
   batchNo?: string;
 }
 
+export class ReverseWorkReportDto {
+  @ApiProperty({ description: '客户端生成的冲销幂等键，同一次重试保持不变' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  idempotencyKey!: string;
+
+  @ApiProperty({ description: '冲销原因' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  reason!: string;
+}
+
 export class GenerateWorkOrdersFromOrderDto {
   @ApiPropertyOptional({
     description: '已存在同销售订单/产品工单时是否跳过，默认 true',

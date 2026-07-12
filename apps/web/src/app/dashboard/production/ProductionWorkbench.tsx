@@ -35,6 +35,17 @@ type WorkOrder = {
       };
     };
   }>;
+  reports?: Array<{
+    id: string;
+    goodQty: number;
+    defectQty: number;
+    reportDate: string;
+    reversal?: {
+      id: string;
+      reason: string;
+      createdAt: string;
+    } | null;
+  }>;
 };
 
 type ReleasedEngineeringDocument = {
@@ -169,6 +180,8 @@ export function ProductionWorkbench() {
   const [drafts, setDrafts] = useState<Record<string, ReportDraft>>({});
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
+  const [reversingId, setReversingId] = useState<string | null>(null);
+  const [reversalKeys, setReversalKeys] = useState<Record<string, string>>({});
   const [generating, setGenerating] = useState(false);
   const [creatingPurchaseOrder, setCreatingPurchaseOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -373,6 +386,48 @@ export function ProductionWorkbench() {
       setError(message || t("productionReportFailed"));
     } finally {
       setSubmittingId(null);
+    }
+  };
+
+  const reverseReport = async (
+    report: NonNullable<WorkOrder["reports"]>[number],
+  ) => {
+    const reason = window.prompt("请输入报工冲销原因")?.trim();
+    if (!reason) return;
+    const idempotencyKey = reversalKeys[report.id] ?? crypto.randomUUID();
+    setReversalKeys((current) => ({ ...current, [report.id]: idempotencyKey }));
+    try {
+      setReversingId(report.id);
+      setError(null);
+      const response = await api.post(
+        `/production/reports/${report.id}/reverse`,
+        {
+          idempotencyKey,
+          reason,
+        },
+      );
+      setMessage(
+        response.data?.idempotentReplay
+          ? "重复冲销请求已安全返回原结果"
+          : `报工已冲销，生成 ${Number(
+              response.data?.inventoryTransactionIds?.length ?? 0,
+            )} 笔反向库存流水`,
+      );
+      setReversalKeys((current) => {
+        const next = { ...current };
+        delete next[report.id];
+        return next;
+      });
+      await load();
+    } catch (reason) {
+      const message =
+        reason && typeof reason === "object" && "response" in reason
+          ? (reason as { response?: { data?: { message?: string } } }).response
+              ?.data?.message
+          : undefined;
+      setError(message || "报工冲销失败");
+    } finally {
+      setReversingId(null);
     }
   };
 
@@ -902,6 +957,51 @@ export function ProductionWorkbench() {
                                   .title
                               }
                             </p>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {order.reports?.length ? (
+                      <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                        <p className="text-[11px] font-semibold text-slate-700">
+                          报工历史
+                        </p>
+                        <div className="mt-1 space-y-1.5">
+                          {order.reports.slice(0, 5).map((report) => (
+                            <div
+                              key={report.id}
+                              className="flex items-center justify-between gap-2 rounded-md bg-white px-2 py-1.5 text-[11px]"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-slate-700">
+                                  良品 {report.goodQty} · 不良{" "}
+                                  {report.defectQty} ·{" "}
+                                  {new Date(report.reportDate).toLocaleString()}
+                                </p>
+                                {report.reversal ? (
+                                  <p className="truncate text-red-600">
+                                    已冲销：{report.reversal.reason}
+                                  </p>
+                                ) : null}
+                              </div>
+                              {!report.reversal ? (
+                                <button
+                                  type="button"
+                                  disabled={reversingId === report.id}
+                                  onClick={() => void reverseReport(report)}
+                                  className="shrink-0 rounded border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                >
+                                  {reversingId === report.id
+                                    ? "冲销中"
+                                    : "冲销"}
+                                </button>
+                              ) : (
+                                <span className="shrink-0 rounded bg-red-50 px-2 py-1 text-red-700">
+                                  已冲销
+                                </span>
+                              )}
+                            </div>
                           ))}
                         </div>
                       </div>
