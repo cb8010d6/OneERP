@@ -58,6 +58,24 @@ async function uploadSignedPdf(contractNo) {
   return body;
 }
 
+async function requestExpectFailure(path, options = {}) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'x-company-id': companyId,
+      ...(options.headers ?? {}),
+    },
+  });
+  const body = await response.json().catch(() => null);
+  if (response.ok) {
+    throw new Error(`${options.method ?? 'GET'} ${path} unexpectedly succeeded`);
+  }
+  return { status: response.status, body };
+}
+
 const login = await request('/auth/login', {
   method: 'POST',
   body: JSON.stringify({ email, password }),
@@ -177,6 +195,52 @@ const activated = await request(`/presales/contracts/${contract.id}/activate`, {
 if (activated?.status !== 'ACTIVE') {
   throw new Error('Signed contract did not reach ACTIVE');
 }
+const sourceItemId = accepted?.items?.[0]?.id;
+if (!sourceItemId) throw new Error('Accepted quote did not return source item id');
+const firstBatchPayload = {
+  sourceBatchKey: `${contract.contractNo}-BATCH-01`,
+  items: [{ quoteVersionItemId: sourceItemId, quantity: 1 }],
+};
+const firstBatch = await request(`/presales/contracts/${contract.id}/order-batches`, {
+  method: 'POST',
+  body: JSON.stringify(firstBatchPayload),
+});
+if (firstBatch?.idempotentReplay || !firstBatch?.order?.id) {
+  throw new Error('First contract order batch was not created');
+}
+const replayedBatch = await request(`/presales/contracts/${contract.id}/order-batches`, {
+  method: 'POST',
+  body: JSON.stringify(firstBatchPayload),
+});
+if (
+  replayedBatch?.idempotentReplay !== true ||
+  replayedBatch?.order?.id !== firstBatch.order.id
+) {
+  throw new Error('Repeated sourceBatchKey did not return the original order');
+}
+const secondBatch = await request(`/presales/contracts/${contract.id}/order-batches`, {
+  method: 'POST',
+  body: JSON.stringify({
+    sourceBatchKey: `${contract.contractNo}-BATCH-02`,
+    items: [{ quoteVersionItemId: sourceItemId, quantity: 1 }],
+  }),
+});
+if (!secondBatch?.order?.id || secondBatch.order.id === firstBatch.order.id) {
+  throw new Error('Second contract order batch was not created independently');
+}
+const overAllocated = await requestExpectFailure(
+  `/presales/contracts/${contract.id}/order-batches`,
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      sourceBatchKey: `${contract.contractNo}-BATCH-03`,
+      items: [{ quoteVersionItemId: sourceItemId, quantity: 1 }],
+    }),
+  },
+);
+if (overAllocated.status !== 400) {
+  throw new Error(`Over-allocation returned ${overAllocated.status}, expected 400`);
+}
 
 console.log(JSON.stringify({
   passed: true,
@@ -190,6 +254,12 @@ console.log(JSON.stringify({
     versionNo: contractV1.versionNo,
     versionStatus: 'ACTIVE',
     signedFileId: signedFile.id,
+    orderBatches: [
+      firstBatch.order.orderNo,
+      secondBatch.order.orderNo,
+    ],
+    idempotentReplay: replayedBatch.idempotentReplay,
+    overAllocationStatus: overAllocated.status,
     approvalPath: [
       submitted.status,
       salesApproved.status,

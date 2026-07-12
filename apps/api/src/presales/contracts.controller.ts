@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentCompany } from '../core/decorators/current-company.decorator';
 import { CurrentUser } from '../core/decorators/current-user.decorator';
@@ -11,6 +11,8 @@ import { Permission } from '../core/permissions/permissions';
 import { CreateContractDto } from './dto/create-contract.dto';
 import { ContractDecisionDto } from './dto/contract-decision.dto';
 import { SignContractDto } from './dto/sign-contract.dto';
+import { ContractOrderService } from '../orders/contract-order.service';
+import { CreateContractOrderBatchDto } from '../orders/dto/create-contract-order-batch.dto';
 import { PresalesService } from './presales.service';
 
 @ApiTags('销售合同 (Contracts)')
@@ -18,7 +20,10 @@ import { PresalesService } from './presales.service';
 @UseGuards(JwtAuthGuard, TenantGuard, PermissionsGuard)
 @Controller('presales/contracts')
 export class ContractsController {
-  constructor(private readonly presalesService: PresalesService) {}
+  constructor(
+    private readonly presalesService: PresalesService,
+    private readonly contractOrderService: ContractOrderService,
+  ) {}
 
   @Post('from-quote-version/:versionId')
   @RequirePermissions(Permission.ContractCreate)
@@ -131,6 +136,33 @@ export class ContractsController {
       companyId,
       user.id,
       contractId,
+    );
+  }
+
+  @Get(':contractId/order-conversion-preview')
+  @RequirePermissions(Permission.ContractRead)
+  @ApiOperation({ summary: '查询合同剩余可转单数量' })
+  orderConversionPreview(
+    @CurrentCompany() companyId: string,
+    @Param('contractId') contractId: string,
+  ) {
+    return this.contractOrderService.getPreview(companyId, contractId);
+  }
+
+  @Post(':contractId/order-batches')
+  @RequirePermissions(Permission.ContractConvertOrder)
+  @ApiOperation({ summary: '按稳定批次键将生效合同转换为销售订单' })
+  createOrderBatch(
+    @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
+    @Param('contractId') contractId: string,
+    @Body() data: CreateContractOrderBatchDto,
+  ) {
+    return this.contractOrderService.createBatch(
+      companyId,
+      user.id,
+      contractId,
+      data,
     );
   }
 }

@@ -8,6 +8,7 @@ import {
   Loader2,
   Plus,
   Search,
+  ShoppingCart,
   Trash2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -67,6 +68,23 @@ interface RequirementListResponse {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+interface ContractOrderPreview {
+  contractId: string;
+  contractNo: string;
+  status: string;
+  items: Array<{
+    quoteVersionItemId: string;
+    productId: string;
+    sku: string;
+    name: string;
+    uom: string;
+    unitPrice: string | number;
+    contractedQuantity: string | number;
+    allocatedQuantity: string | number;
+    remainingQuantity: string | number;
+  }>;
 }
 
 const STATUS_OPTIONS = [
@@ -146,6 +164,13 @@ export function RequirementWorkbench() {
     contractNo: string;
   } | null>(null);
   const [signedFile, setSignedFile] = useState<File | null>(null);
+  const [orderBatchOpen, setOrderBatchOpen] = useState(false);
+  const [orderPreview, setOrderPreview] =
+    useState<ContractOrderPreview | null>(null);
+  const [orderBatchKey, setOrderBatchKey] = useState('');
+  const [orderBatchQuantities, setOrderBatchQuantities] = useState<
+    Record<string, string>
+  >({});
 
   const fetchRequirements = useCallback(async () => {
     setLoading(true);
@@ -485,6 +510,73 @@ export function RequirementWorkbench() {
     }
   };
 
+  const openOrderBatch = async (contract: {
+    id: string;
+    contractNo: string;
+  }) => {
+    setQuoteActionBusy(`${contract.id}:preview`);
+    try {
+      const response = await api.get<ContractOrderPreview>(
+        `/presales/contracts/${contract.id}/order-conversion-preview`,
+      );
+      const preview = response.data;
+      setOrderPreview(preview);
+      setOrderBatchKey(`${contract.contractNo}-BATCH-01`);
+      setOrderBatchQuantities(
+        Object.fromEntries(
+          preview.items.map((item) => [
+            item.quoteVersionItemId,
+            String(item.remainingQuantity),
+          ]),
+        ),
+      );
+      setOrderBatchOpen(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '转单信息加载失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
+  const submitOrderBatch = async () => {
+    if (!orderPreview || !orderBatchKey.trim()) {
+      toast.error('请填写稳定批次键');
+      return;
+    }
+    const items = orderPreview.items
+      .map((item) => ({
+        quoteVersionItemId: item.quoteVersionItemId,
+        quantity: Number(orderBatchQuantities[item.quoteVersionItemId] ?? 0),
+      }))
+      .filter((item) => item.quantity > 0);
+    if (!items.length || items.some((item) => !Number.isInteger(item.quantity))) {
+      toast.error('请填写至少一条正整数转单数量');
+      return;
+    }
+    setQuoteActionBusy(`${orderPreview.contractId}:order-batch`);
+    try {
+      const response = await api.post<{
+        order: { orderNo: string };
+        idempotentReplay: boolean;
+      }>(`/presales/contracts/${orderPreview.contractId}/order-batches`, {
+        sourceBatchKey: orderBatchKey.trim(),
+        items,
+      });
+      toast.success(
+        response.data.idempotentReplay
+          ? `重复请求已返回原订单 ${response.data.order.orderNo}`
+          : `销售订单 ${response.data.order.orderNo} 已创建`,
+      );
+      setOrderBatchOpen(false);
+      setOrderPreview(null);
+      await fetchRequirements();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '合同转单失败');
+    } finally {
+      setQuoteActionBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-5 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
@@ -586,6 +678,7 @@ export function RequirementWorkbench() {
                         onSubmitContract={submitContractApproval}
                         onSignContract={openContractSigning}
                         onActivateContract={activateContract}
+                        onCreateOrderBatch={openOrderBatch}
                         permissions={permissions}
                       />
                     ) : null}
@@ -989,6 +1082,77 @@ export function RequirementWorkbench() {
       </Sheet>
 
       <Sheet
+        open={orderBatchOpen}
+        title="创建销售订单批次"
+        onClose={() => setOrderBatchOpen(false)}
+      >
+        <div className="space-y-5">
+          <div className="border-b border-slate-200 pb-4">
+            <p className="font-mono text-sm font-bold text-blue-700">
+              {orderPreview?.contractNo}
+            </p>
+          </div>
+          <FormField label="稳定批次键" htmlFor="contract-order-batch-key">
+            <input
+              id="contract-order-batch-key"
+              value={orderBatchKey}
+              onChange={(event) => setOrderBatchKey(event.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 font-mono text-sm"
+            />
+          </FormField>
+          <div className="space-y-3">
+            {orderPreview?.items.map((item) => (
+              <div
+                key={item.quoteVersionItemId}
+                className="grid gap-3 border-t border-slate-200 pt-3 sm:grid-cols-[1fr_150px]"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-900">
+                    {item.sku} · {item.name}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    合同 {item.contractedQuantity} · 已转 {item.allocatedQuantity}{' '}
+                    · 剩余 {item.remainingQuantity} {item.uom}
+                  </p>
+                </div>
+                <FormField
+                  label="本批数量"
+                  htmlFor={`order-batch-qty-${item.quoteVersionItemId}`}
+                >
+                  <input
+                    id={`order-batch-qty-${item.quoteVersionItemId}`}
+                    type="number"
+                    min="0"
+                    max={Number(item.remainingQuantity)}
+                    step="1"
+                    value={
+                      orderBatchQuantities[item.quoteVersionItemId] ?? '0'
+                    }
+                    onChange={(event) =>
+                      setOrderBatchQuantities((current) => ({
+                        ...current,
+                        [item.quoteVersionItemId]: event.target.value,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                  />
+                </FormField>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={Boolean(quoteActionBusy)}
+            onClick={() => void submitOrderBatch()}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 font-semibold text-white disabled:opacity-50"
+          >
+            <ShoppingCart className="h-4 w-4" />
+            {quoteActionBusy ? '正在创建...' : '创建销售订单'}
+          </button>
+        </div>
+      </Sheet>
+
+      <Sheet
         open={Boolean(actionMode && selected)}
         title={actionMode === 'close' ? '标记丢单' : '添加跟进'}
         onClose={() => setActionMode(null)}
@@ -1056,6 +1220,7 @@ function QuoteSummary({
   onSubmitContract,
   onSignContract,
   onActivateContract,
+  onCreateOrderBatch,
   permissions,
 }: {
   quote: NonNullable<RequirementListItem['quotes']>[number];
@@ -1074,6 +1239,7 @@ function QuoteSummary({
   onSubmitContract: (contractId: string) => Promise<void>;
   onSignContract: (contract: { id: string; contractNo: string }) => void;
   onActivateContract: (contractId: string) => Promise<void>;
+  onCreateOrderBatch: (contract: { id: string; contractNo: string }) => void;
   permissions: string[];
 }) {
   const version = quote.versions[0];
@@ -1161,6 +1327,18 @@ function QuoteSummary({
             label="生效合同"
             disabled={isBusy}
             onClick={() => void onActivateContract(contract.id)}
+          />
+        ) : null}
+        {contract?.status === 'ACTIVE' && can('contract:convert-order') ? (
+          <QuoteActionButton
+            label="创建订单批次"
+            disabled={isBusy}
+            onClick={() =>
+              onCreateOrderBatch({
+                id: contract.id,
+                contractNo: contract.contractNo,
+              })
+            }
           />
         ) : null}
         {version.status === 'DRAFT' ? (

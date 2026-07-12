@@ -367,6 +367,7 @@ model QuoteVersionItem {
   quoteVersion QuoteVersion @relation(fields: [quoteVersionId], references: [id], onDelete: Cascade)
   company      Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
   product      Product      @relation(fields: [productId], references: [id])
+  orderItems   OrderItem[]
 
   @@index([companyId, quoteVersionId])
   @@index([companyId, productId])
@@ -399,6 +400,7 @@ model SalesContract {
   signedBy     User?                  @relation("ContractSigner", fields: [signedById], references: [id])
   versions     SalesContractVersion[]
   approvals    SalesContractApproval[]
+  orders       Order[]
 
   @@unique([companyId, contractNo])
   @@index([companyId, partnerId, updatedAt])
@@ -446,6 +448,7 @@ model SalesContractVersion {
 
   contract SalesContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
   company  Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  orders   Order[]
 
   @@unique([contractId, versionNo])
   @@index([companyId, status, updatedAt])
@@ -495,6 +498,10 @@ model Order {
   customAttributes Json?
   expectedDate     DateTime? // 预计交付日期
   notes            String? // 备注
+  salesContractId  String?
+  contractVersionId String?
+  sourceBatchKey   String?
+  sourceBatchHash  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -506,9 +513,13 @@ model Order {
   items       OrderItem[]
   workOrders  WorkOrder[]
   invoices    Invoice[]
+  salesContract SalesContract?        @relation(fields: [salesContractId], references: [id], onDelete: Restrict)
+  contractVersion SalesContractVersion? @relation(fields: [contractVersionId], references: [id], onDelete: Restrict)
 
+  @@unique([companyId, sourceBatchKey])
   @@index([companyId, status])
   @@index([companyId, createdAt])
+  @@index([salesContractId, createdAt])
 }
 
 model OrderItem {
@@ -523,9 +534,13 @@ model OrderItem {
   taxRate          Decimal @default(0) @db.Decimal(18, 4)
   taxCodeId        String?
   customAttributes Json?
+  sourceQuoteVersionItemId String?
 
   order   Order    @relation(fields: [orderId], references: [id])
   taxCode TaxCode? @relation(fields: [taxCodeId], references: [id])
+  sourceQuoteVersionItem QuoteVersionItem? @relation(fields: [sourceQuoteVersionItemId], references: [id], onDelete: Restrict)
+
+  @@index([sourceQuoteVersionItemId])
 }
 
 // ==========================================

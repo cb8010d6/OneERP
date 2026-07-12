@@ -7,6 +7,7 @@ function rolePermissions(name: string) {
 describe('contract approval role templates', () => {
   it('separates approval stages by business role', () => {
     expect(rolePermissions('Sales')).toContain('contract:submit');
+    expect(rolePermissions('Sales')).toContain('contract:convert-order');
     expect(rolePermissions('Sales')).not.toContain('contract:approve-sales');
     expect(rolePermissions('SalesManager')).toContain('contract:approve-sales');
     expect(rolePermissions('SalesManager')).toEqual(
@@ -25,6 +26,7 @@ describe('contract approval role templates', () => {
         'contract:approve-sales',
         'contract:review-finance',
         'contract:review-business',
+        'contract:convert-order',
       ]),
     );
   });

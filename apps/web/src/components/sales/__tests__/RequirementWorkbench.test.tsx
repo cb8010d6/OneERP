@@ -213,4 +213,109 @@ describe('RequirementWorkbench', () => {
       );
     });
   });
+
+  it('creates an order batch from the active contract preview', async () => {
+    mockGet.mockImplementation((url: string) =>
+      Promise.resolve(
+        url.includes('order-conversion-preview')
+          ? {
+              data: {
+                contractId: 'contract-1',
+                contractNo: 'CT-2026-000003',
+                status: 'ACTIVE',
+                items: [
+                  {
+                    quoteVersionItemId: 'quote-item-1',
+                    productId: 'product-1',
+                    sku: 'P-001',
+                    name: '设备零件',
+                    uom: 'pcs',
+                    unitPrice: '100',
+                    contractedQuantity: '10',
+                    allocatedQuantity: '4',
+                    remainingQuantity: '6',
+                  },
+                ],
+              },
+            }
+          : {
+              data: {
+                data: [requirementWithContract('ACTIVE')],
+                total: 1,
+                page: 1,
+                limit: 100,
+                totalPages: 1,
+              },
+            },
+      ),
+    );
+    mockPost.mockResolvedValue({
+      data: {
+        order: { orderNo: 'ORD-2026-COMPAN-000001' },
+        idempotentReplay: false,
+      },
+    });
+    const user = userEvent.setup();
+    render(<RequirementWorkbench />);
+
+    await user.click(await screen.findByText('创建订单批次'));
+    expect(screen.getByLabelText('稳定批次键')).toHaveValue(
+      'CT-2026-000003-BATCH-01',
+    );
+    const quantity = screen.getByLabelText('本批数量');
+    await user.clear(quantity);
+    await user.type(quantity, '2');
+    await user.click(screen.getByRole('button', { name: '创建销售订单' }));
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledWith(
+        '/presales/contracts/contract-1/order-batches',
+        {
+          sourceBatchKey: 'CT-2026-000003-BATCH-01',
+          items: [{ quoteVersionItemId: 'quote-item-1', quantity: 2 }],
+        },
+      );
+    });
+  });
 });
+
+function requirementWithContract(status: string) {
+  return {
+    id: 'requirement-1',
+    requirementNo: 'REQ-2026-000003',
+    status: 'QUOTING',
+    sourceChannel: '客户来电',
+    summary: '生效合同',
+    estimatedAmount: 100000,
+    expectedCloseDate: null,
+    nextFollowUpAt: null,
+    closeReason: null,
+    updatedAt: '2026-07-12T00:00:00.000Z',
+    partner: { id: 'partner-1', name: '示例客户' },
+    owner: { id: 'owner-1', name: '销售员', email: 'sales@example.com' },
+    quotes: [
+      {
+        id: 'quote-1',
+        quoteNo: 'QT-2026-000003',
+        currentVersionNo: 2,
+        versions: [
+          {
+            id: 'version-2',
+            versionNo: 2,
+            status: 'ACCEPTED',
+            currencyCode: 'CNY',
+            total: 100000,
+            validUntil: '2026-08-01T00:00:00.000Z',
+            contract: {
+              id: 'contract-1',
+              contractNo: 'CT-2026-000003',
+              status,
+              currentVersionNo: 1,
+              signedFileId: 'file-1',
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
