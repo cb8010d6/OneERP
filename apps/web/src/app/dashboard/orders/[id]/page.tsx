@@ -66,6 +66,17 @@ interface FulfillmentAvailability {
   }>;
 }
 
+interface OrderTimelineEvent {
+  id: string;
+  action: string;
+  createdAt: string;
+  details?: unknown;
+  user?: {
+    name?: string | null;
+    email?: string | null;
+  } | null;
+}
+
 const statusMap: Record<string, { label: string; color: string }> = {
   DRAFT: { label: "草稿", color: "bg-gray-100 text-gray-800" },
   PENDING: { label: "待处理", color: "bg-yellow-100 text-yellow-800" },
@@ -104,7 +115,7 @@ export default function OrderDetailPage() {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [fulfillmentAvailability, setFulfillmentAvailability] =
     useState<FulfillmentAvailability | null>(null);
-  const [timeline, setTimeline] = useState<any[]>([]);
+  const [timeline, setTimeline] = useState<OrderTimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -112,7 +123,7 @@ export default function OrderDetailPage() {
       try {
         const res = await api.get(`/orders/${params.id}`);
         setOrder(res.data);
-      } catch (err: any) {
+      } catch {
         toast.error("加载订单详情失败");
         router.push("/dashboard/orders");
       } finally {
@@ -147,7 +158,7 @@ export default function OrderDetailPage() {
       try {
         const res = await api.get(`/orders/${params.id}/timeline`);
         setTimeline(res.data?.events || []);
-      } catch (err) {
+      } catch {
         setTimeline([]);
       }
     };
@@ -169,7 +180,7 @@ export default function OrderDetailPage() {
       await api.post(`/v1/workflow/order/${params.id}/transition`, { action });
       toast.success("状态更新成功");
       setOrder((prev) => (prev ? { ...prev, status: newStatus } : null));
-    } catch (err) {
+    } catch {
       toast.error("状态更新失败");
     }
   };
@@ -574,7 +585,7 @@ export default function OrderDetailPage() {
                     <p className="mt-1 text-xs text-gray-600">
                       {event.user?.name || event.user?.email || "系统"}
                     </p>
-                    {event.details && (
+                    {event.details !== undefined && event.details !== null && (
                       <pre className="mt-2 overflow-auto rounded bg-white p-2 text-[11px] text-gray-600">
                         {JSON.stringify(event.details, null, 2)}
                       </pre>
