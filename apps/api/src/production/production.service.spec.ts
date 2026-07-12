@@ -32,6 +32,9 @@ type MockPrisma = {
   purchaseOrderLine: {
     findMany: jest.Mock;
   };
+  engineeringDocumentRevision: {
+    findMany: jest.Mock;
+  };
   $transaction: jest.Mock;
 };
 
@@ -45,6 +48,9 @@ type MockTx = {
   };
   order: {
     update: jest.Mock;
+  };
+  auditLog: {
+    create: jest.Mock;
   };
 };
 
@@ -80,6 +86,9 @@ describe('ProductionService', () => {
     purchaseOrderLine: {
       findMany: jest.fn(),
     },
+    engineeringDocumentRevision: {
+      findMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -102,6 +111,9 @@ describe('ProductionService', () => {
     order: {
       update: jest.fn(),
     },
+    auditLog: {
+      create: jest.fn(),
+    },
   };
 
   let service: ProductionService;
@@ -117,6 +129,8 @@ describe('ProductionService', () => {
     prisma.bom.findMany.mockResolvedValue([]);
     prisma.stockQuant.findMany.mockResolvedValue([]);
     prisma.purchaseOrderLine.findMany.mockResolvedValue([]);
+    prisma.engineeringDocumentRevision.findMany.mockResolvedValue([]);
+    tx.auditLog.create.mockResolvedValue({ id: 'audit-1' });
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
       inventoryService as unknown as ConstructorParameters<
@@ -134,7 +148,12 @@ describe('ProductionService', () => {
 
   describe('createWorkOrder', () => {
     it('should create a work order when order exists', async () => {
-      const order = { id: 'o1', companyId: 'c1' };
+      const order = {
+        id: 'o1',
+        companyId: 'c1',
+        salesId: 'sales-1',
+        items: [{ productId: 'p1' }],
+      };
       const workOrder = {
         id: 'wo1',
         workOrderNo: 'WO-123',
@@ -145,7 +164,18 @@ describe('ProductionService', () => {
         companyId: 'c1',
       };
       prisma.order.findFirst.mockResolvedValue(order);
-      prisma.workOrder.create.mockResolvedValue(workOrder);
+      prisma.product.findFirst.mockResolvedValue({ id: 'p1', companyId: 'c1' });
+      prisma.engineeringDocumentRevision.findMany.mockResolvedValue([
+        {
+          id: 'revision-1',
+          engineeringDocument: {
+            productId: 'p1',
+            orderId: 'o1',
+            currentReleasedRevisionId: 'revision-1',
+          },
+        },
+      ]);
+      tx.workOrder.create.mockResolvedValue(workOrder);
 
       const result: {
         id: string;
@@ -159,6 +189,7 @@ describe('ProductionService', () => {
         orderId: 'o1',
         productId: 'p1',
         plannedQty: 100,
+        engineeringRevisionIds: ['revision-1'],
       })) as unknown as {
         id: string;
         workOrderNo: string;
@@ -177,16 +208,25 @@ describe('ProductionService', () => {
           status: string;
           companyId: string;
           workOrderNo: string;
+          engineeringRevisionPins: {
+            create: Array<{
+              engineeringRevisionId: string;
+              companyId: string;
+              pinnedById: string;
+            }>;
+          };
         };
       };
 
-      const createCalls = prisma.workOrder.create.mock
-        .calls as unknown as Array<[CreateCall]>;
+      const createCalls = tx.workOrder.create.mock.calls as unknown as Array<
+        [CreateCall]
+      >;
       const createCall = createCalls[0]?.[0];
 
       expect(result).toEqual(workOrder);
       expect(prisma.order.findFirst).toHaveBeenCalledWith({
         where: { id: 'o1', companyId: 'c1' },
+        include: { items: true },
       });
       expect(createCall.data.orderId).toBe('o1');
       expect(createCall.data.productId).toBe('p1');
@@ -194,6 +234,13 @@ describe('ProductionService', () => {
       expect(createCall.data.status).toBe('PENDING');
       expect(createCall.data.companyId).toBe('c1');
       expect(createCall.data.workOrderNo).toMatch(/^WO-/);
+      expect(createCall.data.engineeringRevisionPins.create).toEqual([
+        {
+          engineeringRevisionId: 'revision-1',
+          companyId: 'c1',
+          pinnedById: 'sales-1',
+        },
+      ]);
     });
 
     it('should throw NotFoundException when order not found', async () => {
@@ -204,6 +251,7 @@ describe('ProductionService', () => {
           orderId: 'nonexistent',
           productId: 'p1',
           plannedQty: 100,
+          engineeringRevisionIds: ['revision-1'],
         }),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
@@ -214,6 +262,7 @@ describe('ProductionService', () => {
       prisma.order.findFirst.mockResolvedValue({
         id: 'order-1',
         orderNo: 'ORD-001',
+        salesId: 'sales-1',
         status: 'SUBMITTED',
         items: [
           { productId: 'product-1', quantity: 2 },
@@ -229,6 +278,24 @@ describe('ProductionService', () => {
       prisma.bom.findMany.mockResolvedValue([
         { productId: 'product-1' },
         { productId: 'product-2' },
+      ]);
+      prisma.engineeringDocumentRevision.findMany.mockResolvedValue([
+        {
+          id: 'revision-1',
+          engineeringDocument: {
+            productId: 'product-1',
+            orderId: 'order-1',
+            currentReleasedRevisionId: 'revision-1',
+          },
+        },
+        {
+          id: 'revision-2',
+          engineeringDocument: {
+            productId: 'product-2',
+            orderId: 'order-1',
+            currentReleasedRevisionId: 'revision-2',
+          },
+        },
       ]);
       tx.workOrder.create
         .mockResolvedValueOnce({
@@ -253,15 +320,30 @@ describe('ProductionService', () => {
       const result = await service.generateWorkOrdersFromSalesOrder(
         'c1',
         'order-1',
-        {},
+        { engineeringRevisionIds: ['revision-1', 'revision-2'] },
       );
 
       expect(result.created).toHaveLength(2);
       const workOrderCreateCalls = tx.workOrder.create.mock.calls as Array<
-        [{ data: { productId: string; plannedQty: number } }]
+        [
+          {
+            data: {
+              productId: string;
+              plannedQty: number;
+              engineeringRevisionPins: {
+                create: Array<{ engineeringRevisionId: string }>;
+              };
+            };
+          },
+        ]
       >;
       expect(workOrderCreateCalls[0]?.[0].data.productId).toBe('product-1');
       expect(workOrderCreateCalls[0]?.[0].data.plannedQty).toBe(5);
+      expect(
+        workOrderCreateCalls[0]?.[0].data.engineeringRevisionPins.create,
+      ).toEqual([
+        expect.objectContaining({ engineeringRevisionId: 'revision-1' }),
+      ]);
       expect(tx.order.update).toHaveBeenCalledWith({
         where: { id: 'order-1' },
         data: { status: 'IN_PRODUCTION' },
@@ -272,6 +354,7 @@ describe('ProductionService', () => {
       prisma.order.findFirst.mockResolvedValue({
         id: 'order-1',
         orderNo: 'ORD-001',
+        salesId: 'sales-1',
         status: 'SUBMITTED',
         items: [{ productId: 'product-1', quantity: 2 }],
         workOrders: [],
@@ -282,7 +365,9 @@ describe('ProductionService', () => {
       prisma.bom.findMany.mockResolvedValue([]);
 
       await expect(
-        service.generateWorkOrdersFromSalesOrder('c1', 'order-1', {}),
+        service.generateWorkOrdersFromSalesOrder('c1', 'order-1', {
+          engineeringRevisionIds: ['revision-1'],
+        }),
       ).rejects.toThrow('未配置默认 BOM');
     });
   });

@@ -15,7 +15,9 @@ const adminPassword = process.env.INIT_ADMIN_PASSWORD ?? env.INIT_ADMIN_PASSWORD
 const productId = args.get('product-id');
 const orderId = args.get('order-id');
 if (!adminEmail || !adminPassword) throw new Error('INIT_ADMIN_EMAIL/INIT_ADMIN_PASSWORD are required');
-if (!productId && !orderId) throw new Error('--product-id or --order-id is required');
+if (!productId || !orderId) {
+  throw new Error('--product-id and --order-id are required');
+}
 
 async function request(path, options = {}, session = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -158,6 +160,29 @@ if (
   throw new Error('Released revision did not retain the uploaded checksum and identity');
 }
 
+const workOrder = await request(
+  '/production/orders',
+  {
+    method: 'POST',
+    body: JSON.stringify({
+      orderId,
+      productId,
+      plannedQty: 1,
+      engineeringRevisionIds: [revision.id],
+    }),
+  },
+  admin,
+);
+const workOrders = await request('/production/orders?page=1&limit=100', {}, admin);
+const pinnedWorkOrder = workOrders.data?.find((item) => item.id === workOrder.id);
+if (
+  !pinnedWorkOrder?.engineeringRevisionPins?.some(
+    (pin) => pin.engineeringRevision?.id === revision.id,
+  )
+) {
+  throw new Error('Work order did not retain the released engineering revision');
+}
+
 for (const actor of [designer, reviewer, approver]) {
   await request(
     `/users/${actor.userId}/toggle-active`,
@@ -175,6 +200,8 @@ console.log(
     checksumVerified: true,
     linkedProductId: released.product?.id ?? null,
     linkedOrderId: released.order?.id ?? null,
+    workOrderNo: pinnedWorkOrder.workOrderNo,
+    pinnedRevisionVerified: true,
     actorsDistinct: true,
     temporaryUsersDisabled: true,
   }),

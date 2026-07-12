@@ -24,6 +24,30 @@ type WorkOrder = {
     orderNo?: string;
     partner?: { name?: string };
   };
+  engineeringRevisionPins?: Array<{
+    engineeringRevision: {
+      id: string;
+      revisionNo: number;
+      status: string;
+      engineeringDocument: {
+        documentNo: string;
+        title: string;
+      };
+    };
+  }>;
+};
+
+type ReleasedEngineeringDocument = {
+  id: string;
+  documentNo: string;
+  title: string;
+  product?: { id: string; sku: string; name: string } | null;
+  currentReleasedRevision: {
+    id: string;
+    revisionNo: number;
+    status: string;
+    fileRecord: { fileName: string };
+  };
 };
 
 type SalesOrder = {
@@ -131,6 +155,11 @@ export function ProductionWorkbench() {
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [selectedSalesOrderId, setSelectedSalesOrderId] = useState('');
+  const [releasedDocuments, setReleasedDocuments] = useState<
+    ReleasedEngineeringDocument[]
+  >([]);
+  const [selectedRevisionIds, setSelectedRevisionIds] = useState<string[]>([]);
+  const [loadingEngineeringDocs, setLoadingEngineeringDocs] = useState(false);
   const [locations, setLocations] = useState<Location[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState('');
@@ -197,6 +226,44 @@ export function ProductionWorkbench() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!selectedSalesOrderId) {
+      setReleasedDocuments([]);
+      setSelectedRevisionIds([]);
+      return;
+    }
+    let cancelled = false;
+    const loadReleasedDocuments = async () => {
+      setLoadingEngineeringDocs(true);
+      try {
+        const response = await api.get<ReleasedEngineeringDocument[]>(
+          `/engineering-documents/released-for-order/${selectedSalesOrderId}`,
+        );
+        if (cancelled) return;
+        setReleasedDocuments(response.data);
+        setSelectedRevisionIds(
+          response.data.map((document) => document.currentReleasedRevision.id),
+        );
+      } catch (reason) {
+        if (cancelled) return;
+        setReleasedDocuments([]);
+        setSelectedRevisionIds([]);
+        const message =
+          reason && typeof reason === 'object' && 'response' in reason
+            ? (reason as { response?: { data?: { message?: string } } })
+                .response?.data?.message
+            : undefined;
+        setError(message || '已发布工程版本加载失败');
+      } finally {
+        if (!cancelled) setLoadingEngineeringDocs(false);
+      }
+    };
+    void loadReleasedDocuments();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSalesOrderId]);
+
   const grouped = useMemo(() => {
     return statuses.map((status) => ({
       status,
@@ -233,7 +300,10 @@ export function ProductionWorkbench() {
       setMessage(null);
       const response = await api.post(
         `/production/orders/from-sales-order/${selectedSalesOrderId}`,
-        { skipExisting: true },
+        {
+          skipExisting: true,
+          engineeringRevisionIds: selectedRevisionIds,
+        },
       );
       const createdCount = Number(response.data?.created?.length ?? 0);
       const skippedCount = Number(response.data?.skipped?.length ?? 0);
@@ -378,11 +448,76 @@ export function ProductionWorkbench() {
                 </option>
               ))}
             </select>
+            <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs font-semibold text-slate-700">
+                  工单固定工程版本
+                </p>
+                <span className="text-xs text-slate-500">
+                  已选 {selectedRevisionIds.length}/{releasedDocuments.length}
+                </span>
+              </div>
+              {loadingEngineeringDocs ? (
+                <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  加载已发布版本...
+                </div>
+              ) : releasedDocuments.length === 0 ? (
+                <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  当前订单没有适用的已发布工程图纸，需先在工程文档工作台完成校审和发布。
+                </div>
+              ) : (
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {releasedDocuments.map((document) => {
+                    const revisionId = document.currentReleasedRevision.id;
+                    const checked = selectedRevisionIds.includes(revisionId);
+                    return (
+                      <label
+                        key={document.id}
+                        className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 bg-white p-2"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) =>
+                            setSelectedRevisionIds((current) =>
+                              event.target.checked
+                                ? [...new Set([...current, revisionId])]
+                                : current.filter((id) => id !== revisionId),
+                            )
+                          }
+                          className="mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-mono text-xs font-semibold text-blue-700">
+                            {document.documentNo} · R
+                            {String(
+                              document.currentReleasedRevision.revisionNo,
+                            ).padStart(2, '0')}
+                          </span>
+                          <span className="mt-0.5 block truncate text-xs text-slate-600">
+                            {document.title}
+                            {document.product
+                              ? ` · ${document.product.sku}`
+                              : ' · 订单级文档'}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
           <button
             type="button"
             onClick={() => void generateWorkOrders()}
-            disabled={!selectedSalesOrderId || generating}
+            disabled={
+              !selectedSalesOrderId ||
+              selectedRevisionIds.length === 0 ||
+              loadingEngineeringDocs ||
+              generating
+            }
             className="inline-flex items-center justify-center gap-2 self-end rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
           >
             {generating ? (
@@ -722,6 +857,30 @@ export function ProductionWorkbench() {
                         />
                       </div>
                     </div>
+
+                    {order.engineeringRevisionPins?.length ? (
+                      <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 p-2">
+                        <p className="text-[11px] font-semibold text-blue-800">
+                          固定工程版本
+                        </p>
+                        <div className="mt-1 space-y-1">
+                          {order.engineeringRevisionPins.map((pin) => (
+                            <p
+                              key={pin.engineeringRevision.id}
+                              className="truncate font-mono text-[11px] text-blue-700"
+                            >
+                              {pin.engineeringRevision.engineeringDocument.documentNo}
+                              {' · R'}
+                              {String(pin.engineeringRevision.revisionNo).padStart(
+                                2,
+                                '0',
+                              )}{' '}
+                              · {pin.engineeringRevision.engineeringDocument.title}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
 
                     {order.status !== 'COMPLETED' ? (
                       <div className="mt-3 grid gap-2 text-xs">

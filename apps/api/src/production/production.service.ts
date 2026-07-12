@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
+import { Prisma } from '@prisma/client';
 import { roundDecimal } from '../core/utils/decimal';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -122,23 +123,64 @@ export class ProductionService {
   async createWorkOrder(
     companyId: string,
     dto: CreateWorkOrderDto,
+    operatorId?: string,
   ): Promise<WorkOrderRecord> {
     const order = await this.prisma.order.findFirst({
       where: { id: dto.orderId, companyId },
+      include: { items: true },
     });
     if (!order) throw new NotFoundException('找不到对应的销售订单');
+    if (!order.items.some((item) => item.productId === dto.productId)) {
+      throw new BadRequestException('生产产品不属于当前销售订单');
+    }
+    const product = await this.prisma.product.findFirst({
+      where: { id: dto.productId, companyId, isActive: true },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('生产产品不存在或已停用');
+    const revisionsByProduct = await this.validateReleasedRevisions(
+      companyId,
+      order.id,
+      [dto.productId],
+      dto.engineeringRevisionIds,
+    );
+    const pinnedById = operatorId ?? order.salesId;
 
     return withUniqueConstraintRetry(
       (attempt) =>
-        this.prisma.workOrder.create({
-          data: {
-            workOrderNo: this.generateWorkOrderNo(attempt),
-            orderId: dto.orderId,
-            productId: dto.productId,
-            plannedQty: dto.plannedQty,
-            status: 'PENDING',
-            companyId,
-          },
+        this.prisma.$transaction(async (tx) => {
+          const workOrder = await tx.workOrder.create({
+            data: {
+              workOrderNo: this.generateWorkOrderNo(attempt),
+              orderId: dto.orderId,
+              productId: dto.productId,
+              plannedQty: dto.plannedQty,
+              status: 'PENDING',
+              companyId,
+              engineeringRevisionPins: {
+                create: (revisionsByProduct.get(dto.productId) ?? []).map(
+                  (revision) => ({
+                    engineeringRevisionId: revision.id,
+                    companyId,
+                    pinnedById,
+                  }),
+                ),
+              },
+            },
+          });
+          await tx.auditLog.create({
+            data: {
+              companyId,
+              userId: pinnedById,
+              entity: 'workOrder',
+              entityId: workOrder.id,
+              action: 'WORK_ORDER_ENGINEERING_REVISIONS_PINNED',
+              details: {
+                engineeringRevisionIds: dto.engineeringRevisionIds,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          return workOrder;
         }),
       { targetFields: ['workOrderNo'] },
     );
@@ -147,7 +189,8 @@ export class ProductionService {
   async generateWorkOrdersFromSalesOrder(
     companyId: string,
     orderId: string,
-    dto: GenerateWorkOrdersFromOrderDto = {},
+    dto: GenerateWorkOrdersFromOrderDto,
+    operatorId?: string,
   ): Promise<GenerateWorkOrdersResult> {
     const order = await this.prisma.order.findFirst({
       where: { id: orderId, companyId },
@@ -189,6 +232,13 @@ export class ProductionService {
     if (missing.length > 0) {
       throw new BadRequestException(`无法生成生产工单：${missing.join('；')}`);
     }
+    const revisionsByProduct = await this.validateReleasedRevisions(
+      companyId,
+      order.id,
+      productIds,
+      dto.engineeringRevisionIds,
+    );
+    const pinnedById = operatorId ?? order.salesId;
 
     const quantitiesByProduct = new Map<string, number>();
     for (const item of order.items) {
@@ -225,6 +275,29 @@ export class ProductionService {
                 plannedQty,
                 status: 'PENDING',
                 companyId,
+                engineeringRevisionPins: {
+                  create: (revisionsByProduct.get(productId) ?? []).map(
+                    (revision) => ({
+                      engineeringRevisionId: revision.id,
+                      companyId,
+                      pinnedById,
+                    }),
+                  ),
+                },
+              },
+            });
+            await tx.auditLog.create({
+              data: {
+                companyId,
+                userId: pinnedById,
+                entity: 'workOrder',
+                entityId: workOrder.id,
+                action: 'WORK_ORDER_ENGINEERING_REVISIONS_PINNED',
+                details: {
+                  engineeringRevisionIds: (
+                    revisionsByProduct.get(productId) ?? []
+                  ).map((revision) => revision.id),
+                } as Prisma.InputJsonValue,
               },
             });
             created.push(workOrder);
@@ -260,6 +333,18 @@ export class ProductionService {
             select: { orderNo: true, partner: { select: { name: true } } },
           },
           reports: true,
+          engineeringRevisionPins: {
+            include: {
+              engineeringRevision: {
+                include: {
+                  fileRecord: true,
+                  engineeringDocument: {
+                    select: { id: true, documentNo: true, title: true },
+                  },
+                },
+              },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
@@ -269,6 +354,58 @@ export class ProductionService {
     ]);
 
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+  }
+
+  private async validateReleasedRevisions(
+    companyId: string,
+    orderId: string,
+    productIds: string[],
+    revisionIds: string[],
+  ) {
+    const uniqueRevisionIds = [...new Set(revisionIds)];
+    if (uniqueRevisionIds.length === 0) {
+      throw new BadRequestException('创建工单前必须选择已发布工程版本');
+    }
+    const revisions = await this.prisma.engineeringDocumentRevision.findMany({
+      where: {
+        id: { in: uniqueRevisionIds },
+        companyId,
+        status: 'RELEASED',
+      },
+      select: {
+        id: true,
+        engineeringDocument: {
+          select: {
+            productId: true,
+            orderId: true,
+            currentReleasedRevisionId: true,
+          },
+        },
+      },
+    });
+    if (revisions.length !== uniqueRevisionIds.length) {
+      throw new BadRequestException(
+        '所选工程版本不存在、未发布或不属于当前公司',
+      );
+    }
+    const result = new Map<string, typeof revisions>();
+    for (const productId of productIds) {
+      const applicable = revisions.filter(
+        (revision) =>
+          revision.engineeringDocument.currentReleasedRevisionId ===
+            revision.id &&
+          (revision.engineeringDocument.productId === productId ||
+            (!revision.engineeringDocument.productId &&
+              revision.engineeringDocument.orderId === orderId)),
+      );
+      if (applicable.length === 0) {
+        throw new BadRequestException(
+          `产品 ${productId} 没有选择当前有效的已发布工程版本`,
+        );
+      }
+      result.set(productId, applicable);
+    }
+    return result;
   }
 
   async getMaterialAvailability(

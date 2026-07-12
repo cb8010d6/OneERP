@@ -44,18 +44,21 @@ describe('ProductionController', () => {
       const expected = { id: 'wo1', workOrderNo: 'WO-123' };
       mockProductionService.createWorkOrder.mockResolvedValue(expected);
 
-      const result = await controller.createWorkOrder('c1', {
+      const user = { id: 'planner-1', email: 'planner@example.com' };
+      const dto = {
         orderId: 'o1',
         productId: 'p1',
         plannedQty: 100,
-      });
+        engineeringRevisionIds: ['revision-1'],
+      };
+      const result = await controller.createWorkOrder('c1', user, dto);
 
       expect(result).toEqual(expected);
-      expect(mockProductionService.createWorkOrder).toHaveBeenCalledWith('c1', {
-        orderId: 'o1',
-        productId: 'p1',
-        plannedQty: 100,
-      });
+      expect(mockProductionService.createWorkOrder).toHaveBeenCalledWith(
+        'c1',
+        dto,
+        'planner-1',
+      );
     });
   });
 
@@ -68,14 +71,20 @@ describe('ProductionController', () => {
 
       const result = await controller.generateWorkOrdersFromSalesOrder(
         'c1',
+        { id: 'planner-1', email: 'planner@example.com' },
         'o1',
-        { skipExisting: true },
+        { skipExisting: true, engineeringRevisionIds: ['revision-1'] },
       );
 
       expect(result).toEqual(expected);
       expect(
         mockProductionService.generateWorkOrdersFromSalesOrder,
-      ).toHaveBeenCalledWith('c1', 'o1', { skipExisting: true });
+      ).toHaveBeenCalledWith(
+        'c1',
+        'o1',
+        { skipExisting: true, engineeringRevisionIds: ['revision-1'] },
+        'planner-1',
+      );
     });
   });
 

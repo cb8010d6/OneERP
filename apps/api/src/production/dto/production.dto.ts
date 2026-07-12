@@ -7,6 +7,8 @@ import {
   IsNumber,
   IsBoolean,
   IsDateString,
+  IsUUID,
+  ArrayMinSize,
   Min,
 } from 'class-validator';
 
@@ -25,6 +27,12 @@ export class CreateWorkOrderDto {
   @IsNumber()
   @Min(1)
   plannedQty!: number;
+
+  @ApiProperty({ description: '工单固定使用的当前已发布工程版本 ID' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('4', { each: true })
+  engineeringRevisionIds!: string[];
 }
 
 export class CreateWorkReportDto {
@@ -62,6 +70,12 @@ export class GenerateWorkOrdersFromOrderDto {
   @IsOptional()
   @IsBoolean()
   skipExisting?: boolean;
+
+  @ApiProperty({ description: '本批工单固定使用的当前已发布工程版本 ID' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('4', { each: true })
+  engineeringRevisionIds!: string[];
 }
 
 export class CreatePurchaseOrderFromShortagesDto {

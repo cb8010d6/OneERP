@@ -75,6 +75,7 @@ model Company {
   salesContractApprovals     SalesContractApproval[]
   engineeringDocuments       EngineeringDocument[]
   engineeringDocumentRevisions EngineeringDocumentRevision[]
+  workOrderEngineeringRevisions WorkOrderEngineeringRevision[]
 }
 
 enum PartnerType {
@@ -148,6 +149,7 @@ model User {
   createdEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionCreator")
   reviewedEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionReviewer")
   approvedEngineeringRevisions EngineeringDocumentRevision[] @relation("EngineeringRevisionApprover")
+  pinnedEngineeringRevisions WorkOrderEngineeringRevision[] @relation("EngineeringRevisionPinnedBy")
 }
 
 model Role {
@@ -977,6 +979,7 @@ model EngineeringDocumentRevision {
   reviewer             User?                @relation("EngineeringRevisionReviewer", fields: [reviewedById], references: [id], onDelete: Restrict)
   approver             User?                @relation("EngineeringRevisionApprover", fields: [approvedById], references: [id], onDelete: Restrict)
   releasedForDocument  EngineeringDocument? @relation("CurrentReleasedEngineeringRevision")
+  workOrderPins        WorkOrderEngineeringRevision[]
 
   @@unique([engineeringDocumentId, revisionNo])
   @@index([companyId, createdAt])
@@ -1122,6 +1125,25 @@ model WorkOrder {
   order   Order        @relation(fields: [orderId], references: [id])
   product Product      @relation(fields: [productId], references: [id])
   reports WorkReport[]
+  engineeringRevisionPins WorkOrderEngineeringRevision[]
+}
+
+model WorkOrderEngineeringRevision {
+  id                    String   @id @default(uuid())
+  workOrderId           String
+  engineeringRevisionId String
+  companyId             String
+  pinnedById            String
+  createdAt             DateTime @default(now())
+
+  workOrder           WorkOrder                   @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  engineeringRevision EngineeringDocumentRevision @relation(fields: [engineeringRevisionId], references: [id], onDelete: Restrict)
+  company             Company                     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  pinnedBy            User                        @relation("EngineeringRevisionPinnedBy", fields: [pinnedById], references: [id], onDelete: Restrict)
+
+  @@unique([workOrderId, engineeringRevisionId])
+  @@index([companyId, createdAt])
+  @@index([engineeringRevisionId])
 }
 
 model WorkReport {

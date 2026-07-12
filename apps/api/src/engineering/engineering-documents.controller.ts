@@ -36,6 +36,15 @@ export class EngineeringDocumentsController {
     return this.service.list(companyId, search);
   }
 
+  @Get('released-for-order/:orderId')
+  @RequirePermissions(Permission.EngineeringDocumentRead)
+  listReleasedForOrder(
+    @CurrentCompany() companyId: string,
+    @Param('orderId') orderId: string,
+  ) {
+    return this.service.listReleasedForOrder(companyId, orderId);
+  }
+
   @Post()
   @RequirePermissions(Permission.EngineeringDocumentCreate)
   @ApiOperation({ summary: '创建工程文档和首个不可变草稿版本' })

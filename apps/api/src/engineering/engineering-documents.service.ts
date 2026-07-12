@@ -48,6 +48,29 @@ export class EngineeringDocumentsService {
     });
   }
 
+  async listReleasedForOrder(companyId: string, orderId: string) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      select: { id: true, items: { select: { productId: true } } },
+    });
+    if (!order) throw new NotFoundException('销售订单不存在或无权访问');
+    const productIds = [...new Set(order.items.map((item) => item.productId))];
+    return this.prisma.engineeringDocument.findMany({
+      where: {
+        companyId,
+        currentReleasedRevisionId: { not: null },
+        OR: [{ orderId: order.id }, { productId: { in: productIds } }],
+      },
+      orderBy: { documentNo: 'asc' },
+      include: {
+        product: { select: { id: true, sku: true, name: true } },
+        currentReleasedRevision: {
+          include: { fileRecord: true },
+        },
+      },
+    });
+  }
+
   async createDocument(
     companyId: string,
     operatorId: string,

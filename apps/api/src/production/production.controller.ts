@@ -37,9 +37,10 @@ export class ProductionController {
   @ApiOperation({ summary: '创建生产工单' })
   async createWorkOrder(
     @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
     @Body() dto: CreateWorkOrderDto,
   ) {
-    return this.productionService.createWorkOrder(companyId, dto);
+    return this.productionService.createWorkOrder(companyId, dto, user.id);
   }
 
   @Post('orders/from-sales-order/:orderId')
@@ -47,6 +48,7 @@ export class ProductionController {
   @ApiOperation({ summary: '按销售订单和默认 BOM 批量生成生产工单' })
   async generateWorkOrdersFromSalesOrder(
     @CurrentCompany() companyId: string,
+    @CurrentUser() user: JwtUserPayload,
     @Param('orderId') orderId: string,
     @Body() dto: GenerateWorkOrdersFromOrderDto,
   ) {
@@ -54,6 +56,7 @@ export class ProductionController {
       companyId,
       orderId,
       dto,
+      user.id,
     );
   }
 
