@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '../../store/authStore';
-import api from '../../lib/api';
+import api, { readApiError } from '../../lib/api';
 import { Building2, Lock, Mail } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
 
@@ -32,11 +32,8 @@ export default function LoginPage() {
       setAuth(accessToken, user, companies);
       
       router.push('/dashboard');
-    } catch (err: any) {
-      setError(
-        err.response?.data?.message ||
-          t('loginFailed'),
-      );
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('loginFailed')));
     } finally {
       setLoading(false);
     }

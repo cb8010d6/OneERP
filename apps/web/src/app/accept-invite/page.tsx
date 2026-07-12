@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { KeyRound, Loader2 } from 'lucide-react';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { useI18n } from '@/lib/i18n';
 
@@ -48,8 +48,8 @@ export default function AcceptInvitePage() {
       const { accessToken, user, companies } = response.data;
       setAuth(accessToken, user, companies);
       router.push('/dashboard');
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || t('inviteFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('inviteFailed')));
     } finally {
       setLoading(false);
     }

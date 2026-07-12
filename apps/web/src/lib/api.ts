@@ -7,6 +7,18 @@ declare module 'axios' {
   }
 }
 
+export function readApiError(reason: unknown, fallback: string): string {
+  if (typeof reason !== 'object' || reason === null || !('response' in reason)) {
+    return fallback;
+  }
+
+  const response = (reason as { response?: { data?: { message?: unknown } } })
+    .response;
+  return typeof response?.data?.message === 'string'
+    ? response.data.message
+    : fallback;
+}
+
 function sanitizePaginationInUrl(url?: string): string | undefined {
   if (!url) return url;
 

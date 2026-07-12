@@ -23,11 +23,14 @@ jest.mock('../../store/authStore', () => ({
 
 describe('api.ts interceptors', () => {
   let api: typeof import('../api').default;
+  let readApiError: typeof import('../api').readApiError;
 
   beforeEach(async () => {
     jest.resetModules();
     jest.clearAllMocks();
-    api = (await import('../api')).default;
+    const apiModule = await import('../api');
+    api = apiModule.default;
+    readApiError = apiModule.readApiError;
     mockGetState.mockReturnValue({
       token:
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
@@ -38,6 +41,18 @@ describe('api.ts interceptors', () => {
       logout: mockLogout,
     });
     mockGetCsrfTokenFromCookie.mockReturnValue('');
+  });
+
+  it('读取结构化 API 错误消息', () => {
+    expect(
+      readApiError({ response: { data: { message: '凭据无效' } } }, '请求失败'),
+    ).toBe('凭据无效');
+  });
+
+  it('非结构化异常使用回退消息', () => {
+    expect(readApiError(new Error('network reset'), '请求失败')).toBe(
+      '请求失败',
+    );
   });
 
   it('修正非法 page < 1 和 limit > 100', () => {

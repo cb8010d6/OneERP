@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import api from '@/lib/api';
+import React, { useCallback, useEffect, useState } from 'react';
+import api, { readApiError } from '@/lib/api';
 import { Loader2, AlertCircle, CheckCircle2, Calculator, ArrowRightLeft } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useI18n } from '@/lib/i18n';
@@ -33,22 +33,22 @@ export function TrialBalanceView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchTrialBalance = async () => {
+  const fetchTrialBalance = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const response = await api.get<TrialBalanceData>('/finance/trial-balance');
       setData(response.data);
-    } catch (err: any) {
-      setError(err.response?.data?.message || t('trialLoadFailed'));
+    } catch (reason: unknown) {
+      setError(readApiError(reason, t('trialLoadFailed')));
     } finally {
       setLoading(false);
     }
-  };
+  }, [t]);
 
   useEffect(() => {
     fetchTrialBalance();
-  }, []);
+  }, [fetchTrialBalance]);
 
   if (loading) {
     return (
