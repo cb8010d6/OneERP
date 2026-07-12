@@ -78,6 +78,7 @@ model Company {
   workOrderEngineeringRevisions WorkOrderEngineeringRevision[]
   engineeringChangeOrders       EngineeringChangeOrder[]
   engineeringChangeImpacts      EngineeringChangeImpact[]
+  workReports                   WorkReport[]
 }
 
 enum PartnerType {
@@ -1208,15 +1209,24 @@ model EngineeringChangeImpact {
 }
 
 model WorkReport {
-  id          String   @id @default(uuid())
-  workOrderId String
-  workerId    String
-  goodQty     Int
-  defectQty   Int
-  reportDate  DateTime @default(now())
+  id                      String   @id @default(uuid())
+  workOrderId             String
+  workerId                String
+  companyId               String
+  idempotencyKey          String
+  payloadHash             String
+  goodQty                 Int
+  defectQty               Int
+  inventoryTransactionIds Json     @default("[]")
+  reportDate              DateTime @default(now())
 
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
-  worker    User      @relation(fields: [workerId], references: [id])
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  worker    User      @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+
+  @@unique([companyId, idempotencyKey])
+  @@index([companyId, reportDate])
+  @@index([workOrderId, reportDate])
 }
 
 model Invoice {

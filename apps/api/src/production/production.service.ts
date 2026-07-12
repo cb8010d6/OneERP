@@ -1,10 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { roundDecimal } from '../core/utils/decimal';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -35,6 +37,8 @@ export interface WorkReportRecord {
   workerId: string;
   goodQty: number;
   defectQty: number;
+  inventoryTransactionIds?: string[];
+  idempotentReplay?: boolean;
 }
 
 interface BomRequirement {
@@ -443,6 +447,7 @@ export class ProductionService {
 
       try {
         const requirements = await this.resolveBomRequirements(
+          this.prisma,
           companyId,
           workOrder.productId,
           new Decimal(openQty),
@@ -693,65 +698,167 @@ export class ProductionService {
     workerId: string,
     dto: CreateWorkReportDto,
   ): Promise<WorkReportRecord> {
-    const wo = await this.prisma.workOrder.findFirst({
-      where: { id: workOrderId, companyId },
-      include: {
-        product: {
-          select: {
-            id: true,
-            sku: true,
-            name: true,
-            materialId: true,
+    if (dto.goodQty === 0 && dto.defectQty === 0) {
+      throw new BadRequestException('良品和不良品数量不能同时为 0');
+    }
+    const normalized = {
+      workOrderId,
+      goodQty: dto.goodQty,
+      defectQty: dto.defectQty,
+      sourceLocationId: dto.sourceLocationId?.trim() || null,
+      destLocationId: dto.destLocationId?.trim() || null,
+      batchNo: dto.batchNo?.trim() || null,
+    };
+    const payloadHash = createHash('sha256')
+      .update(JSON.stringify(normalized))
+      .digest('hex');
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const result = await this.prisma.$transaction(
+          async (tx) => {
+            const existing = await tx.workReport.findUnique({
+              where: {
+                companyId_idempotencyKey: {
+                  companyId,
+                  idempotencyKey: dto.idempotencyKey,
+                },
+              },
+            });
+            if (existing) {
+              if (
+                existing.workOrderId !== workOrderId ||
+                existing.payloadHash !== payloadHash
+              ) {
+                throw new ConflictException('报工幂等键已用于不同的提交内容');
+              }
+              return {
+                report: existing,
+                eventIds: [] as string[],
+                idempotentReplay: true,
+              };
+            }
+
+            const workOrder = await tx.workOrder.findFirst({
+              where: { id: workOrderId, companyId },
+              include: {
+                product: {
+                  select: {
+                    id: true,
+                    sku: true,
+                    name: true,
+                    materialId: true,
+                  },
+                },
+              },
+            });
+            if (!workOrder) throw new NotFoundException('无效的生产工单');
+            if (workOrder.status === 'COMPLETED') {
+              throw new ConflictException('生产工单已完工，不能继续报工');
+            }
+            if (workOrder.actualQty + dto.goodQty > workOrder.plannedQty) {
+              throw new BadRequestException(
+                `良品报工超过剩余数量 ${workOrder.plannedQty - workOrder.actualQty}`,
+              );
+            }
+            if (dto.goodQty > 0) {
+              if (!normalized.sourceLocationId) {
+                throw new BadRequestException(
+                  '提交良品报工时必须选择原料领用库位',
+                );
+              }
+              if (!normalized.destLocationId) {
+                throw new BadRequestException(
+                  '提交良品报工时必须选择成品入库库位',
+                );
+              }
+              if (!workOrder.product.materialId) {
+                throw new BadRequestException(
+                  '产品未绑定成品物料，无法完工入库',
+                );
+              }
+            }
+
+            const inventoryResult =
+              dto.goodQty > 0
+                ? await this.postManufacturingInventoryInTransaction(
+                    tx,
+                    companyId,
+                    workOrder,
+                    dto,
+                    workerId,
+                  )
+                : { transactionIds: [], eventIds: [] };
+            const newActual = workOrder.actualQty + dto.goodQty;
+            const newStatus =
+              newActual >= workOrder.plannedQty
+                ? 'COMPLETED'
+                : workOrder.status === 'PENDING'
+                  ? 'IN_PROGRESS'
+                  : workOrder.status;
+            const report = await tx.workReport.create({
+              data: {
+                workOrderId,
+                workerId,
+                companyId,
+                idempotencyKey: dto.idempotencyKey,
+                payloadHash,
+                goodQty: dto.goodQty,
+                defectQty: dto.defectQty,
+                inventoryTransactionIds:
+                  inventoryResult.transactionIds as Prisma.InputJsonValue,
+              },
+            });
+            await tx.workOrder.update({
+              where: { id: workOrderId },
+              data: { actualQty: newActual, status: newStatus },
+            });
+            await tx.auditLog.create({
+              data: {
+                companyId,
+                userId: workerId,
+                entity: 'workOrder',
+                entityId: workOrderId,
+                action: 'WORK_REPORT_POSTED',
+                details: {
+                  workReportId: report.id,
+                  idempotencyKey: dto.idempotencyKey,
+                  goodQty: dto.goodQty,
+                  defectQty: dto.defectQty,
+                  inventoryTransactionIds: inventoryResult.transactionIds,
+                },
+              },
+            });
+            return {
+              report,
+              eventIds: inventoryResult.eventIds,
+              idempotentReplay: false,
+            };
           },
-        },
-      },
-    });
-    if (!wo) throw new NotFoundException('无效的生产工单');
-
-    if (dto.goodQty > 0) {
-      if (!dto.sourceLocationId) {
-        throw new BadRequestException('提交良品报工时必须选择原料领用库位');
-      }
-      if (!dto.destLocationId) {
-        throw new BadRequestException('提交良品报工时必须选择成品入库库位');
-      }
-      if (!wo.product.materialId) {
-        throw new BadRequestException('产品未绑定成品物料，无法完工入库');
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        await this.inventoryService.dispatchQueuedEvents(result.eventIds);
+        return {
+          ...result.report,
+          inventoryTransactionIds: Array.isArray(
+            result.report.inventoryTransactionIds,
+          )
+            ? (result.report.inventoryTransactionIds as string[])
+            : [],
+          idempotentReplay: result.idempotentReplay,
+        };
+      } catch (error) {
+        const retryable =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          ['P2002', 'P2034'].includes(error.code);
+        if (!retryable || attempt === 3) throw error;
       }
     }
-
-    const report = await this.prisma.$transaction(async (tx) => {
-      const report = await tx.workReport.create({
-        data: {
-          workOrderId,
-          workerId,
-          goodQty: dto.goodQty,
-          defectQty: dto.defectQty,
-        },
-      });
-
-      // Update actualQty and status in WorkOrder
-      const newActual = wo.actualQty + dto.goodQty;
-      let newStatus = wo.status;
-      if (newStatus === 'PENDING') newStatus = 'IN_PROGRESS';
-      if (newActual >= wo.plannedQty) newStatus = 'COMPLETED';
-
-      await tx.workOrder.update({
-        where: { id: workOrderId },
-        data: { actualQty: newActual, status: newStatus },
-      });
-
-      return report;
-    });
-
-    if (dto.goodQty > 0) {
-      await this.postManufacturingInventory(companyId, wo, dto, workerId);
-    }
-
-    return report;
+    throw new ConflictException('并发报工冲突，请重试');
   }
 
-  private async postManufacturingInventory(
+  private async postManufacturingInventoryInTransaction(
+    tx: Prisma.TransactionClient,
     companyId: string,
     workOrder: {
       id: string;
@@ -761,49 +868,67 @@ export class ProductionService {
     },
     dto: CreateWorkReportDto,
     workerId: string,
-  ) {
+  ): Promise<{ transactionIds: string[]; eventIds: string[] }> {
     const requirements = await this.resolveBomRequirements(
+      tx,
       companyId,
       workOrder.productId,
       new Decimal(dto.goodQty),
       new Set(),
     );
 
+    const transactionIds: string[] = [];
+    const eventIds: string[] = [];
+
     for (const requirement of requirements) {
       const requiredQty = requirement.quantity.toNumber();
 
-      await this.inventoryService.createStockMove(
+      const transaction =
+        await this.inventoryService.createStockMoveInTransaction(
+          tx,
+          companyId,
+          {
+            materialId: requirement.materialId,
+            sourceLocationId: dto.sourceLocationId,
+            quantity: requiredQty,
+            referenceNo: `PRODUCTION-ISSUE-${workOrder.workOrderNo}-${dto.idempotencyKey}`,
+            documentType: 'WORK_ORDER',
+            documentId: workOrder.id,
+            note: `生产领料：${workOrder.workOrderNo}`,
+          },
+          workerId,
+        );
+      transactionIds.push(transaction.id);
+      const event = await this.inventoryService.queueStockDepletedInTransaction(
+        tx,
         companyId,
-        {
-          materialId: requirement.materialId,
-          sourceLocationId: dto.sourceLocationId,
-          quantity: requiredQty,
-          referenceNo: `PRODUCTION-ISSUE-${workOrder.workOrderNo}`,
-          documentType: 'WORK_ORDER',
-          documentId: workOrder.id,
-          note: `生产领料：${workOrder.workOrderNo}`,
-        },
+        transaction,
         workerId,
       );
+      if (event) eventIds.push(event.id);
     }
 
-    await this.inventoryService.createStockMove(
+    const receipt = await this.inventoryService.createStockMoveInTransaction(
+      tx,
       companyId,
       {
         materialId: workOrder.product.materialId ?? '',
         destLocationId: dto.destLocationId,
         quantity: dto.goodQty,
         batchNo: dto.batchNo,
-        referenceNo: `PRODUCTION-RECEIPT-${workOrder.workOrderNo}`,
+        referenceNo: `PRODUCTION-RECEIPT-${workOrder.workOrderNo}-${dto.idempotencyKey}`,
         documentType: 'WORK_ORDER',
         documentId: workOrder.id,
         note: `完工入库：${workOrder.workOrderNo}`,
       },
       workerId,
     );
+    transactionIds.push(receipt.id);
+    return { transactionIds, eventIds };
   }
 
   private async resolveBomRequirements(
+    client: PrismaService | Prisma.TransactionClient,
     companyId: string,
     productId: string,
     quantity: Decimal,
@@ -814,7 +939,7 @@ export class ProductionService {
     }
     visitedProductIds.add(productId);
 
-    const bom = await this.prisma.bom.findFirst({
+    const bom = await client.bom.findFirst({
       where: {
         companyId,
         productId,
@@ -835,7 +960,7 @@ export class ProductionService {
         .times(line.quantity)
         .times(new Decimal(1).plus(line.scrapRate));
 
-      const childProduct = await this.prisma.product.findFirst({
+      const childProduct = await client.product.findFirst({
         where: {
           companyId,
           materialId: line.materialId,
@@ -844,7 +969,7 @@ export class ProductionService {
       });
 
       if (childProduct) {
-        const childBom = await this.prisma.bom.findFirst({
+        const childBom = await client.bom.findFirst({
           where: {
             companyId,
             productId: childProduct.id,
@@ -855,6 +980,7 @@ export class ProductionService {
 
         if (childBom) {
           const childRequirements = await this.resolveBomRequirements(
+            client,
             companyId,
             childProduct.id,
             lineQuantity,

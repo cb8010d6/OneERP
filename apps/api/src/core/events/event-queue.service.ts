@@ -37,8 +37,22 @@ export class EventQueueService {
    * 若已存在则跳过入队并返回 null（幂等语义）。
    */
   async enqueue(input: EnqueueEventInput) {
+    return this.enqueueWithClient(this.prisma, input);
+  }
+
+  async enqueueInTransaction(
+    tx: Prisma.TransactionClient,
+    input: EnqueueEventInput,
+  ) {
+    return this.enqueueWithClient(tx, input);
+  }
+
+  private async enqueueWithClient(
+    client: PrismaService | Prisma.TransactionClient,
+    input: EnqueueEventInput,
+  ) {
     if (input.idempotencyKey) {
-      const existing = await this.prisma.eventDlq.findFirst({
+      const existing = await client.eventDlq.findFirst({
         where: {
           eventName: input.eventName,
           idempotencyKey: input.idempotencyKey,
@@ -55,7 +69,7 @@ export class EventQueueService {
       }
     }
 
-    return this.prisma.eventDlq.create({
+    return client.eventDlq.create({
       data: {
         eventName: input.eventName,
         idempotencyKey: input.idempotencyKey ?? null,

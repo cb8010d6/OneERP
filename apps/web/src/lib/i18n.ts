@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useCallback } from "react";
 
 export type Language = "zh-CN" | "en-US";
 
@@ -634,7 +635,8 @@ const zh = {
   inventoryValuationAuditCsvResult: "结果",
   inventoryValuationAuditCsvNote: "备注",
   accountingPeriodsTitle: "会计期间与关账",
-  accountingPeriodsSubtitle: "维护财务期间，关闭期间后系统会阻止对应日期的业务过账。",
+  accountingPeriodsSubtitle:
+    "维护财务期间，关闭期间后系统会阻止对应日期的业务过账。",
   accountingPeriodsLoadFailed: "会计期间加载失败",
   accountingPeriodsSaved: "会计期间已保存",
   accountingPeriodsSaveFailed: "会计期间保存失败",
@@ -1434,7 +1436,8 @@ const en: Record<keyof typeof zh, string> = {
   bankReconciliationMatchFailed: "Failed to match bank statement line",
   bankReconciliationAutoMatch: "Auto match",
   bankReconciliationAutoMatched: "Auto matched",
-  bankReconciliationAutoMatchFailed: "Failed to auto match bank statement lines",
+  bankReconciliationAutoMatchFailed:
+    "Failed to auto match bank statement lines",
   bankReconciliationTargetRequired: "Enter a target payment ID",
   bankReconciliationBankAccount: "Bank account",
   bankReconciliationCounterparty: "Counterparty",
@@ -1540,11 +1543,15 @@ export function translate(
 export function useI18n() {
   const language = useI18nStore((state) => state.language);
   const setLanguage = useI18nStore((state) => state.setLanguage);
+  const t = useCallback(
+    (key: TranslationKey) => translate(language, key),
+    [language],
+  );
 
   return {
     language,
     setLanguage,
-    t: (key: TranslationKey) => translate(language, key),
+    t,
     locale: language,
   };
 }

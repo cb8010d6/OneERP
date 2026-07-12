@@ -1,4 +1,10 @@
-import { NotFoundException } from '@nestjs/common';
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return */
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { ProductionService } from './production.service';
 
 type MockPrisma = {
@@ -14,6 +20,7 @@ type MockPrisma = {
   };
   workReport: {
     create: jest.Mock;
+    findUnique: jest.Mock;
   };
   product: {
     findFirst: jest.Mock;
@@ -41,11 +48,15 @@ type MockPrisma = {
 type MockTx = {
   workReport: {
     create: jest.Mock;
+    findUnique: jest.Mock;
   };
   workOrder: {
     update: jest.Mock;
     create: jest.Mock;
+    findFirst: jest.Mock;
   };
+  bom: { findFirst: jest.Mock };
+  product: { findFirst: jest.Mock };
   order: {
     update: jest.Mock;
   };
@@ -68,6 +79,7 @@ describe('ProductionService', () => {
     },
     workReport: {
       create: jest.fn(),
+      findUnique: jest.fn(),
     },
     product: {
       findFirst: jest.fn(),
@@ -94,6 +106,9 @@ describe('ProductionService', () => {
 
   const inventoryService = {
     createStockMove: jest.fn(),
+    createStockMoveInTransaction: jest.fn(),
+    queueStockDepletedInTransaction: jest.fn(),
+    dispatchQueuedEvents: jest.fn(),
   };
 
   const purchaseService = {
@@ -103,11 +118,15 @@ describe('ProductionService', () => {
   const tx: MockTx = {
     workReport: {
       create: jest.fn(),
+      findUnique: jest.fn(),
     },
     workOrder: {
       update: jest.fn(),
       create: jest.fn(),
+      findFirst: jest.fn(),
     },
+    bom: { findFirst: jest.fn() },
+    product: { findFirst: jest.fn() },
     order: {
       update: jest.fn(),
     },
@@ -131,6 +150,29 @@ describe('ProductionService', () => {
     prisma.purchaseOrderLine.findMany.mockResolvedValue([]);
     prisma.engineeringDocumentRevision.findMany.mockResolvedValue([]);
     tx.auditLog.create.mockResolvedValue({ id: 'audit-1' });
+    tx.workReport.findUnique.mockResolvedValue(null);
+    tx.workOrder.findFirst.mockImplementation((args) =>
+      prisma.workOrder.findFirst(args),
+    );
+    tx.bom.findFirst.mockImplementation((args) => prisma.bom.findFirst(args));
+    tx.product.findFirst.mockImplementation((args) =>
+      prisma.product.findFirst(args),
+    );
+    inventoryService.createStockMoveInTransaction.mockImplementation(
+      (_tx, _companyId, data) =>
+        Promise.resolve({
+          id: data.sourceLocationId ? `issue-${data.materialId}` : 'receipt-1',
+          type: data.sourceLocationId ? 'OUTBOUND' : 'INBOUND',
+          materialId: data.materialId,
+          quantity: data.quantity,
+          referenceNo: data.referenceNo,
+          unitCost: 1,
+        }),
+    );
+    inventoryService.queueStockDepletedInTransaction.mockResolvedValue({
+      id: 'event-1',
+    });
+    inventoryService.dispatchQueuedEvents.mockResolvedValue(undefined);
     service = new ProductionService(
       prisma as unknown as ConstructorParameters<typeof ProductionService>[0],
       inventoryService as unknown as ConstructorParameters<
@@ -646,6 +688,125 @@ describe('ProductionService', () => {
   });
 
   describe('submitWorkReport', () => {
+    it('rolls back business writes when any inventory posting fails', async () => {
+      prisma.workOrder.findFirst.mockResolvedValue({
+        id: 'wo-fail',
+        workOrderNo: 'WO-FAIL',
+        productId: 'p1',
+        companyId: 'c1',
+        actualQty: 0,
+        plannedQty: 10,
+        status: 'PENDING',
+        product: { materialId: 'fg-1' },
+      });
+      prisma.bom.findFirst.mockResolvedValue({
+        id: 'bom-1',
+        lines: [{ materialId: 'raw-1', quantity: 1, scrapRate: 0 }],
+      });
+      inventoryService.createStockMoveInTransaction.mockRejectedValueOnce(
+        new BadRequestException('库存不足'),
+      );
+
+      await expect(
+        service.submitWorkReport('c1', 'wo-fail', 'u1', {
+          idempotencyKey: 'report-fail',
+          goodQty: 1,
+          defectQty: 0,
+          sourceLocationId: 'raw-loc',
+          destLocationId: 'fg-loc',
+        }),
+      ).rejects.toThrow('库存不足');
+      expect(tx.workReport.create).not.toHaveBeenCalled();
+      expect(tx.workOrder.update).not.toHaveBeenCalled();
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('replays the same idempotency key without posting inventory again', async () => {
+      const normalized = {
+        workOrderId: 'wo1',
+        goodQty: 2,
+        defectQty: 0,
+        sourceLocationId: 'raw-loc',
+        destLocationId: 'fg-loc',
+        batchNo: null,
+      };
+      tx.workReport.findUnique.mockResolvedValue({
+        id: 'wr-existing',
+        workOrderId: 'wo1',
+        workerId: 'u1',
+        companyId: 'c1',
+        idempotencyKey: 'report-replay',
+        payloadHash: createHash('sha256')
+          .update(JSON.stringify(normalized))
+          .digest('hex'),
+        goodQty: 2,
+        defectQty: 0,
+        inventoryTransactionIds: ['issue-1', 'receipt-1'],
+      });
+
+      await expect(
+        service.submitWorkReport('c1', 'wo1', 'u1', {
+          idempotencyKey: 'report-replay',
+          goodQty: 2,
+          defectQty: 0,
+          sourceLocationId: 'raw-loc',
+          destLocationId: 'fg-loc',
+        }),
+      ).resolves.toMatchObject({
+        id: 'wr-existing',
+        idempotentReplay: true,
+        inventoryTransactionIds: ['issue-1', 'receipt-1'],
+      });
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).not.toHaveBeenCalled();
+      expect(tx.workOrder.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a reused idempotency key with a different payload', async () => {
+      tx.workReport.findUnique.mockResolvedValue({
+        id: 'wr-existing',
+        workOrderId: 'wo1',
+        payloadHash: 'different-payload-hash',
+      });
+
+      await expect(
+        service.submitWorkReport('c1', 'wo1', 'u1', {
+          idempotencyKey: 'report-conflict',
+          goodQty: 2,
+          defectQty: 0,
+          sourceLocationId: 'raw-loc',
+          destLocationId: 'fg-loc',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects good quantity above the work order remaining quantity', async () => {
+      prisma.workOrder.findFirst.mockResolvedValue({
+        id: 'wo-over',
+        workOrderNo: 'WO-OVER',
+        productId: 'p1',
+        companyId: 'c1',
+        actualQty: 9,
+        plannedQty: 10,
+        status: 'IN_PROGRESS',
+        product: { materialId: 'fg-1' },
+      });
+
+      await expect(
+        service.submitWorkReport('c1', 'wo-over', 'u1', {
+          idempotencyKey: 'report-over',
+          goodQty: 2,
+          defectQty: 0,
+          sourceLocationId: 'raw-loc',
+          destLocationId: 'fg-loc',
+        }),
+      ).rejects.toThrow('良品报工超过剩余数量 1');
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).not.toHaveBeenCalled();
+    });
+
     it('should submit a work report and update work order', async () => {
       const workOrder = {
         id: 'wo1',
@@ -671,6 +832,7 @@ describe('ProductionService', () => {
       tx.workOrder.update.mockResolvedValue({});
 
       const result = (await service.submitWorkReport('c1', 'wo1', 'u1', {
+        idempotencyKey: 'report-1',
         goodQty: 20,
         defectQty: 2,
         sourceLocationId: 'raw-loc',
@@ -684,24 +846,30 @@ describe('ProductionService', () => {
         where: { id: 'wo1' },
         data: { actualQty: 30, status: 'IN_PROGRESS' },
       });
-      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenCalledWith(
+        tx,
         'c1',
         expect.objectContaining({
           materialId: 'raw-1',
           sourceLocationId: 'raw-loc',
           quantity: 44,
-          referenceNo: 'PRODUCTION-ISSUE-WO-001',
+          referenceNo: 'PRODUCTION-ISSUE-WO-001-report-1',
         }),
         'u1',
       );
-      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenCalledWith(
+        tx,
         'c1',
         expect.objectContaining({
           materialId: 'fg-1',
           destLocationId: 'fg-loc',
           quantity: 20,
           batchNo: 'FG-B1',
-          referenceNo: 'PRODUCTION-RECEIPT-WO-001',
+          referenceNo: 'PRODUCTION-RECEIPT-WO-001-report-1',
         }),
         'u1',
       );
@@ -726,13 +894,14 @@ describe('ProductionService', () => {
       tx.workReport.create.mockResolvedValue({
         id: 'wr2',
         workOrderId: 'wo1',
-        goodQty: 25,
+        goodQty: 20,
         defectQty: 0,
       });
       tx.workOrder.update.mockResolvedValue({});
 
       await service.submitWorkReport('c1', 'wo1', 'u1', {
-        goodQty: 25,
+        idempotencyKey: 'report-2',
+        goodQty: 20,
         defectQty: 0,
         sourceLocationId: 'raw-loc',
         destLocationId: 'fg-loc',
@@ -740,7 +909,7 @@ describe('ProductionService', () => {
 
       expect(tx.workOrder.update).toHaveBeenCalledWith({
         where: { id: 'wo1' },
-        data: { actualQty: 105, status: 'COMPLETED' },
+        data: { actualQty: 100, status: 'COMPLETED' },
       });
     });
 
@@ -785,31 +954,41 @@ describe('ProductionService', () => {
       tx.workOrder.update.mockResolvedValue({});
 
       await service.submitWorkReport('c1', 'wo-nested', 'u1', {
+        idempotencyKey: 'report-3',
         goodQty: 5,
         defectQty: 0,
         sourceLocationId: 'raw-loc',
         destLocationId: 'fg-loc',
       });
 
-      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenCalledWith(
+        tx,
         'c1',
         expect.objectContaining({
           materialId: 'raw-a',
           quantity: 30,
-          referenceNo: 'PRODUCTION-ISSUE-WO-003',
+          referenceNo: 'PRODUCTION-ISSUE-WO-003-report-3',
         }),
         'u1',
       );
-      expect(inventoryService.createStockMove).toHaveBeenCalledWith(
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenCalledWith(
+        tx,
         'c1',
         expect.objectContaining({
           materialId: 'raw-shared',
           quantity: 25,
-          referenceNo: 'PRODUCTION-ISSUE-WO-003',
+          referenceNo: 'PRODUCTION-ISSUE-WO-003-report-3',
         }),
         'u1',
       );
-      expect(inventoryService.createStockMove).not.toHaveBeenCalledWith(
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).not.toHaveBeenCalledWith(
+        tx,
         'c1',
         expect.objectContaining({ materialId: 'semi-material' }),
         'u1',
@@ -821,6 +1000,7 @@ describe('ProductionService', () => {
 
       await expect(
         service.submitWorkReport('c1', 'nonexistent', 'u1', {
+          idempotencyKey: 'report-4',
           goodQty: 10,
           defectQty: 0,
         }),

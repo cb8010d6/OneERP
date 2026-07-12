@@ -165,7 +165,7 @@ describe('ProductionController', () => {
         'c1',
         { id: 'u1', email: 'test@example.com' },
         'wo1',
-        { goodQty: 10, defectQty: 1 },
+        { idempotencyKey: 'report-1', goodQty: 10, defectQty: 1 },
       );
 
       expect(result).toEqual(expected);
@@ -173,7 +173,7 @@ describe('ProductionController', () => {
         'c1',
         'wo1',
         'u1',
-        { goodQty: 10, defectQty: 1 },
+        { idempotencyKey: 'report-1', goodQty: 10, defectQty: 1 },
       );
     });
   });

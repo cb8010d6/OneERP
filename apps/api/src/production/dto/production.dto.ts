@@ -9,6 +9,7 @@ import {
   IsDateString,
   IsUUID,
   ArrayMinSize,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -36,6 +37,14 @@ export class CreateWorkOrderDto {
 }
 
 export class CreateWorkReportDto {
+  @ApiProperty({
+    description: '客户端生成的报工幂等键，同一次提交重试时保持不变',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  idempotencyKey!: string;
+
   @ApiProperty({ description: '良品数量' })
   @IsNumber()
   @Min(0)

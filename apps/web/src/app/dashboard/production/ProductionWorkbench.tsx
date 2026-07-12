@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Boxes,
@@ -10,9 +10,9 @@ import {
   PackageCheck,
   PlusCircle,
   ShoppingCart,
-} from 'lucide-react';
-import api from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+} from "lucide-react";
+import api from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 type WorkOrder = {
   id: string;
@@ -70,6 +70,7 @@ type SupplierOption = {
 };
 
 type ReportDraft = {
+  idempotencyKey: string;
   goodQty: number;
   defectQty: number;
   sourceLocationId: string;
@@ -114,7 +115,7 @@ type MaterialAvailabilityRow = {
   unitPrice: number;
   estimatedAmount: number;
   coveragePct: number;
-  status: 'AVAILABLE' | 'SHORTAGE';
+  status: "AVAILABLE" | "SHORTAGE";
   affectedWorkOrders: MaterialAvailabilitySource[];
   incomingSources: MaterialAvailabilityIncomingSource[];
 };
@@ -135,7 +136,7 @@ type MaterialAvailabilityData = {
   missingBomWorkOrders: MaterialAvailabilityMissingBom[];
 };
 
-const statuses = ['PENDING', 'IN_PROGRESS', 'COMPLETED'];
+const statuses = ["PENDING", "IN_PROGRESS", "COMPLETED"];
 const emptyMaterialAvailability: MaterialAvailabilityData = {
   rows: [],
   shortageCount: 0,
@@ -143,10 +144,10 @@ const emptyMaterialAvailability: MaterialAvailabilityData = {
   missingBomWorkOrders: [],
 };
 
-function statusLabel(status: string, t: ReturnType<typeof useI18n>['t']) {
-  if (status === 'PENDING') return t('productionStatusPending');
-  if (status === 'IN_PROGRESS') return t('productionStatusInProgress');
-  if (status === 'COMPLETED') return t('productionStatusCompleted');
+function statusLabel(status: string, t: ReturnType<typeof useI18n>["t"]) {
+  if (status === "PENDING") return t("productionStatusPending");
+  if (status === "IN_PROGRESS") return t("productionStatusInProgress");
+  if (status === "COMPLETED") return t("productionStatusCompleted");
   return status;
 }
 
@@ -154,7 +155,7 @@ export function ProductionWorkbench() {
   const { t } = useI18n();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
-  const [selectedSalesOrderId, setSelectedSalesOrderId] = useState('');
+  const [selectedSalesOrderId, setSelectedSalesOrderId] = useState("");
   const [releasedDocuments, setReleasedDocuments] = useState<
     ReleasedEngineeringDocument[]
   >([]);
@@ -162,7 +163,7 @@ export function ProductionWorkbench() {
   const [loadingEngineeringDocs, setLoadingEngineeringDocs] = useState(false);
   const [locations, setLocations] = useState<Location[]>([]);
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([]);
-  const [selectedSupplierId, setSelectedSupplierId] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [materialAvailability, setMaterialAvailability] =
     useState<MaterialAvailabilityData>(emptyMaterialAvailability);
   const [drafts, setDrafts] = useState<Record<string, ReportDraft>>({});
@@ -177,46 +178,45 @@ export function ProductionWorkbench() {
     try {
       setLoading(true);
       setError(null);
-      const [ordersResp, locationsResp, availabilityResp] =
-        await Promise.all([
-          api.get('/production/orders', { params: { page: 1, limit: 100 } }),
-          api.get('/inventory/locations'),
-          api.get('/production/material-availability'),
-        ]);
+      const [ordersResp, locationsResp, availabilityResp] = await Promise.all([
+        api.get("/production/orders", { params: { page: 1, limit: 100 } }),
+        api.get("/inventory/locations"),
+        api.get("/production/material-availability"),
+      ]);
       setOrders((ordersResp.data?.data as WorkOrder[]) ?? []);
       setLocations((locationsResp.data as Location[]) ?? []);
       setMaterialAvailability(
         (availabilityResp.data as MaterialAvailabilityData) ??
           emptyMaterialAvailability,
       );
-      const salesResp = await api.get('/orders', {
+      const salesResp = await api.get("/orders", {
         params: { page: 1, limit: 100 },
       });
       const nextSalesOrders = (
         (salesResp.data?.data as SalesOrder[]) ?? []
-      ).filter((order) => !['CANCELLED', 'COMPLETED'].includes(order.status));
+      ).filter((order) => !["CANCELLED", "COMPLETED"].includes(order.status));
       setSalesOrders(nextSalesOrders);
-      setSelectedSalesOrderId((prev) => prev || nextSalesOrders[0]?.id || '');
+      setSelectedSalesOrderId((prev) => prev || nextSalesOrders[0]?.id || "");
       try {
-        const suppliersResp = await api.get('/purchase/supplier-options');
+        const suppliersResp = await api.get("/purchase/supplier-options");
         const nextSuppliers = (suppliersResp.data as SupplierOption[]) ?? [];
         setSuppliers(nextSuppliers);
         setSelectedSupplierId((prev) =>
           nextSuppliers.some((supplier) => supplier.id === prev)
             ? prev
-            : nextSuppliers[0]?.id || '',
+            : nextSuppliers[0]?.id || "",
         );
       } catch {
         setSuppliers([]);
-        setSelectedSupplierId('');
+        setSelectedSupplierId("");
       }
     } catch (reason) {
       const message =
-        reason && typeof reason === 'object' && 'response' in reason
+        reason && typeof reason === "object" && "response" in reason
           ? (reason as { response?: { data?: { message?: string } } }).response
               ?.data?.message
           : undefined;
-      setError(message || t('productionLoadFailed'));
+      setError(message || t("productionLoadFailed"));
     } finally {
       setLoading(false);
     }
@@ -249,11 +249,11 @@ export function ProductionWorkbench() {
         setReleasedDocuments([]);
         setSelectedRevisionIds([]);
         const message =
-          reason && typeof reason === 'object' && 'response' in reason
+          reason && typeof reason === "object" && "response" in reason
             ? (reason as { response?: { data?: { message?: string } } })
                 .response?.data?.message
             : undefined;
-        setError(message || '已发布工程版本加载失败');
+        setError(message || "已发布工程版本加载失败");
       } finally {
         if (!cancelled) setLoadingEngineeringDocs(false);
       }
@@ -274,18 +274,19 @@ export function ProductionWorkbench() {
   const shortageRows = useMemo(
     () =>
       materialAvailability.rows.filter(
-        (row) => row.status === 'SHORTAGE' && row.shortageQty > 0,
+        (row) => row.status === "SHORTAGE" && row.shortageQty > 0,
       ),
     [materialAvailability.rows],
   );
 
   const readDraft = (id: string): ReportDraft =>
     drafts[id] ?? {
+      idempotencyKey: crypto.randomUUID(),
       goodQty: 1,
       defectQty: 0,
-      sourceLocationId: '',
-      destLocationId: '',
-      batchNo: '',
+      sourceLocationId: "",
+      destLocationId: "",
+      batchNo: "",
     };
 
   const updateDraft = (id: string, patch: Partial<ReportDraft>) => {
@@ -308,18 +309,18 @@ export function ProductionWorkbench() {
       const createdCount = Number(response.data?.created?.length ?? 0);
       const skippedCount = Number(response.data?.skipped?.length ?? 0);
       setMessage(
-        `${t('productionGeneratedCount')}: ${createdCount}; ${t(
-          'productionSkippedCount',
+        `${t("productionGeneratedCount")}: ${createdCount}; ${t(
+          "productionSkippedCount",
         )}: ${skippedCount}`,
       );
       await load();
     } catch (reason) {
       const message =
-        reason && typeof reason === 'object' && 'response' in reason
+        reason && typeof reason === "object" && "response" in reason
           ? (reason as { response?: { data?: { message?: string } } }).response
               ?.data?.message
           : undefined;
-      setError(message || t('productionGenerateFailed'));
+      setError(message || t("productionGenerateFailed"));
     } finally {
       setGenerating(false);
     }
@@ -327,10 +328,23 @@ export function ProductionWorkbench() {
 
   const submitReport = async (order: WorkOrder) => {
     const draft = readDraft(order.id);
+    const remainingQty = Math.max(0, order.plannedQty - order.actualQty);
+    if (draft.goodQty > remainingQty) {
+      setError(`良品报工不能超过剩余数量 ${remainingQty}`);
+      return;
+    }
+    if (draft.goodQty === 0 && draft.defectQty === 0) {
+      setError("良品和不良品数量不能同时为 0");
+      return;
+    }
+    setDrafts((current) =>
+      current[order.id] ? current : { ...current, [order.id]: draft },
+    );
     try {
       setSubmittingId(order.id);
       setError(null);
-      await api.post(`/production/orders/${order.id}/report`, {
+      const response = await api.post(`/production/orders/${order.id}/report`, {
+        idempotencyKey: draft.idempotencyKey,
         goodQty: Number(draft.goodQty || 0),
         defectQty: Number(draft.defectQty || 0),
         sourceLocationId: draft.sourceLocationId,
@@ -342,14 +356,21 @@ export function ProductionWorkbench() {
         delete next[order.id];
         return next;
       });
+      setMessage(
+        response.data?.idempotentReplay
+          ? "重复报工已安全返回原处理结果，库存未重复过账"
+          : `报工与库存过账已原子完成，共 ${Number(
+              response.data?.inventoryTransactionIds?.length ?? 0,
+            )} 笔库存流水`,
+      );
       await load();
     } catch (reason) {
       const message =
-        reason && typeof reason === 'object' && 'response' in reason
+        reason && typeof reason === "object" && "response" in reason
           ? (reason as { response?: { data?: { message?: string } } }).response
               ?.data?.message
           : undefined;
-      setError(message || t('productionReportFailed'));
+      setError(message || t("productionReportFailed"));
     } finally {
       setSubmittingId(null);
     }
@@ -362,26 +383,26 @@ export function ProductionWorkbench() {
       setError(null);
       setMessage(null);
       const response = await api.post(
-        '/production/material-availability/purchase-order',
+        "/production/material-availability/purchase-order",
         {
           supplierId: selectedSupplierId,
           materialIds: shortageRows.map((row) => row.materialId),
         },
       );
-      const purchaseNo = String(response.data?.purchaseNo ?? '');
+      const purchaseNo = String(response.data?.purchaseNo ?? "");
       setMessage(
         purchaseNo
-          ? `${t('productionPurchaseOrderCreated')}: ${purchaseNo}`
-          : t('productionPurchaseOrderCreated'),
+          ? `${t("productionPurchaseOrderCreated")}: ${purchaseNo}`
+          : t("productionPurchaseOrderCreated"),
       );
       await load();
     } catch (reason) {
       const message =
-        reason && typeof reason === 'object' && 'response' in reason
+        reason && typeof reason === "object" && "response" in reason
           ? (reason as { response?: { data?: { message?: string } } }).response
               ?.data?.message
           : undefined;
-      setError(message || t('productionPurchaseOrderCreateFailed'));
+      setError(message || t("productionPurchaseOrderCreateFailed"));
     } finally {
       setCreatingPurchaseOrder(false);
     }
@@ -391,7 +412,7 @@ export function ProductionWorkbench() {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-sm text-slate-500">{t('productionLoading')}</p>
+        <p className="text-sm text-slate-500">{t("productionLoading")}</p>
       </div>
     );
   }
@@ -401,10 +422,10 @@ export function ProductionWorkbench() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">
-            {t('productionWorkbench')}
+            {t("productionWorkbench")}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {t('productionWorkbenchHint')}
+            {t("productionWorkbenchHint")}
           </p>
         </div>
         <button
@@ -412,7 +433,7 @@ export function ProductionWorkbench() {
           onClick={() => void load()}
           className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
-          {t('commonRefresh')}
+          {t("commonRefresh")}
         </button>
       </div>
 
@@ -431,10 +452,10 @@ export function ProductionWorkbench() {
         <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
           <div>
             <h2 className="text-sm font-semibold text-slate-900">
-              {t('productionGenerateFromOrder')}
+              {t("productionGenerateFromOrder")}
             </h2>
             <p className="mt-1 text-xs text-slate-500">
-              {t('productionGenerateHint')}
+              {t("productionGenerateHint")}
             </p>
             <select
               value={selectedSalesOrderId}
@@ -443,7 +464,7 @@ export function ProductionWorkbench() {
             >
               {salesOrders.map((order) => (
                 <option key={order.id} value={order.id}>
-                  {order.orderNo} · {order.partner?.name || '-'} ·{' '}
+                  {order.orderNo} · {order.partner?.name || "-"} ·{" "}
                   {order.status}
                 </option>
               ))}
@@ -493,13 +514,13 @@ export function ProductionWorkbench() {
                             {document.documentNo} · R
                             {String(
                               document.currentReleasedRevision.revisionNo,
-                            ).padStart(2, '0')}
+                            ).padStart(2, "0")}
                           </span>
                           <span className="mt-0.5 block truncate text-xs text-slate-600">
                             {document.title}
                             {document.product
                               ? ` · ${document.product.sku}`
-                              : ' · 订单级文档'}
+                              : " · 订单级文档"}
                           </span>
                         </span>
                       </label>
@@ -525,7 +546,7 @@ export function ProductionWorkbench() {
             ) : (
               <PlusCircle className="h-4 w-4" />
             )}
-            {t('productionGenerate')}
+            {t("productionGenerate")}
           </button>
         </div>
       </section>
@@ -536,11 +557,11 @@ export function ProductionWorkbench() {
             <div className="flex items-center gap-2">
               <Boxes className="h-4 w-4 text-slate-500" />
               <h2 className="text-sm font-semibold text-slate-900">
-                {t('productionMaterialAvailability')}
+                {t("productionMaterialAvailability")}
               </h2>
             </div>
             <p className="mt-1 text-xs text-slate-500">
-              {t('productionMaterialAvailabilityHint')}
+              {t("productionMaterialAvailabilityHint")}
             </p>
           </div>
           <div className="grid grid-cols-3 gap-2 text-center text-xs">
@@ -548,20 +569,20 @@ export function ProductionWorkbench() {
               <p className="font-semibold text-slate-900">
                 {materialAvailability.totalOpenWorkOrders}
               </p>
-              <p className="text-slate-500">{t('productionOpenOrders')}</p>
+              <p className="text-slate-500">{t("productionOpenOrders")}</p>
             </div>
             <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2">
               <p className="font-semibold text-red-700">
                 {materialAvailability.shortageCount}
               </p>
-              <p className="text-red-600">{t('productionMaterialShortage')}</p>
+              <p className="text-red-600">{t("productionMaterialShortage")}</p>
             </div>
             <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
               <p className="font-semibold text-amber-700">
                 {materialAvailability.missingBomWorkOrders.length}
               </p>
               <p className="text-amber-700">
-                {t('productionMaterialMissingBom')}
+                {t("productionMaterialMissingBom")}
               </p>
             </div>
           </div>
@@ -570,7 +591,7 @@ export function ProductionWorkbench() {
         <div className="mt-4 grid gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[1fr_auto]">
           <div>
             <label className="text-xs font-medium text-slate-600">
-              {t('productionProcurementSupplier')}
+              {t("productionProcurementSupplier")}
             </label>
             <select
               value={selectedSupplierId}
@@ -578,11 +599,11 @@ export function ProductionWorkbench() {
               className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
             >
               {suppliers.length === 0 ? (
-                <option value="">{t('productionNoSupplierOptions')}</option>
+                <option value="">{t("productionNoSupplierOptions")}</option>
               ) : null}
               {suppliers.map((supplier) => (
                 <option key={supplier.id} value={supplier.id}>
-                  {supplier.code ? `${supplier.code} · ` : ''}
+                  {supplier.code ? `${supplier.code} · ` : ""}
                   {supplier.name}
                 </option>
               ))}
@@ -603,7 +624,7 @@ export function ProductionWorkbench() {
             ) : (
               <ShoppingCart className="h-4 w-4" />
             )}
-            {t('productionCreatePurchaseOrder')}
+            {t("productionCreatePurchaseOrder")}
           </button>
         </div>
 
@@ -611,7 +632,7 @@ export function ProductionWorkbench() {
           <div className="mt-4 rounded-lg border border-amber-100 bg-amber-50 p-3">
             <div className="mb-2 flex items-center gap-2 text-sm font-medium text-amber-800">
               <AlertTriangle className="h-4 w-4" />
-              {t('productionMaterialMissingBom')}
+              {t("productionMaterialMissingBom")}
             </div>
             <div className="grid gap-2 md:grid-cols-2">
               {materialAvailability.missingBomWorkOrders.map((item) => (
@@ -621,8 +642,8 @@ export function ProductionWorkbench() {
                 >
                   <p className="font-mono font-semibold">{item.workOrderNo}</p>
                   <p className="mt-1 truncate">
-                    {item.productSku ? `${item.productSku} · ` : ''}
-                    {item.productName} · {t('productionOpenQty')}:{' '}
+                    {item.productSku ? `${item.productSku} · ` : ""}
+                    {item.productName} · {t("productionOpenQty")}:{" "}
                     {item.openQty}
                   </p>
                   <p className="mt-1 text-amber-700">{item.reason}</p>
@@ -650,37 +671,35 @@ export function ProductionWorkbench() {
                   </div>
                   <span
                     className={
-                      row.status === 'SHORTAGE'
-                        ? 'rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700'
-                        : 'rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700'
+                      row.status === "SHORTAGE"
+                        ? "rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700"
+                        : "rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700"
                     }
                   >
-                    {row.status === 'SHORTAGE'
-                      ? t('productionMaterialShortage')
-                      : t('productionMaterialAllClear')}
+                    {row.status === "SHORTAGE"
+                      ? t("productionMaterialShortage")
+                      : t("productionMaterialAllClear")}
                   </span>
                 </div>
 
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                   <div>
                     <p className="text-slate-500">
-                      {t('productionRequiredQty')}
+                      {t("productionRequiredQty")}
                     </p>
                     <p className="font-semibold text-slate-900">
                       {row.requiredQty}
                     </p>
                   </div>
                   <div>
-                    <p className="text-slate-500">
-                      {t('productionOnHandQty')}
-                    </p>
+                    <p className="text-slate-500">{t("productionOnHandQty")}</p>
                     <p className="font-semibold text-slate-900">
                       {row.onHandQty}
                     </p>
                   </div>
                   <div>
                     <p className="text-slate-500">
-                      {t('productionIncomingQty')}
+                      {t("productionIncomingQty")}
                     </p>
                     <p className="font-semibold text-slate-900">
                       {row.incomingQty}
@@ -688,13 +707,13 @@ export function ProductionWorkbench() {
                   </div>
                   <div>
                     <p className="text-slate-500">
-                      {t('productionShortageQty')}
+                      {t("productionShortageQty")}
                     </p>
                     <p
                       className={
                         row.shortageQty > 0
-                          ? 'font-semibold text-red-700'
-                          : 'font-semibold text-emerald-700'
+                          ? "font-semibold text-red-700"
+                          : "font-semibold text-emerald-700"
                       }
                     >
                       {row.shortageQty}
@@ -702,11 +721,11 @@ export function ProductionWorkbench() {
                   </div>
                 </div>
 
-                {row.status === 'SHORTAGE' ? (
+                {row.status === "SHORTAGE" ? (
                   <div className="mt-3 grid grid-cols-2 gap-2 rounded-md bg-red-50 px-3 py-2 text-xs">
                     <div>
                       <p className="text-red-600">
-                        {t('productionSuggestedPurchaseQty')}
+                        {t("productionSuggestedPurchaseQty")}
                       </p>
                       <p className="font-semibold text-red-800">
                         {row.suggestedPurchaseQty}
@@ -714,7 +733,7 @@ export function ProductionWorkbench() {
                     </div>
                     <div>
                       <p className="text-red-600">
-                        {t('productionEstimatedAmount')}
+                        {t("productionEstimatedAmount")}
                       </p>
                       <p className="font-semibold text-red-800">
                         {row.estimatedAmount}
@@ -725,18 +744,18 @@ export function ProductionWorkbench() {
 
                 <div className="mt-3">
                   <div className="flex justify-between text-xs text-slate-500">
-                    <span>{t('productionMaterialCoverage')}</span>
+                    <span>{t("productionMaterialCoverage")}</span>
                     <span>
-                      {row.coveragePct}% · {t('productionProjectedQty')}{' '}
+                      {row.coveragePct}% · {t("productionProjectedQty")}{" "}
                       {row.projectedQty}
                     </span>
                   </div>
                   <div className="mt-1 h-2 rounded-full bg-slate-100">
                     <div
                       className={
-                        row.status === 'SHORTAGE'
-                          ? 'h-2 rounded-full bg-red-500'
-                          : 'h-2 rounded-full bg-emerald-500'
+                        row.status === "SHORTAGE"
+                          ? "h-2 rounded-full bg-red-500"
+                          : "h-2 rounded-full bg-emerald-500"
                       }
                       style={{ width: `${row.coveragePct}%` }}
                     />
@@ -746,7 +765,7 @@ export function ProductionWorkbench() {
                 {row.incomingSources.length > 0 ? (
                   <div className="mt-3 space-y-1">
                     <p className="text-xs font-medium text-slate-700">
-                      {t('productionIncomingSources')}
+                      {t("productionIncomingSources")}
                     </p>
                     {row.incomingSources.slice(0, 3).map((source) => (
                       <div
@@ -754,11 +773,11 @@ export function ProductionWorkbench() {
                         className="flex items-center justify-between gap-2 rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-800"
                       >
                         <span className="truncate">
-                          {source.purchaseNo} · {source.supplierName || '-'} ·{' '}
+                          {source.purchaseNo} · {source.supplierName || "-"} ·{" "}
                           {source.status}
                         </span>
                         <span className="shrink-0">
-                          {t('productionIncomingQty')}: {source.incomingQty}
+                          {t("productionIncomingQty")}: {source.incomingQty}
                         </span>
                       </div>
                     ))}
@@ -767,7 +786,7 @@ export function ProductionWorkbench() {
 
                 <div className="mt-3 space-y-1">
                   <p className="text-xs font-medium text-slate-700">
-                    {t('productionMaterialAffectedOrders')}
+                    {t("productionMaterialAffectedOrders")}
                   </p>
                   {row.affectedWorkOrders.slice(0, 3).map((source) => (
                     <div
@@ -778,7 +797,7 @@ export function ProductionWorkbench() {
                         {source.workOrderNo} · {source.productName}
                       </span>
                       <span className="shrink-0">
-                        {t('productionRequiredQty')}: {source.requiredQty}
+                        {t("productionRequiredQty")}: {source.requiredQty}
                       </span>
                     </div>
                   ))}
@@ -788,7 +807,7 @@ export function ProductionWorkbench() {
           </div>
         ) : (
           <div className="mt-4 rounded-lg border border-dashed border-slate-200 p-4 text-center text-sm text-slate-400">
-            {t('productionMaterialNoDemand')}
+            {t("productionMaterialNoDemand")}
           </div>
         )}
       </section>
@@ -832,11 +851,11 @@ export function ProductionWorkbench() {
                           {order.workOrderNo}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">
-                          {order.order?.orderNo || '-'} ·{' '}
-                          {order.order?.partner?.name || '-'}
+                          {order.order?.orderNo || "-"} ·{" "}
+                          {order.order?.partner?.name || "-"}
                         </p>
                       </div>
-                      {order.status === 'COMPLETED' ? (
+                      {order.status === "COMPLETED" ? (
                         <CheckCircle2 className="h-5 w-5 text-emerald-500" />
                       ) : (
                         <PackageCheck className="h-5 w-5 text-blue-500" />
@@ -845,7 +864,7 @@ export function ProductionWorkbench() {
 
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-slate-500">
-                        <span>{t('productionProgress')}</span>
+                        <span>{t("productionProgress")}</span>
                         <span>
                           {order.actualQty}/{order.plannedQty}
                         </span>
@@ -869,29 +888,39 @@ export function ProductionWorkbench() {
                               key={pin.engineeringRevision.id}
                               className="truncate font-mono text-[11px] text-blue-700"
                             >
-                              {pin.engineeringRevision.engineeringDocument.documentNo}
-                              {' · R'}
-                              {String(pin.engineeringRevision.revisionNo).padStart(
-                                2,
-                                '0',
-                              )}{' '}
-                              · {pin.engineeringRevision.engineeringDocument.title}
+                              {
+                                pin.engineeringRevision.engineeringDocument
+                                  .documentNo
+                              }
+                              {" · R"}
+                              {String(
+                                pin.engineeringRevision.revisionNo,
+                              ).padStart(2, "0")}{" "}
+                              ·{" "}
+                              {
+                                pin.engineeringRevision.engineeringDocument
+                                  .title
+                              }
                             </p>
                           ))}
                         </div>
                       </div>
                     ) : null}
 
-                    {order.status !== 'COMPLETED' ? (
+                    {order.status !== "COMPLETED" ? (
                       <div className="mt-3 grid gap-2 text-xs">
                         <div className="grid grid-cols-2 gap-2">
                           <label className="space-y-1">
                             <span className="text-slate-500">
-                              {t('productionGoodQty')}
+                              {t("productionGoodQty")}
                             </span>
                             <input
                               type="number"
                               min={0}
+                              max={Math.max(
+                                0,
+                                order.plannedQty - order.actualQty,
+                              )}
                               value={draft.goodQty}
                               onChange={(event) =>
                                 updateDraft(order.id, {
@@ -903,7 +932,7 @@ export function ProductionWorkbench() {
                           </label>
                           <label className="space-y-1">
                             <span className="text-slate-500">
-                              {t('productionDefectQty')}
+                              {t("productionDefectQty")}
                             </span>
                             <input
                               type="number"
@@ -919,9 +948,15 @@ export function ProductionWorkbench() {
                           </label>
                         </div>
 
+                        <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-blue-800">
+                          剩余可报良品{" "}
+                          {Math.max(0, order.plannedQty - order.actualQty)}；
+                          提交时将原料扣减、成品入库和工单进度一次完成，网络重试不会重复过账。
+                        </div>
+
                         <label className="space-y-1">
                           <span className="text-slate-500">
-                            {t('productionSourceLocation')}
+                            {t("productionSourceLocation")}
                           </span>
                           <select
                             value={draft.sourceLocationId}
@@ -932,10 +967,10 @@ export function ProductionWorkbench() {
                             }
                             className="w-full rounded border border-slate-200 px-2 py-1"
                           >
-                            <option value="">{t('selectPlaceholder')}</option>
+                            <option value="">{t("selectPlaceholder")}</option>
                             {locations.map((location) => (
                               <option key={location.id} value={location.id}>
-                                {location.code ? `${location.code} · ` : ''}
+                                {location.code ? `${location.code} · ` : ""}
                                 {location.name}
                               </option>
                             ))}
@@ -944,7 +979,7 @@ export function ProductionWorkbench() {
 
                         <label className="space-y-1">
                           <span className="text-slate-500">
-                            {t('productionDestLocation')}
+                            {t("productionDestLocation")}
                           </span>
                           <select
                             value={draft.destLocationId}
@@ -955,10 +990,10 @@ export function ProductionWorkbench() {
                             }
                             className="w-full rounded border border-slate-200 px-2 py-1"
                           >
-                            <option value="">{t('selectPlaceholder')}</option>
+                            <option value="">{t("selectPlaceholder")}</option>
                             {locations.map((location) => (
                               <option key={location.id} value={location.id}>
-                                {location.code ? `${location.code} · ` : ''}
+                                {location.code ? `${location.code} · ` : ""}
                                 {location.name}
                               </option>
                             ))}
@@ -967,7 +1002,7 @@ export function ProductionWorkbench() {
 
                         <label className="space-y-1">
                           <span className="text-slate-500">
-                            {t('productionBatchNo')}
+                            {t("productionBatchNo")}
                           </span>
                           <input
                             value={draft.batchNo}
@@ -983,13 +1018,17 @@ export function ProductionWorkbench() {
                         <button
                           type="button"
                           onClick={() => void submitReport(order)}
-                          disabled={submittingId === order.id}
+                          disabled={
+                            submittingId === order.id ||
+                            (draft.goodQty === 0 && draft.defectQty === 0) ||
+                            draft.goodQty > order.plannedQty - order.actualQty
+                          }
                           className="mt-1 inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                         >
                           {submittingId === order.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : null}
-                          {t('productionSubmitReport')}
+                          {t("productionSubmitReport")}
                         </button>
                       </div>
                     ) : null}
@@ -999,7 +1038,7 @@ export function ProductionWorkbench() {
 
               {group.items.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-slate-200 bg-white p-4 text-center text-sm text-slate-400">
-                  {t('productionNoOrders')}
+                  {t("productionNoOrders")}
                 </div>
               ) : null}
             </div>

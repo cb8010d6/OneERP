@@ -465,11 +465,13 @@ export class InventoryService {
     operatorId?: string,
   ): Promise<InventoryTransactionRecord> {
     const sourceLocation = await this.resolveLocationOwnership(
+      this.prisma,
       companyId,
       data.sourceLocationId,
       '来源库位',
     );
     const destLocation = await this.resolveLocationOwnership(
+      this.prisma,
       companyId,
       data.destLocationId,
       '目标库位',
@@ -500,8 +502,8 @@ export class InventoryService {
       select: { id: true, unitPrice: true },
     });
 
-    const transaction = await this.prisma.$transaction((tx) =>
-      this.executeStockMove(tx, {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const transaction = await this.executeStockMove(tx, {
         companyId,
         materialId: data.materialId,
         quantity: data.quantity,
@@ -512,28 +514,22 @@ export class InventoryService {
         referenceNo,
         note: finalNote,
         unitCost: data.unitCost,
-      }),
-    );
-
-    if (transaction.type === 'OUTBOUND') {
-      await this.eventQueueService.publish({
-        eventName: 'inventory.stock_depleted',
-        idempotencyKey: `stock_depleted:${transaction.id}`,
-        companyId,
-        payload: {
-          companyId,
-          idempotencyKey: `stock_depleted:${transaction.id}`,
-          transactionId: transaction.id,
-          referenceNo: transaction.referenceNo,
-          materialId: transaction.materialId,
-          quantity: transaction.quantity,
-          unitCost: transaction.unitCost ?? Number(material?.unitPrice ?? 0),
-          operatorId: operatorId || 'SYSTEM',
-        },
       });
+      const queuedEvent = await this.queueStockDepletedInTransaction(
+        tx,
+        companyId,
+        transaction,
+        operatorId,
+        Number(material?.unitPrice ?? 0),
+      );
+      return { transaction, queuedEventId: queuedEvent?.id ?? null };
+    });
+
+    if (result.queuedEventId) {
+      await this.eventQueueService.dispatchById(result.queuedEventId);
     }
 
-    return transaction;
+    return result.transaction;
   }
 
   async createStockMoveInTransaction(
@@ -543,11 +539,13 @@ export class InventoryService {
     operatorId?: string,
   ): Promise<InventoryTransactionRecord> {
     const sourceLocation = await this.resolveLocationOwnership(
+      tx,
       companyId,
       data.sourceLocationId,
       '来源库位',
     );
     const destLocation = await this.resolveLocationOwnership(
+      tx,
       companyId,
       data.destLocationId,
       '目标库位',
@@ -581,6 +579,37 @@ export class InventoryService {
       note: data.note ?? this.buildMoveNote(data.documentType, data.documentId),
       unitCost: data.unitCost,
     });
+  }
+
+  async queueStockDepletedInTransaction(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    transaction: InventoryTransactionRecord,
+    operatorId?: string,
+    fallbackUnitCost = 0,
+  ) {
+    if (transaction.type !== 'OUTBOUND') return null;
+    return this.eventQueueService.enqueueInTransaction(tx, {
+      eventName: 'inventory.stock_depleted',
+      idempotencyKey: `stock_depleted:${transaction.id}`,
+      companyId,
+      payload: {
+        companyId,
+        idempotencyKey: `stock_depleted:${transaction.id}`,
+        transactionId: transaction.id,
+        referenceNo: transaction.referenceNo,
+        materialId: transaction.materialId,
+        quantity: transaction.quantity,
+        unitCost: transaction.unitCost ?? fallbackUnitCost,
+        operatorId: operatorId || 'SYSTEM',
+      },
+    });
+  }
+
+  async dispatchQueuedEvents(eventIds: string[]) {
+    for (const eventId of eventIds) {
+      await this.eventQueueService.dispatchById(eventId);
+    }
   }
 
   async createInbound(
@@ -1009,13 +1038,14 @@ export class InventoryService {
   }
 
   private async resolveLocationOwnership(
+    client: PrismaService | Prisma.TransactionClient,
     companyId: string,
     locationId: string | undefined,
     label: string,
   ) {
     if (!locationId) return undefined;
 
-    const location = await this.prisma.stockLocation.findFirst({
+    const location = await client.stockLocation.findFirst({
       where: { id: locationId, companyId },
       select: { id: true, name: true, warehouseId: true },
     });

@@ -132,6 +132,8 @@ describe('InventoryService', () => {
 
   const eventQueueService = {
     publish: jest.fn(),
+    enqueueInTransaction: jest.fn(),
+    dispatchById: jest.fn(),
   };
 
   let service: InventoryService;
@@ -151,6 +153,11 @@ describe('InventoryService', () => {
     tx.stockQuant.count.mockResolvedValue(1);
     tx.material.findFirst.mockResolvedValue({ unitPrice: 10 });
     tx.materialCost.findUnique.mockResolvedValue(null);
+    eventQueueService.enqueueInTransaction.mockResolvedValue({ id: 'event-1' });
+    eventQueueService.dispatchById.mockResolvedValue({
+      id: 'event-1',
+      status: 'RESOLVED',
+    });
     stockQueryService = new StockQueryService(
       prisma as unknown as ConstructorParameters<typeof StockQueryService>[0],
       kyselyService as unknown as ConstructorParameters<
@@ -823,7 +830,8 @@ describe('InventoryService', () => {
         }),
       }),
     );
-    expect(eventQueueService.publish).toHaveBeenCalledWith(
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledWith(
+      tx,
       expect.objectContaining({
         eventName: 'inventory.stock_depleted',
         payload: expect.objectContaining({
@@ -909,7 +917,8 @@ describe('InventoryService', () => {
     expect(tx.stockQuant.findFirst).toHaveBeenCalledTimes(2);
     expect(tx.stockQuant.updateMany).toHaveBeenCalledTimes(2);
     expect(createCall.data.batchNo).toBe('B2');
-    expect(eventQueueService.publish).toHaveBeenCalledWith(
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledWith(
+      tx,
       expect.objectContaining({
         eventName: 'inventory.stock_depleted',
         payload: expect.objectContaining({ materialId: 'm1', quantity: 2 }),
