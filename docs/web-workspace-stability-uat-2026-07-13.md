@@ -2,7 +2,7 @@
 
 日期：2026-07-13（Asia/Shanghai）
 
-当前部署标签：`uat-8dbfac5`
+当前部署标签：`uat-d7d71ca`
 
 分支：`refactor/remaining-tasks`
 
@@ -42,7 +42,23 @@
 - Web-only 归档大小为 `96706380` 字节，本地与远端 SHA-256 均为 `c86e6cb1ab839bf33797b64602f9861d08280566ff2efd91230ffd9826d395a5`。
 - 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-8dbfac5`；长期服务均为 healthy，migration 退出码为 0，API 与 Web 均返回 HTTP 200。
 
+## 生产登录引导增量部署
+
+- `499f7ff` 使生产构建不再默认预填本地管理员邮箱，也不再显示 `.env.quickstart` 密码路径；增加密码显示/隐藏、自动填充语义和可访问错误提示。
+- `npm run validate` 通过：API 45 suites / 452 tests，Web 11 suites / 55 tests；全部 Compose 配置和 GitHub validate、commitlint、CodeQL 通过。
+- 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-499f7ff`；长期服务均为 healthy，migration 退出码为 0。
+- 通过 SSH 隧道实机确认生产登录页账号为空、管理员帮助文案正确、无 quickstart 密码路径，密码显示/隐藏交互有效。
+
+## 售前工作台响应式增量部署
+
+- `d7d71ca` 为客户需求工作台增加 350ms 搜索防抖、过期请求隔离、加载失败重试、中文状态标签和移动端换行/单列输入布局；共享 `Sheet` 增加 dialog 语义、Esc 关闭、焦点恢复和后台滚动锁。
+- `npm run validate` 通过：API 45 suites / 452 tests，Web 12 suites / 61 tests；`npm run compose:config`、GitHub validate、commitlint 和 CodeQL 全部通过。
+- `graphify update .` 完成：3747 nodes、7649 edges、281 communities。
+- 本地 Docker BuildKit 初始化锁导致两次构建停在 0/0 步，因此使用同一提交全量 `next build` 的 standalone 运行产物追加到已验证的 Web 基础镜像；运行产物归档大小 `23313408` 字节，本地与远端 SHA-256 均为 `4554d7c805a61cfd0dfd7c42987189930c97f075a11950c33996b69b643ce8d2`。
+- 远端 Web 构建 ID 与本地均为 `LtM4dYHY0pGUIyImKWVnI`；`oneerp_test` 已切换至 `IMAGE_TAG=uat-d7d71ca`，长期服务均为 healthy，migration 退出码为 0，API 健康端点和 Web 工作台路由均返回 HTTP 200。
+- 部署使用临时 overlay 镜像，不是正式 GHCR 发布物；临时容器、远端归档和本地归档均已删除，保留上一标签用于回滚。
+
 ## 边界
 
 - 本次仅为受控 UAT，不代表生产就绪。
-- 当前验证覆盖自动化交互、构建和 HTTP 健康状态；真实浏览器视觉检查仍需浏览器控制运行时。
+- 登录页已完成真实浏览器交互检查；需要认证的售前工作台当前覆盖自动化交互、响应式样式契约、构建和 HTTP 健康状态，登录后的桌面/移动视觉检查仍需使用专用 UAT 账号完成。
