@@ -2,7 +2,7 @@
 
 日期：2026-07-13（Asia/Shanghai）
 运行时标签：`uat-eb97174`
-运维脚本提交：`db6de78`
+运维脚本提交：`c952e42`
 Compose project：`oneerp_test`
 
 ## 范围
@@ -23,6 +23,7 @@ Compose project：`oneerp_test`
 - `uat-reports/staff-permission-smoke-eb97174.json`
 - `uat-reports/business-acceptance-eb97174.json`
 - `uat-reports/restore-drill-eb97174-post-rotation.json`
+- `uat-reports/restore-drill-c952e42.json`
 
 ## 备份与恢复改进
 
@@ -30,16 +31,17 @@ Compose project：`oneerp_test`
 - `backup.sh` 使用 `umask 077`，先写 `.incomplete-*` 临时目录，只有 PostgreSQL、MinIO 和清单全部成功后才原子改名。
 - MinIO 镜像不含 `tar`；备份和恢复改为使用固定 SHA-256 digest 的一次性 `alpine:3.20` helper 挂载同一数据卷，不修改业务镜像。
 - `restore-drill.sh` 支持可选 Compose override 和独立端口，默认使用 `18001/13001`，不会占用当前 UAT 的 `18000/13000`。
+- PostgreSQL dump 不携带源角色所有权或授权；恢复演练会为临时 PostgreSQL、JWT 和 MinIO 生成独立随机密钥，不复用 UAT 基础设施密钥。
 - 恢复顺序固定为：基础服务健康 → PostgreSQL/MinIO 恢复 → 核心数据校验 → migration → API 健康与管理员登录。
 - 新增最多 120 秒的基础服务/API 健康等待，并把实际 RPO 年龄和 RTO 耗时写入报告。
 
 ## 最终恢复证据
 
-- 备份：`backups/20260713-034011`，目录权限 `0700`，文件由 `umask 077` 创建。
-- 隔离项目：`oneerp_drill_eb97174`；演练后已自动执行 `down -v`，不保留临时容器或卷。
+- 最新复验备份：`backups/20260713-130009`，目录权限 `0700`，文件由 `umask 077` 创建，SQL 中无 `OWNER TO`、`GRANT` 或 `REVOKE`。
+- 隔离项目：`oneerp_drill_c952e42`；演练后已自动执行 `down -v`，不保留临时容器、卷或演练环境文件。
 - PostgreSQL 恢复、MinIO 恢复、公司、活跃用户、默认税码、默认总账日记账、API 健康和管理员登录全部通过。
-- RPO 数据年龄：1 分钟，目标不超过 15 分钟。
-- RTO 演练耗时：82 秒，目标不超过 60 分钟。
+- RPO 数据年龄：2 分钟，目标不超过 15 分钟。
+- RTO 演练耗时：90 秒，目标不超过 60 分钟。
 
 ## Windows 脚本等价验证
 
