@@ -129,17 +129,25 @@ describe('AIService', () => {
     );
   });
 
-  it('does not expose generic sales shipment as an AI workflow action', async () => {
+  it('exposes only the AI workflow safety whitelist', async () => {
     const { service } = createService();
     const schemas = await service.getToolSchemas();
     const transition = schemas.find(
       (schema) => schema.name === 'transition_workflow',
     );
     const properties = transition?.parameters.properties as
-      | { action?: { enum?: string[] } }
+      | {
+          modelName?: { enum?: string[] };
+          action?: { enum?: string[] };
+        }
       | undefined;
 
-    expect(properties?.action?.enum).not.toContain('ship');
+    expect(properties?.modelName?.enum).toEqual(['order']);
+    expect(properties?.action?.enum).toEqual([
+      'submit',
+      'start_production',
+      'complete',
+    ]);
     expect(transition?.description).toContain('销售发货工作台');
   });
 
@@ -172,6 +180,40 @@ describe('AIService', () => {
     ).rejects.toThrow('销售发货必须在订单详情的销售发货工作台执行');
     expect(workflowService.transition).not.toHaveBeenCalled();
   });
+
+  it.each([
+    {
+      modelName: 'workOrder',
+      action: 'complete',
+      message: '生产工单状态必须通过生产报工工作台更新',
+    },
+    {
+      modelName: 'invoice',
+      action: 'post',
+      message: '发票过账必须通过财务工作台执行',
+    },
+    {
+      modelName: 'order',
+      action: 'cancel',
+      message: '该工作流动作不在 AI 安全白名单中',
+    },
+  ])(
+    'rejects $modelName $action outside the AI workflow whitelist',
+    async ({ modelName, action, message }) => {
+      const { service, llmAdapterService, workflowService } = createService();
+      llmAdapterService.resolveToolCall.mockResolvedValue({
+        toolName: 'transition_workflow',
+        args: { modelName, recordId: 'record-1', action },
+      });
+
+      await expect(
+        service.command('执行工作流', 'company-1', 'user-1', {
+          dryRun: true,
+        }),
+      ).rejects.toThrow(message);
+      expect(workflowService.transition).not.toHaveBeenCalled();
+    },
+  );
 
   it('rejects tampered preview token', async () => {
     const { service } = createService();

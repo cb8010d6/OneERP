@@ -123,13 +123,13 @@ export class AIService {
       {
         name: 'transition_workflow',
         description:
-          '执行不涉及库存过账的工作流流转（如订单提交、开始生产、完成）。销售发货必须在销售发货工作台执行。action 对应 transition action code。',
+          '仅执行安全白名单中的销售订单流转：提交、开始生产、完成。销售发货必须使用销售发货工作台；生产报工、财务过账和取消必须在对应业务工作台执行。',
         parameters: {
           type: 'object',
           properties: {
             modelName: {
               type: 'string',
-              enum: ['order', 'workOrder', 'invoice'],
+              enum: ['order'],
             },
             recordId: {
               type: 'string',
@@ -137,13 +137,7 @@ export class AIService {
             },
             action: {
               type: 'string',
-              enum: [
-                'submit',
-                'start_production',
-                'complete',
-                'cancel',
-                'post',
-              ],
+              enum: ['submit', 'start_production', 'complete'],
             },
             note: { type: 'string' },
           },
@@ -908,6 +902,31 @@ export class AIService {
         '销售发货必须在订单详情的销售发货工作台执行，以确保库存原子过账和审计完整。',
       );
     }
+
+    const allowedOrderActions = new Set([
+      'submit',
+      'start_production',
+      'complete',
+    ]);
+    if (modelName === 'order' && allowedOrderActions.has(action)) {
+      return;
+    }
+
+    if (modelName === 'workorder' || modelName === 'work_order') {
+      throw new BadRequestException(
+        '生产工单状态必须通过生产报工工作台更新，以确保原料出库、成品入库和工单进度原子一致。',
+      );
+    }
+
+    if (modelName === 'invoice') {
+      throw new BadRequestException(
+        '发票过账必须通过财务工作台执行，以确保会计分录、应收状态和审计完整。',
+      );
+    }
+
+    throw new BadRequestException(
+      '该工作流动作不在 AI 安全白名单中，请使用对应业务工作台执行。',
+    );
   }
 
   private signPreviewToken(payload: CommandPreviewPayload) {
