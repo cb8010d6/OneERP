@@ -171,12 +171,14 @@ const zh = {
   loginAccount: "登录账号",
   loginPassword: "安全密码",
   loginPlaceholder: "请输入账号",
-  loginHint:
+  loginHint: "请使用系统管理员分配的账号登录；如需重置密码，请联系系统管理员。",
+  loginQuickstartHint:
     "本地 quickstart 默认密码见 .env.quickstart 的 INIT_ADMIN_PASSWORD；上线后必须立即修改管理员密码。",
+  loginShowPassword: "显示密码",
+  loginHidePassword: "隐藏密码",
   loginSubmit: "登录",
   loginSubmitting: "正在登录...",
-  loginFailed:
-    "邮箱或密码错误。Quickstart 本地默认密码见 .env.quickstart 的 INIT_ADMIN_PASSWORD。",
+  loginFailed: "邮箱或密码错误，请检查账号信息后重试。",
   inviteTitle: "接受员工邀请",
   inviteSubtitle: "设置密码后即可进入 OneERP 工作台。",
   inviteMissingToken: "邀请链接缺少 token",
@@ -904,11 +906,14 @@ const en: Record<keyof typeof zh, string> = {
   loginPassword: "Password",
   loginPlaceholder: "Enter account email",
   loginHint:
+    "Use the account assigned by your system administrator. Contact them if you need a password reset.",
+  loginQuickstartHint:
     "For local quickstart, see INIT_ADMIN_PASSWORD in .env.quickstart. Change the admin password immediately after deployment.",
+  loginShowPassword: "Show password",
+  loginHidePassword: "Hide password",
   loginSubmit: "Sign in",
   loginSubmitting: "Signing in...",
-  loginFailed:
-    "Invalid email or password. For quickstart, see INIT_ADMIN_PASSWORD in .env.quickstart.",
+  loginFailed: "Invalid email or password. Check the account details and try again.",
   inviteTitle: "Accept Employee Invitation",
   inviteSubtitle: "Set a password to enter the OneERP workspace.",
   inviteMissingToken: "Invitation token is missing.",

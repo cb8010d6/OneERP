@@ -4,17 +4,31 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '../../store/authStore';
 import api, { readApiError } from '../../lib/api';
-import { Building2, Lock, Mail } from 'lucide-react';
+import { Building2, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 import { useI18n } from '../../lib/i18n';
+
+export function resolveDefaultLoginEmail(
+  configuredEmail = process.env.NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL,
+  environment = process.env.NODE_ENV,
+) {
+  if (configuredEmail) return configuredEmail;
+  return environment === 'production' ? '' : 'admin@oneerp.local';
+}
+
+export function shouldShowQuickstartLoginHint(
+  environment = process.env.NODE_ENV,
+) {
+  return environment !== 'production';
+}
 
 export default function LoginPage() {
   const { language, setLanguage, t } = useI18n();
-  const [email, setEmail] = useState(
-    process.env.NEXT_PUBLIC_DEFAULT_LOGIN_EMAIL ?? 'admin@oneerp.local',
-  );
+  const [email, setEmail] = useState(resolveDefaultLoginEmail);
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const showQuickstartHint = shouldShowQuickstartLoginHint();
   
   const router = useRouter();
   const setAuth = useAuthStore((state) => state.setAuth);
@@ -59,45 +73,74 @@ export default function LoginPage() {
         
         <form onSubmit={handleLogin} className="p-8 space-y-6">
           {error && (
-            <div className="bg-red-50 text-red-500 p-3 rounded-lg text-sm mb-4 border border-red-100">
+            <div
+              className="bg-red-50 text-red-600 p-3 rounded-lg text-sm mb-4 border border-red-100"
+              role="alert"
+              aria-live="polite"
+            >
               {error}
             </div>
           )}
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">{t('loginAccount')}</label>
+            <label htmlFor="login-email" className="block text-sm font-medium text-slate-700 mb-2">{t('loginAccount')}</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Mail className="h-5 w-5 text-slate-400" />
               </div>
               <input
-                type="text"
+                id="login-email"
+                name="email"
+                type="email"
                 required
                 className="pl-10 w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-slate-900"
                 placeholder={t('loginPlaceholder')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                autoComplete="username"
+                inputMode="email"
+                autoCapitalize="none"
+                spellCheck={false}
+                disabled={loading}
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">{t('loginPassword')}</label>
+            <label htmlFor="login-password" className="block text-sm font-medium text-slate-700 mb-2">{t('loginPassword')}</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Lock className="h-5 w-5 text-slate-400" />
               </div>
               <input
-                type="password"
+                id="login-password"
+                name="password"
+                type={showPassword ? 'text' : 'password'}
                 required
-                className="pl-10 w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-slate-900"
+                className="pl-10 pr-12 w-full p-3 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all text-slate-900"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                disabled={loading}
               />
+              <button
+                type="button"
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 transition-colors hover:text-slate-700 focus-visible:outline-none focus-visible:text-blue-600"
+                onClick={() => setShowPassword((visible) => !visible)}
+                aria-label={t(showPassword ? 'loginHidePassword' : 'loginShowPassword')}
+                title={t(showPassword ? 'loginHidePassword' : 'loginShowPassword')}
+                disabled={loading}
+              >
+                {showPassword ? (
+                  <EyeOff className="h-5 w-5" aria-hidden="true" />
+                ) : (
+                  <Eye className="h-5 w-5" aria-hidden="true" />
+                )}
+              </button>
             </div>
             <p className="mt-2 text-xs text-slate-500">
-              {t('loginHint')}
+              {t(showQuickstartHint ? 'loginQuickstartHint' : 'loginHint')}
             </p>
           </div>
 
