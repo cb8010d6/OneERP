@@ -1,0 +1,54 @@
+# 受控 UAT 运维门禁记录
+
+日期：2026-07-13（Asia/Shanghai）
+运行时标签：`uat-eb97174`
+运维脚本提交：`db6de78`
+Compose project：`oneerp_test`
+
+## 范围
+
+- 在服务器现有精确镜像上执行部署检查、生产冒烟、员工权限验收和完整业务验收。
+- 创建 PostgreSQL 与 MinIO 即时备份，并在独立 Compose project 中执行恢复演练。
+- 当前服务器为 2 GB 受控 UAT；所有结果只证明该环境的自动化门禁，不替代 HTTPS、异地备份、真实数据验收和人工签字。
+
+## 门禁结果
+
+- `deploy-check`：Docker、Compose 配置、环境文件、强密钥、服务状态、API 健康和 Web 根路径全部通过，`failed=0`。
+- `prod-smoke`：登录页、Dashboard、管理员登录、统计、订单、动态元数据/资源、库存台账和发票查询全部通过，`failed=0`。
+- `staff-permission-smoke`：13 个步骤全部通过；Readonly 员工可读订单和 AI tools，但用户创建、库存过账、工作流流转、部门创建、文件上传及 AI 写操作均返回 403。
+- `business-acceptance`：11 个步骤全部通过；采购入库后库存为 10，库存不足发货被拒绝且数量不变，正常销售发货后库存为 6，销售发票生成借贷各 452 的凭证，最终试算平衡借贷各 3636、差额 0。
+
+服务器报告：
+
+- `uat-reports/staff-permission-smoke-eb97174.json`
+- `uat-reports/business-acceptance-eb97174.json`
+- `uat-reports/restore-drill-eb97174-post-rotation.json`
+
+## 备份与恢复改进
+
+- `deploy-check.sh` 的 `docker compose config` 改为静默校验，避免展开的环境变量进入日志。
+- `backup.sh` 使用 `umask 077`，先写 `.incomplete-*` 临时目录，只有 PostgreSQL、MinIO 和清单全部成功后才原子改名。
+- MinIO 镜像不含 `tar`；备份和恢复改为使用固定 SHA-256 digest 的一次性 `alpine:3.20` helper 挂载同一数据卷，不修改业务镜像。
+- `restore-drill.sh` 支持可选 Compose override 和独立端口，默认使用 `18001/13001`，不会占用当前 UAT 的 `18000/13000`。
+- 恢复顺序固定为：基础服务健康 → PostgreSQL/MinIO 恢复 → 核心数据校验 → migration → API 健康与管理员登录。
+- 新增最多 120 秒的基础服务/API 健康等待，并把实际 RPO 年龄和 RTO 耗时写入报告。
+
+## 最终恢复证据
+
+- 备份：`backups/20260713-034011`，目录权限 `0700`，文件由 `umask 077` 创建。
+- 隔离项目：`oneerp_drill_eb97174`；演练后已自动执行 `down -v`，不保留临时容器或卷。
+- PostgreSQL 恢复、MinIO 恢复、公司、活跃用户、默认税码、默认总账日记账、API 健康和管理员登录全部通过。
+- RPO 数据年龄：1 分钟，目标不超过 15 分钟。
+- RTO 演练耗时：82 秒，目标不超过 60 分钟。
+
+## 安全处置
+
+- 旧版部署检查曾把 Compose 展开的敏感环境值带入受控检查日志；脚本已修复为静默输出。
+- UAT 的数据库密码、JWT、MinIO 密钥和管理员密码均已在服务器端无回显轮换，并通过新凭据登录、部署检查和生产冒烟。
+- 轮换前的两个备份及全部 `.env.before-*` 已删除；只保留轮换后且通过恢复演练的备份。
+- 当前 `.env` 权限为 `0600`。
+
+## 边界
+
+- 当前证据不包含异地备份、HTTPS 外部链路、真实业务负责人签字或生产数据验收。
+- 当前状态仍为受控 UAT，不代表生产就绪。
