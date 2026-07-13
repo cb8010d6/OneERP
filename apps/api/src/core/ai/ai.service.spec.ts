@@ -129,6 +129,50 @@ describe('AIService', () => {
     );
   });
 
+  it('does not expose generic sales shipment as an AI workflow action', async () => {
+    const { service } = createService();
+    const schemas = await service.getToolSchemas();
+    const transition = schemas.find(
+      (schema) => schema.name === 'transition_workflow',
+    );
+    const properties = transition?.parameters.properties as
+      | { action?: { enum?: string[] } }
+      | undefined;
+
+    expect(properties?.action?.enum).not.toContain('ship');
+    expect(transition?.description).toContain('销售发货工作台');
+  });
+
+  it('rejects AI shipment before creating a confirmation draft', async () => {
+    const { service, llmAdapterService, workflowService } = createService();
+    llmAdapterService.resolveToolCall.mockResolvedValue({
+      toolName: 'transition_workflow',
+      args: { modelName: 'order', recordId: 'order-1', action: 'ship' },
+    });
+
+    await expect(
+      service.command('发货订单 ORD-001', 'company-1', 'user-1', {
+        dryRun: true,
+      }),
+    ).rejects.toThrow('销售发货必须在订单详情的销售发货工作台执行');
+    expect(workflowService.transition).not.toHaveBeenCalled();
+  });
+
+  it('rejects direct AI shipment execution before workflow transition', async () => {
+    const { service, llmAdapterService, workflowService } = createService();
+    llmAdapterService.resolveToolCall.mockResolvedValue({
+      toolName: 'transition_workflow',
+      args: { modelName: 'order', recordId: 'order-1', action: 'ship' },
+    });
+
+    await expect(
+      service.command('发货订单 ORD-001', 'company-1', 'user-1', {
+        dryRun: false,
+      }),
+    ).rejects.toThrow('销售发货必须在订单详情的销售发货工作台执行');
+    expect(workflowService.transition).not.toHaveBeenCalled();
+  });
+
   it('rejects tampered preview token', async () => {
     const { service } = createService();
 

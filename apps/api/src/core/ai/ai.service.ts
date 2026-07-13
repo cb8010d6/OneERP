@@ -123,7 +123,7 @@ export class AIService {
       {
         name: 'transition_workflow',
         description:
-          '执行工作流流转（如订单发货、提交、完成）。例如: "把订单 ORD-001 标记为发货", "完成发票 INV-123"。action 对应 transition action code。',
+          '执行不涉及库存过账的工作流流转（如订单提交、开始生产、完成）。销售发货必须在销售发货工作台执行。action 对应 transition action code。',
         parameters: {
           type: 'object',
           properties: {
@@ -140,7 +140,6 @@ export class AIService {
               enum: [
                 'submit',
                 'start_production',
-                'ship',
                 'complete',
                 'cancel',
                 'post',
@@ -612,9 +611,14 @@ export class AIService {
     const orderNo = this.extractOrderNo(text);
     const action = this.extractOrderAction(text);
 
+    this.assertToolCallAllowed('transition_workflow', {
+      modelName: 'order',
+      action,
+    });
+
     if (!orderNo || !action) {
       throw new BadRequestException(
-        '请给出订单号和动作，例如：把订单 ORD-202603-1234 标记为发货',
+        '请给出订单号和动作，例如：提交订单 ORD-202603-1234',
       );
     }
 
@@ -712,6 +716,8 @@ export class AIService {
     companyId: string,
     userId: string,
   ) {
+    this.assertToolCallAllowed(toolName, args);
+
     if (toolName === 'create_resource') {
       const modelName = this.readStringArg(args, 'modelName');
       const data = this.readRecordArg(args, 'data');
@@ -859,6 +865,7 @@ export class AIService {
     companyId: string,
     userId: string,
   ) {
+    this.assertToolCallAllowed(toolName, args);
     const expiresAt = Date.now() + 5 * 60 * 1000;
     const token = this.signPreviewToken({
       input: originalInput,
@@ -881,6 +888,26 @@ export class AIService {
         writeEnabled: process.env.AI_WRITE_ENABLED === 'true',
       },
     };
+  }
+
+  private assertToolCallAllowed(
+    toolName: string,
+    args: Record<string, unknown>,
+  ) {
+    if (toolName !== 'transition_workflow') {
+      return;
+    }
+
+    const modelName = this.readStringArg(args, 'modelName').toLowerCase();
+    const action = this.readStringArg(args, 'action').toLowerCase();
+    if (
+      (modelName === 'order' || modelName === 'sale_order') &&
+      action === 'ship'
+    ) {
+      throw new BadRequestException(
+        '销售发货必须在订单详情的销售发货工作台执行，以确保库存原子过账和审计完整。',
+      );
+    }
   }
 
   private signPreviewToken(payload: CommandPreviewPayload) {
