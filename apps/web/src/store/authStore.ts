@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { resolvePublicApiBaseUrl } from '../lib/public-api-base';
 
 export interface User {
   id: string;
@@ -27,8 +28,7 @@ interface AuthState {
   restoreSession: () => Promise<boolean>;
 }
 
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
+const apiBaseUrl = resolvePublicApiBaseUrl();
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (!raw) {

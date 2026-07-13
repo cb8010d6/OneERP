@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosHeaders } from 'axios';
 import { useAuthStore, getCsrfTokenFromCookie } from '../store/authStore';
+import { resolvePublicApiBaseUrl } from './public-api-base';
 
 declare module 'axios' {
   export interface InternalAxiosRequestConfig {
@@ -47,8 +48,7 @@ function sanitizePaginationInUrl(url?: string): string | undefined {
   }
 }
 
-const baseURL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
+const baseURL = resolvePublicApiBaseUrl();
 
 const api = axios.create({
   baseURL,
