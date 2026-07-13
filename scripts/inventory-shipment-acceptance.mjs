@@ -79,6 +79,20 @@ async function shipmentTransactions(session, referenceNo) {
   );
 }
 
+async function transactionsByReferencePrefix(session, referencePrefix, type) {
+  const response = await request(
+    "/inventory/transactions?page=1&limit=200",
+    {},
+    session,
+  );
+  const rows = Array.isArray(response) ? response : (response?.data ?? []);
+  return rows.filter(
+    (row) =>
+      String(row.referenceNo ?? "").startsWith(referencePrefix) &&
+      row.type === type,
+  );
+}
+
 const admin = await login(adminEmail, adminPassword);
 const suffix = Date.now().toString(36).toUpperCase();
 const batchNo = `SHIP-BATCH-${suffix}`;
@@ -216,6 +230,111 @@ if (
   );
 }
 
+const firstReversal = await request(
+  `/inventory/posting/sale-order/${order.id}/reverse`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      destLocationId: location.id,
+      note: "第一周期发货冲销 UAT",
+    }),
+  },
+  admin,
+);
+const afterFirstReversalQty = await ledgerQty(
+  admin,
+  material.id,
+  location.id,
+);
+const afterFirstReversalOrder = await request(`/orders/${order.id}`, {}, admin);
+if (
+  firstReversal.reversedLines?.length !== 2 ||
+  !firstReversal.returnDocument?.returnNo ||
+  afterFirstReversalQty !== 2 ||
+  afterFirstReversalOrder.status !== "IN_PRODUCTION"
+) {
+  throw new Error(
+    `First reversal is incomplete: ${JSON.stringify({ lines: firstReversal.reversedLines?.length, returnNo: firstReversal.returnDocument?.returnNo, qty: afterFirstReversalQty, status: afterFirstReversalOrder.status })}`,
+  );
+}
+
+const reversalReplay = await request(
+  `/inventory/posting/sale-order/${order.id}/reverse`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      destLocationId: location.id,
+      note: "第一周期发货冲销重放 UAT",
+    }),
+  },
+  admin,
+);
+const afterReplayQty = await ledgerQty(admin, material.id, location.id);
+if (
+  reversalReplay.reversedLines?.length !== 0 ||
+  reversalReplay.returnDocument?.id !== firstReversal.returnDocument.id ||
+  afterReplayQty !== 2
+) {
+  throw new Error(
+    `Reversal replay was not idempotent: ${JSON.stringify({ lines: reversalReplay.reversedLines?.length, returnId: reversalReplay.returnDocument?.id, qty: afterReplayQty })}`,
+  );
+}
+
+const reshipped = await request(
+  `/inventory/posting/sale-order/${order.id}/ship`,
+  { method: "POST", body: JSON.stringify(shipmentPayload) },
+  admin,
+);
+const afterReshipQty = await ledgerQty(admin, material.id, location.id);
+const afterReshipOrder = await request(`/orders/${order.id}`, {}, admin);
+if (
+  reshipped.postedLines?.length !== 2 ||
+  afterReshipQty !== 0 ||
+  afterReshipOrder.status !== "SHIPPED"
+) {
+  throw new Error(
+    `Reship after reversal failed: ${JSON.stringify({ lines: reshipped.postedLines?.length, qty: afterReshipQty, status: afterReshipOrder.status })}`,
+  );
+}
+
+const secondReversal = await request(
+  `/inventory/posting/sale-order/${order.id}/reverse`,
+  {
+    method: "POST",
+    body: JSON.stringify({
+      destLocationId: location.id,
+      note: "第二周期发货冲销 UAT",
+    }),
+  },
+  admin,
+);
+const afterSecondReversalQty = await ledgerQty(
+  admin,
+  material.id,
+  location.id,
+);
+const afterSecondReversalOrder = await request(
+  `/orders/${order.id}`,
+  {},
+  admin,
+);
+const reversalTransactions = await transactionsByReferencePrefix(
+  admin,
+  `SALE-SHIP-REV-${order.orderNo}`,
+  "INBOUND",
+);
+if (
+  secondReversal.reversedLines?.length !== 2 ||
+  secondReversal.returnDocument?.id === firstReversal.returnDocument.id ||
+  afterSecondReversalQty !== 2 ||
+  afterSecondReversalOrder.status !== "IN_PRODUCTION" ||
+  reversalTransactions.length !== 4
+) {
+  throw new Error(
+    `Second reversal cycle failed: ${JSON.stringify({ lines: secondReversal.reversedLines?.length, returnId: secondReversal.returnDocument?.id, qty: afterSecondReversalQty, status: afterSecondReversalOrder.status, transactions: reversalTransactions.length })}`,
+  );
+}
+
 console.log(
   JSON.stringify({
     passed: true,
@@ -226,7 +345,15 @@ console.log(
     noPartialTransactions: failedTransactions.length === 0,
     successfulShipmentLines: shipped.postedLines.length,
     stockClearedAfterSuccess: afterSuccessQty === 0,
-    finalOrderStatus: afterSuccessOrder.status,
+    firstReversalRestoredStock: afterFirstReversalQty === 2,
+    reversalReplayIdempotent: afterReplayQty === 2,
+    reshipAfterReversalPassed: afterReshipOrder.status === "SHIPPED",
+    secondReversalCyclePassed: reversalTransactions.length === 4,
+    reversalReturnDocuments: [
+      firstReversal.returnDocument.returnNo,
+      secondReversal.returnDocument.returnNo,
+    ],
+    finalOrderStatus: afterSecondReversalOrder.status,
   }),
 );
 

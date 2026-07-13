@@ -157,27 +157,48 @@ export class InventoryService {
     }
 
     const referenceNo = `SALE-SHIP-${order.orderNo}`;
-    const shippedMoves = await this.prisma.inventoryTransaction.findMany({
+    const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
+    const shipmentMoves = await this.prisma.inventoryTransaction.findMany({
       where: {
         companyId,
-        referenceNo,
-        type: 'OUTBOUND',
+        OR: [
+          { referenceNo, type: 'OUTBOUND' },
+          { referenceNo: reverseReferencePrefix, type: 'INBOUND' },
+          {
+            referenceNo: { startsWith: `${reverseReferencePrefix}-` },
+            type: 'INBOUND',
+          },
+        ],
       },
       select: {
         materialId: true,
         quantity: true,
+        type: true,
+        referenceNo: true,
       },
     });
 
     const shippedQuantityByProductId = new Map<string, number>();
-    for (const move of shippedMoves) {
+    for (const move of shipmentMoves) {
       const productId = productByMaterialId.get(move.materialId);
       if (!productId) continue;
 
       const current = shippedQuantityByProductId.get(productId) ?? 0;
+      const isReversal =
+        move.type === 'INBOUND' ||
+        move.referenceNo === reverseReferencePrefix ||
+        move.referenceNo?.startsWith(`${reverseReferencePrefix}-`);
       shippedQuantityByProductId.set(
         productId,
-        current + Number(move.quantity ?? 0),
+        roundDecimal(
+          current + (isReversal ? -1 : 1) * Number(move.quantity ?? 0),
+        ),
+      );
+    }
+    for (const [productId, quantity] of shippedQuantityByProductId) {
+      shippedQuantityByProductId.set(
+        productId,
+        roundDecimal(Math.max(0, quantity)),
       );
     }
 
@@ -895,28 +916,28 @@ export class InventoryService {
     }
 
     const shipmentReferenceNo = `SALE-SHIP-${order.orderNo}`;
-    const reverseReferenceNo = `SALE-SHIP-REV-${order.orderNo}`;
+    const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
 
     const result = await this.prisma.$transaction(
       async (tx) => {
-        const existedReverse = await tx.inventoryTransaction.count({
-          where: { companyId, referenceNo: reverseReferenceNo },
-        });
-
-        if (existedReverse > 0) {
-          const returnDocument = await this.findReturnDocumentByReference(
+        const latestReturn = await tx.inventoryReturnDocument.findFirst({
+          where: {
             companyId,
-            reverseReferenceNo,
-            tx,
-          );
-          return { alreadyReversed: true as const, returnDocument };
-        }
+            returnType: 'SALES',
+            sourceDocumentId: order.id,
+          },
+          select: { referenceNo: true, postedAt: true },
+          orderBy: { postedAt: 'desc' },
+        });
 
         const shippedMoves = await tx.inventoryTransaction.findMany({
           where: {
             companyId,
             referenceNo: shipmentReferenceNo,
             type: 'OUTBOUND',
+            ...(latestReturn
+              ? { createdAt: { gt: latestReturn.postedAt } }
+              : {}),
           },
           select: {
             materialId: true,
@@ -926,9 +947,30 @@ export class InventoryService {
           orderBy: { createdAt: 'asc' },
         });
 
+        if (!shippedMoves.length && latestReturn) {
+          const returnDocument = await this.findReturnDocumentByReference(
+            companyId,
+            latestReturn.referenceNo,
+            tx,
+          );
+          return { alreadyReversed: true as const, returnDocument };
+        }
+
         if (!shippedMoves.length) {
           throw new BadRequestException('未找到可冲销的销售出库流水');
         }
+
+        const reversalCount = await tx.inventoryReturnDocument.count({
+          where: {
+            companyId,
+            returnType: 'SALES',
+            sourceDocumentId: order.id,
+          },
+        });
+        const reverseReferenceNo =
+          reversalCount === 0
+            ? reverseReferencePrefix
+            : `${reverseReferencePrefix}-${reversalCount + 1}`;
 
         const reversedLines: Array<{
           materialId: string;

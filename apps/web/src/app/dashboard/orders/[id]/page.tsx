@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, FileText, Package } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatCurrency, formatDateTime } from "../../../../lib/format";
 import { SalesShipmentPanel } from "./SalesShipmentPanel";
+import { SalesShipmentReversalPanel } from "./SalesShipmentReversalPanel";
 import { canCancelSalesOrder } from "../../../../lib/sales-order-transition";
 
 interface OrderDetail {
@@ -490,6 +491,22 @@ export default function OrderDetailPage() {
               onPosted={(shipment) => {
                 setOrder((current) =>
                   current ? { ...current, status: shipment.status } : current,
+                );
+              }}
+            />
+          )}
+
+          {["PARTIAL_SHIPPED", "SHIPPED", "COMPLETED"].includes(
+            order.status,
+          ) && (
+            <SalesShipmentReversalPanel
+              orderId={order.id}
+              orderNo={order.orderNo}
+              onReversed={() => {
+                setOrder((current) =>
+                  current
+                    ? { ...current, status: "IN_PRODUCTION" }
+                    : current,
                 );
               }}
             />
