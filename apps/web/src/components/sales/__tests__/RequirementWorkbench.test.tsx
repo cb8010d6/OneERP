@@ -1,7 +1,17 @@
 import React from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { RequirementWorkbench } from '../RequirementWorkbench';
+import {
+  RequirementWorkbench,
+  requirementStatusLabel,
+} from '../RequirementWorkbench';
 import { useAuthStore } from '@/store/authStore';
 
 const mockGet = jest.fn();
@@ -49,6 +59,91 @@ describe('RequirementWorkbench', () => {
         status: 'DRAFT',
       },
     });
+  });
+
+  it('renders readable status labels and retries a failed load', async () => {
+    mockGet
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValueOnce({
+        data: {
+          data: [requirementWithContract('ACTIVE')],
+          total: 1,
+          page: 1,
+          limit: 100,
+          totalPages: 1,
+        },
+      });
+    const user = userEvent.setup();
+    render(<RequirementWorkbench />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '客户需求加载失败：network unavailable',
+    );
+    await user.click(screen.getByRole('button', { name: '重试' }));
+
+    expect((await screen.findAllByText('报价中')).length).toBeGreaterThan(1);
+    expect(mockGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('maps known requirement statuses while preserving unknown ones', () => {
+    expect(requirementStatusLabel('FOLLOWING')).toBe('跟进中');
+    expect(requirementStatusLabel('CONVERTED')).toBe('已转化');
+    expect(requirementStatusLabel('CUSTOM')).toBe('CUSTOM');
+  });
+
+  it('debounces requirement searches before requesting filtered data', async () => {
+    jest.useFakeTimers();
+    try {
+      render(<RequirementWorkbench />);
+      await act(async () => undefined);
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      fireEvent.change(screen.getByPlaceholderText('搜索单号、客户或摘要'), {
+        target: { value: 'REQ-2026' },
+      });
+      act(() => jest.advanceTimersByTime(349));
+      expect(mockGet).toHaveBeenCalledTimes(1);
+
+      await act(async () => jest.advanceTimersByTime(1));
+      expect(mockGet).toHaveBeenLastCalledWith(
+        '/presales/requirements?page=1&limit=100&search=REQ-2026',
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('ignores an older request that finishes after a newer filter result', async () => {
+    let resolveInitialRequest: (value: unknown) => void = () => undefined;
+    mockGet
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveInitialRequest = resolve;
+          }),
+      )
+      .mockResolvedValueOnce({
+        data: {
+          data: [requirementWithContract('ACTIVE')],
+          total: 1,
+          page: 1,
+          limit: 100,
+          totalPages: 1,
+        },
+      });
+    render(<RequirementWorkbench />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: '需求状态' }), {
+      target: { value: 'QUOTING' },
+    });
+    expect(await screen.findByText('REQ-2026-000003')).toBeInTheDocument();
+
+    await act(async () => {
+      resolveInitialRequest({
+        data: { data: [], total: 0, page: 1, limit: 100, totalPages: 1 },
+      });
+    });
+    expect(screen.getByText('REQ-2026-000003')).toBeInTheDocument();
   });
 
   it('creates a customer requirement through the public API', async () => {
@@ -124,9 +219,9 @@ describe('RequirementWorkbench', () => {
       'QT-2026-000001 销售合同',
     );
     await user.click(
-      within(screen.getByRole('complementary')).getByRole('button', {
-        name: '登记合同 V1',
-      }),
+      within(
+        screen.getByRole('dialog', { name: '登记合同 V1' }),
+      ).getByRole('button', { name: '登记合同 V1' }),
     );
 
     await waitFor(() => {

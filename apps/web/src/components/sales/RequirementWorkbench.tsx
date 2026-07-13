@@ -1,12 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ClipboardList,
   FilePlus2,
   FileSignature,
   Loader2,
   Plus,
+  RefreshCw,
   Search,
   ShoppingCart,
   Trash2,
@@ -108,6 +109,19 @@ function statusClass(status: string) {
   return 'bg-slate-100 text-slate-600';
 }
 
+export function requirementStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    DRAFT: '草稿',
+    FOLLOWING: '跟进中',
+    QUALIFIED: '已确认',
+    QUOTING: '报价中',
+    LOST: '已丢单',
+    CANCELLED: '已取消',
+    CONVERTED: '已转化',
+  };
+  return labels[status] ?? status;
+}
+
 function dateLabel(value: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN') : '-';
 }
@@ -115,8 +129,11 @@ function dateLabel(value: string | null) {
 export function RequirementWorkbench() {
   const [requirements, setRequirements] = useState<RequirementListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const [status, setStatus] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const requestSequence = useRef(0);
   const [createOpen, setCreateOpen] = useState(false);
   const [actionMode, setActionMode] = useState<'follow-up' | 'close' | null>(
     null,
@@ -173,27 +190,48 @@ export function RequirementWorkbench() {
   >({});
 
   const fetchRequirements = useCallback(async () => {
+    const requestId = requestSequence.current + 1;
+    requestSequence.current = requestId;
     setLoading(true);
+    setLoadError('');
     try {
       const params = new URLSearchParams({ page: '1', limit: '100' });
-      if (search.trim()) params.set('search', search.trim());
+      if (searchQuery) params.set('search', searchQuery);
       if (status) params.set('status', status);
       const response = await api.get<RequirementListResponse>(
         `/presales/requirements?${params.toString()}`,
       );
+      if (requestId !== requestSequence.current) return;
       setRequirements(response.data.data ?? []);
     } catch (error) {
-      toast.error(
+      if (requestId !== requestSequence.current) return;
+      setLoadError(
         error instanceof Error ? error.message : '客户需求单加载失败',
       );
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
-  }, [search, status]);
+  }, [searchQuery, status]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
 
   useEffect(() => {
     void fetchRequirements();
   }, [fetchRequirements]);
+
+  const refreshRequirements = () => {
+    const nextSearch = searchInput.trim();
+    if (nextSearch === searchQuery) {
+      void fetchRequirements();
+      return;
+    }
+    setSearchQuery(nextSearch);
+  };
 
   const activeCount = useMemo(
     () =>
@@ -578,11 +616,11 @@ export function RequirementWorkbench() {
   };
 
   return (
-    <div className="space-y-5 p-4 sm:p-6 lg:p-8">
+    <div className="space-y-5">
       <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
         <div>
-          <h1 className="flex items-center gap-3 text-2xl font-black text-slate-900 sm:text-3xl">
-            <ClipboardList className="h-7 w-7 text-blue-600" />
+          <h1 className="flex items-center gap-2 text-xl font-bold text-slate-900 sm:text-2xl">
+            <ClipboardList className="h-6 w-6 text-blue-600" />
             客户需求
           </h1>
           <p className="mt-1 text-sm text-slate-500">
@@ -592,7 +630,7 @@ export function RequirementWorkbench() {
         <button
           type="button"
           onClick={() => setCreateOpen(true)}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white"
+          className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white sm:w-auto"
         >
           <Plus className="h-4 w-4" /> 新建客户需求
         </button>
@@ -603,8 +641,8 @@ export function RequirementWorkbench() {
           <span className="sr-only">搜索客户需求</span>
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            value={searchInput}
+            onChange={(event) => setSearchInput(event.target.value)}
             placeholder="搜索单号、客户或摘要"
             className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm"
           />
@@ -623,17 +661,41 @@ export function RequirementWorkbench() {
         </select>
         <button
           type="button"
-          onClick={() => void fetchRequirements()}
-          className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium"
+          onClick={refreshRequirements}
+          className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium sm:w-auto"
         >
+          <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           刷新
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+      {loadError ? (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>客户需求加载失败：{loadError}</span>
+          <button
+            type="button"
+            onClick={() => void fetchRequirements()}
+            className="self-start rounded-md border border-rose-200 bg-white px-3 py-1.5 font-semibold sm:self-auto"
+          >
+            重试
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+        aria-busy={loading}
+      >
         {loading ? (
           <div className="flex items-center gap-2 p-10 text-sm text-slate-500">
             <Loader2 className="h-4 w-4 animate-spin" /> 正在加载客户需求...
+          </div>
+        ) : loadError && requirements.length === 0 ? (
+          <div className="p-8 text-sm text-slate-500">
+            暂时无法显示客户需求，请重试。
           </div>
         ) : requirements.length === 0 ? (
           <div className="p-10 text-sm text-slate-500">
@@ -652,7 +714,7 @@ export function RequirementWorkbench() {
                       <span
                         className={`rounded-md px-2 py-1 text-xs font-bold ${statusClass(item.status)}`}
                       >
-                        {item.status}
+                        {requirementStatusLabel(item.status)}
                       </span>
                       <span className="text-xs text-slate-500">
                         {item.sourceChannel}
@@ -686,12 +748,12 @@ export function RequirementWorkbench() {
                   {!['LOST', 'CANCELLED', 'CONVERTED'].includes(
                     item.status,
                   ) && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {!item.quotes?.length ? (
                         <button
                           type="button"
                           onClick={() => openQuote(item)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 px-3 py-1.5 text-sm font-medium text-emerald-700"
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-emerald-200 px-3 py-1.5 text-sm font-medium text-emerald-700 sm:flex-none"
                         >
                           <FilePlus2 className="h-4 w-4" /> 创建报价
                         </button>
@@ -699,14 +761,14 @@ export function RequirementWorkbench() {
                       <button
                         type="button"
                         onClick={() => openAction(item, 'follow-up')}
-                        className="rounded-lg border border-blue-200 px-3 py-1.5 text-sm font-medium text-blue-700"
+                        className="flex-1 whitespace-nowrap rounded-lg border border-blue-200 px-3 py-1.5 text-sm font-medium text-blue-700 sm:flex-none"
                       >
                         添加跟进
                       </button>
                       <button
                         type="button"
                         onClick={() => openAction(item, 'close')}
-                        className="rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-medium text-rose-700"
+                        className="flex-1 whitespace-nowrap rounded-lg border border-rose-200 px-3 py-1.5 text-sm font-medium text-rose-700 sm:flex-none"
                       >
                         标记丢单
                       </button>
@@ -722,6 +784,7 @@ export function RequirementWorkbench() {
       <Sheet
         open={createOpen}
         title="新建客户需求"
+        closeLabel="关闭面板"
         onClose={() => setCreateOpen(false)}
       >
         <div className="space-y-4">
@@ -799,6 +862,7 @@ export function RequirementWorkbench() {
       <Sheet
         open={quoteOpen}
         title="创建报价 V1"
+        closeLabel="关闭面板"
         onClose={() => setQuoteOpen(false)}
       >
         <div className="space-y-5">
@@ -893,7 +957,7 @@ export function RequirementWorkbench() {
                     className="w-full rounded-lg border border-slate-200 px-3 py-2"
                   />
                 </FormField>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <FormField label="数量" htmlFor={`quote-qty-${item.rowId}`}>
                     <input
                       id={`quote-qty-${item.rowId}`}
@@ -966,7 +1030,7 @@ export function RequirementWorkbench() {
             </FormField>
           </div>
 
-          <div className="flex items-center justify-between border-t border-slate-200 pt-4">
+          <div className="flex flex-col gap-3 border-t border-slate-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs text-slate-500">预计含税总额</p>
               <p className="text-xl font-black text-slate-900">
@@ -980,7 +1044,7 @@ export function RequirementWorkbench() {
               type="button"
               disabled={saving}
               onClick={() => void submitQuote()}
-              className="rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50"
+              className="w-full rounded-xl bg-emerald-600 px-5 py-2.5 font-semibold text-white disabled:opacity-50 sm:w-auto"
             >
               {saving ? '正在创建...' : '创建报价 V1'}
             </button>
@@ -991,6 +1055,7 @@ export function RequirementWorkbench() {
       <Sheet
         open={contractOpen}
         title="登记合同 V1"
+        closeLabel="关闭面板"
         onClose={() => setContractOpen(false)}
       >
         <div className="space-y-5">
@@ -1047,6 +1112,7 @@ export function RequirementWorkbench() {
       <Sheet
         open={signOpen}
         title="归档合同签署件"
+        closeLabel="关闭面板"
         onClose={() => setSignOpen(false)}
       >
         <div className="space-y-5">
@@ -1084,6 +1150,7 @@ export function RequirementWorkbench() {
       <Sheet
         open={orderBatchOpen}
         title="创建销售订单批次"
+        closeLabel="关闭面板"
         onClose={() => setOrderBatchOpen(false)}
       >
         <div className="space-y-5">
@@ -1155,6 +1222,7 @@ export function RequirementWorkbench() {
       <Sheet
         open={Boolean(actionMode && selected)}
         title={actionMode === 'close' ? '标记丢单' : '添加跟进'}
+        closeLabel="关闭面板"
         onClose={() => setActionMode(null)}
       >
         <div className="space-y-4">
