@@ -1,7 +1,7 @@
 # 销售发货工作台受控 UAT
 
 日期：2026-07-13（Asia/Shanghai）
-当前部署标签：`uat-dcc2122`
+当前部署标签：`uat-eb97174`
 分支：`refactor/remaining-tasks`
 
 ## 范围
@@ -69,3 +69,17 @@
 - 远程 API 健康端点返回 `status=ok`，Web 根路径返回预期的登录重定向。
 - 扩展远端真实验收通过：`schemaWhitelistVerified=true`、`shipmentDraftBlocked=true`、`workOrderCompletionBlocked=true`、`invoicePostingBlocked=true`、`orderCancellationBlocked=true`、`directWorkflowShipmentBlocked=true`。
 - 本次部署仍为受控 UAT，不代表生产就绪。
+
+## 可重复销售发货冲销
+
+- 订单详情页新增“发货冲销与回库”工作台：必须显式确认影响，可选择回库库位、填写冲销原因，并显示反向流水结果与本订单退货单历史。
+- 销售发货剩余量改为按 `出库 - 冲销回库` 净额计算；冲销后可重新发货，查询返回顺序不会影响净额。
+- 首次冲销继续使用历史兼容编号 `SALE-SHIP-REV-{orderNo}`；后续发货周期使用独立后缀编号和独立退货单。
+- 首轮远端 UAT 暴露冲销未继承原出库批次，导致指定原批次重新发货时库存不足；`eb97174` 增加失败回归测试并修复为默认继承原批次，调用方仍可显式覆盖批次。
+- `npm run validate` 通过：API 45 suites / 452 tests，Web 10 suites / 53 tests；API/Web lint、typecheck 和生产构建通过。
+- Graphify 更新为 3722 nodes、7611 edges、278 communities。
+- API/Web 组合归档 `uat-70943e1` 大小为 `194247729` 字节，本地与远端 SHA-256 均为 `0f2e6de994e759e793a8681bf8eee296e4393206e0fb8bc1c1cbc4e653765f50`。
+- 批次修复 API 归档 `uat-eb97174` 大小为 `154689929` 字节，本地与远端 SHA-256 均为 `633b636e9fdb6f519cafe33a94e49432ac77a32c621202d6dd74f435d968d517`。
+- 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-eb97174`；全部长期服务 healthy，migration 容器退出码为 0，API 健康端点返回 `status=ok`。
+- 最终真实 UAT：`failedShipmentStatus=409`、`stockRolledBack=true`、`orderStatusRolledBack=true`、`noPartialTransactions=true`、`firstReversalRestoredStock=true`、`reversalReplayIdempotent=true`、`reshipAfterReversalPassed=true`、`secondReversalCyclePassed=true`，最终订单状态为 `IN_PRODUCTION`。
+- 本轮部署为受控 UAT，不代表生产就绪。
