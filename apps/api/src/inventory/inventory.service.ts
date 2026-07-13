@@ -943,6 +943,7 @@ export class InventoryService {
             materialId: true,
             quantity: true,
             sourceLocationId: true,
+            batchNo: true,
           },
           orderBy: { createdAt: 'asc' },
         });
@@ -989,7 +990,7 @@ export class InventoryService {
               quantity: Number(move.quantity),
               destLocationId:
                 payload.destLocationId ?? move.sourceLocationId ?? undefined,
-              batchNo: payload.batchNo,
+              batchNo: payload.batchNo ?? move.batchNo ?? undefined,
               referenceNo: reverseReferenceNo,
               documentType: 'SALE_ORDER_REVERSE',
               documentId: order.id,

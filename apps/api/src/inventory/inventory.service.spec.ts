@@ -387,6 +387,7 @@ describe('InventoryService', () => {
         materialId: 'm1',
         quantity: 2,
         sourceLocationId: 'loc-ship',
+        batchNo: 'SHIP-B1',
       },
     ]);
     tx.inventoryReturnDocument.count.mockResolvedValue(0);
@@ -417,6 +418,12 @@ describe('InventoryService', () => {
 
       expect(result.returnDocument).toEqual(
         expect.objectContaining({ id: 'ret1', returnNo: 'SR-1' }),
+      );
+      expect(moveSpy).toHaveBeenCalledWith(
+        tx,
+        'c1',
+        expect.objectContaining({ batchNo: 'SHIP-B1' }),
+        'u1',
       );
       expect(tx.inventoryReturnDocument.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
