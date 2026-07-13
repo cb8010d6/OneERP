@@ -23,6 +23,7 @@ import { CommandPalette } from '../../components/ai/CommandPalette';
 import { WorkspaceTabs } from '../../components/ui/WorkspaceTabs';
 import { useWorkspaceTabsStore } from '../../store/workspaceTabsStore';
 import { useI18n } from '../../lib/i18n';
+import { resolveDashboardRoute } from '../../lib/dashboard-routes';
 
 function hasPermission(permissions: readonly string[], required?: string) {
   if (!required) return true;
@@ -124,6 +125,21 @@ export default function DashboardLayout({
       permission: 'ALL',
     },
   ], [t]);
+  const workspaceRoutes = useMemo(
+    () => [
+      ...navItems,
+      {
+        label: t('navSalesRequirements'),
+        href: '/dashboard/sales/requirements',
+        permission: 'order:read',
+      },
+    ],
+    [navItems, t],
+  );
+  const currentRoute = useMemo(
+    () => resolveDashboardRoute(pathname, workspaceRoutes),
+    [pathname, workspaceRoutes],
+  );
   const visibleNavItems = navItems.filter((item) =>
     hasPermission(currentPermissions, item.permission),
   );
@@ -161,13 +177,15 @@ export default function DashboardLayout({
   useEffect(() => {
     if (!pathname) return;
     setMobileNavOpen(false);
-    const item = navItems.find((entry) => entry.href === pathname);
     openTab({
       id: pathname,
       path: pathname,
-      label: item?.label || pathname.split('/').slice(-1)[0] || t('workspace'),
+      label:
+        currentRoute?.label ||
+        pathname.split('/').slice(-1)[0] ||
+        t('workspace'),
     });
-  }, [navItems, openTab, pathname, t]);
+  }, [currentRoute, openTab, pathname, t]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -267,7 +285,10 @@ export default function DashboardLayout({
 
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
         {visibleNavItems.map((item) => {
-          const isActive = pathname === item.href;
+          const isActive =
+            pathname === item.href ||
+            (item.href !== '/dashboard' &&
+              pathname.startsWith(`${item.href}/`));
           return (
             <button
               key={item.href}
@@ -355,8 +376,7 @@ export default function DashboardLayout({
             <Menu className="h-5 w-5" />
           </button>
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-800 sm:text-lg">
-            {navItems.find((i) => i.href === pathname)?.label ||
-              t('navOverview')}
+            {currentRoute?.label || t('navOverview')}
           </h2>
           <div className="absolute left-1/2 hidden -translate-x-1/2 md:block">
             <CommandPalette />
