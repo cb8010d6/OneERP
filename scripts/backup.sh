@@ -1,9 +1,11 @@
 #!/usr/bin/env sh
 set -eu
+umask 077
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 POLICY_FILE="${POLICY_FILE:-ops/backup-policy.example.json}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.easy.yml}"
+BACKUP_HELPER_IMAGE="${BACKUP_HELPER_IMAGE:-alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc}"
 
 read_policy_value() {
   key="$1"
@@ -25,13 +27,21 @@ case "$BACKUP_DIR" in
   /*) BACKUP_ROOT="$BACKUP_DIR" ;;
   *) BACKUP_ROOT="$ROOT/$BACKUP_DIR" ;;
 esac
-TARGET="$BACKUP_ROOT/$STAMP"
+FINAL_TARGET="$BACKUP_ROOT/$STAMP"
+TARGET="$BACKUP_ROOT/.incomplete-$STAMP"
 
 mkdir -p "$TARGET"
+cleanup_incomplete() {
+  rm -rf "$TARGET"
+}
+trap cleanup_incomplete EXIT HUP INT TERM
 cd "$ROOT"
 
 docker compose -f "$COMPOSE_FILE" exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > "$TARGET/postgres.sql"
-docker compose -f "$COMPOSE_FILE" exec -T minio sh -c "cd /data && tar czf - ." > "$TARGET/minio-data.tgz"
+MINIO_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q minio)"
+[ "$MINIO_CONTAINER" != "" ] || { echo "MinIO container is not running"; exit 1; }
+docker run --rm --volumes-from "$MINIO_CONTAINER" "$BACKUP_HELPER_IMAGE" \
+  tar czf - -C /data . > "$TARGET/minio-data.tgz"
 [ -f .env ] && cp .env "$TARGET/.env.copy"
 cat > "$TARGET/backup-manifest.json" <<EOF
 {
@@ -44,12 +54,15 @@ cat > "$TARGET/backup-manifest.json" <<EOF
 }
 EOF
 
+mv "$TARGET" "$FINAL_TARGET"
+trap - EXIT HUP INT TERM
+
 find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime +"$RETENTION_DAYS" -exec rm -rf {} +
 
 if [ "$OFFSITE_DIR" != "" ]; then
   mkdir -p "$OFFSITE_DIR/$STAMP"
-  cp -R "$TARGET/." "$OFFSITE_DIR/$STAMP/"
+  cp -R "$FINAL_TARGET/." "$OFFSITE_DIR/$STAMP/"
   echo "Off-site backup copy written to $OFFSITE_DIR/$STAMP"
 fi
 
-echo "Backup written to $TARGET"
+echo "Backup written to $FINAL_TARGET"

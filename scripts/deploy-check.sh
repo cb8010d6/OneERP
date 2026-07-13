@@ -59,6 +59,10 @@ compose_services_healthy() {
   return 0
 }
 
+compose_config_valid() {
+  compose config >/dev/null
+}
+
 API_PORT="$(env_value API_PORT 8000)"
 WEB_PORT="$(env_value WEB_PORT 3000)"
 if [ "${API_BASE_URL:-}" != "" ] && [ "${API_URL:-}" = "" ]; then
@@ -72,7 +76,7 @@ WEB_URL="${WEB_URL:-http://localhost:$WEB_PORT/}"
 
 cd "$ROOT"
 check docker docker version
-check compose-config compose config
+check compose-config compose_config_valid
 check env-file test -f "$ENV_PATH"
 check secret-POSTGRES_PASSWORD strong_secret POSTGRES_PASSWORD
 check secret-JWT_SECRET strong_secret JWT_SECRET
