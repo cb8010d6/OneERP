@@ -14,3 +14,9 @@ export function requiresSalesShipmentWorkbench(
 export function isSalesShipmentWorkbenchStatus(status: string) {
   return status === 'IN_PRODUCTION' || status === 'PARTIAL_SHIPPED';
 }
+
+export function canCancelSalesOrder(status: string) {
+  return !['PARTIAL_SHIPPED', 'SHIPPED', 'COMPLETED', 'CANCELLED'].includes(
+    status,
+  );
+}

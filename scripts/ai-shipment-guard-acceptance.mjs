@@ -118,6 +118,36 @@ for (const guardCase of guardCases) {
   }
 }
 
+const orders = await request("/orders?page=1&limit=1", {}, session);
+const orderId = orders.body?.data?.[0]?.id;
+if (orders.status !== 200 || !orderId) {
+  throw new Error(
+    `Unable to load an order for workflow guard UAT (${orders.status})`,
+  );
+}
+
+const directWorkflowShipment = await request(
+  `/v1/workflow/order/${orderId}/transition`,
+  {
+    method: "POST",
+    body: JSON.stringify({ action: "ship" }),
+  },
+  session,
+);
+const directWorkflowMessage = Array.isArray(
+  directWorkflowShipment.body?.message,
+)
+  ? directWorkflowShipment.body.message.join(" ")
+  : String(directWorkflowShipment.body?.message ?? "");
+if (
+  directWorkflowShipment.status !== 400 ||
+  !directWorkflowMessage.includes("销售发货工作台")
+) {
+  throw new Error(
+    `Direct workflow shipment guard failed (${directWorkflowShipment.status}): ${directWorkflowMessage}`,
+  );
+}
+
 console.log(
   JSON.stringify({
     passed: true,
@@ -126,6 +156,7 @@ console.log(
     workOrderCompletionBlocked: true,
     invoicePostingBlocked: true,
     orderCancellationBlocked: true,
+    directWorkflowShipmentBlocked: true,
   }),
 );
 

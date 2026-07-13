@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, FileText, Package } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatCurrency, formatDateTime } from "../../../../lib/format";
 import { SalesShipmentPanel } from "./SalesShipmentPanel";
+import { canCancelSalesOrder } from "../../../../lib/sales-order-transition";
 
 interface OrderDetail {
   id: string;
@@ -349,7 +350,7 @@ export default function OrderDetailPage() {
               完成订单
             </button>
           )}
-          {order.status !== "COMPLETED" && order.status !== "CANCELLED" && (
+          {canCancelSalesOrder(order.status) && (
             <button
               onClick={() => {
                 if (confirm("确定要取消此订单吗？")) {

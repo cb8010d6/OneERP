@@ -2,6 +2,7 @@ import {
   resolveTransitionAction,
 } from '../KanbanEngine';
 import {
+  canCancelSalesOrder,
   isSalesShipmentWorkbenchStatus,
   requiresSalesShipmentWorkbench,
 } from '@/lib/sales-order-transition';
@@ -30,5 +31,12 @@ describe('KanbanEngine order transition boundary', () => {
     expect(isSalesShipmentWorkbenchStatus('IN_PRODUCTION')).toBe(true);
     expect(isSalesShipmentWorkbenchStatus('PARTIAL_SHIPPED')).toBe(true);
     expect(isSalesShipmentWorkbenchStatus('SHIPPED')).toBe(false);
+  });
+
+  it('requires inventory correction before cancelling shipped orders', () => {
+    expect(canCancelSalesOrder('DRAFT')).toBe(true);
+    expect(canCancelSalesOrder('IN_PRODUCTION')).toBe(true);
+    expect(canCancelSalesOrder('PARTIAL_SHIPPED')).toBe(false);
+    expect(canCancelSalesOrder('SHIPPED')).toBe(false);
   });
 });

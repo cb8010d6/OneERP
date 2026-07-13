@@ -289,6 +289,11 @@ export class WorkflowService {
                     typeof rawCurrentState === 'bigint'
                   ? String(rawCurrentState)
                   : '';
+          this.assertDomainTransitionAllowed(
+            normalizedModel,
+            action,
+            currentState,
+          );
           const matched = workflow.transitions.find(
             (item) =>
               item.action === action && item.fromState.value === currentState,
@@ -395,6 +400,41 @@ export class WorkflowService {
     if (normalized === 'workorder' || normalized === 'workOrder')
       return 'workOrder';
     return normalized;
+  }
+
+  private assertDomainTransitionAllowed(
+    modelName: string,
+    action: string,
+    currentState: string,
+  ) {
+    const normalizedAction = action.trim().toLowerCase();
+    if (modelName === 'order' && normalizedAction === 'ship') {
+      throw new BadRequestException(
+        '销售发货必须通过销售发货工作台执行，以确保库存原子过账和审计完整。',
+      );
+    }
+
+    if (
+      modelName === 'order' &&
+      normalizedAction === 'cancel' &&
+      ['PARTIAL_SHIPPED', 'SHIPPED'].includes(currentState)
+    ) {
+      throw new BadRequestException(
+        '订单已有发货记录，取消前必须先通过库存冲销或销售退货恢复库存。',
+      );
+    }
+
+    if (modelName === 'workOrder') {
+      throw new BadRequestException(
+        '生产工单状态必须通过生产报工工作台更新，以确保库存和工单进度原子一致。',
+      );
+    }
+
+    if (modelName === 'invoice') {
+      throw new BadRequestException(
+        '发票状态必须通过财务工作台更新，以确保会计分录和应收状态一致。',
+      );
+    }
   }
 
   private toEventKey(value: string) {
