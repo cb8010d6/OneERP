@@ -19,7 +19,7 @@
 
 - `npm run validate` 通过：API 45 suites / 440 tests，Web 8 suites / 48 tests。
 - API/Web typecheck、lint 和生产构建通过。
-- Web lint warning 从本轮开始前的 64 条降至 28 条；生产 Web 源码当前为零告警，剩余告警全部位于测试桩，继续作为后续迭代项。
+- Web lint warning 从本轮开始前的 64 条降至 0；API lint 的 7 条测试类型告警也已清零，全仓 lint 当前无告警。
 - `npm run compose:config` 通过全部 Compose 配置。
 - `graphify update .` 完成：3680 nodes、7537 edges、276 communities。
 

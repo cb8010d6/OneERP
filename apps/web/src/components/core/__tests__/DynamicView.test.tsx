@@ -34,42 +34,66 @@ const mockApiPost = jest.fn();
 const mockApiRequest = jest.fn();
 
 jest.mock('@/lib/dynamic-resource', () => ({
-  fetchSchema: (...a: any[]) => mockFetchSchema(...a),
-  fetchResourceList: (...a: any[]) => mockFetchResourceList(...a),
-  createResource: (...a: any[]) => mockCreateResource(...a),
-  updateResource: (...a: any[]) => mockUpdateResource(...a),
+  fetchSchema: mockFetchSchema,
+  fetchResourceList: mockFetchResourceList,
+  createResource: mockCreateResource,
+  updateResource: mockUpdateResource,
 }));
 
 jest.mock('@/lib/api', () => ({
   __esModule: true,
   default: {
-    get: (...a: any[]) => mockApiGet(...a),
-    post: (...a: any[]) => mockApiPost(...a),
-    request: (...a: any[]) => mockApiRequest(...a),
+    get: mockApiGet,
+    post: mockApiPost,
+    request: mockApiRequest,
   },
 }));
 
 /* ---------- Mock 子组件 ---------- */
 jest.mock('../ListEngine', () => ({
-  ListEngine: ({ onRowClick, onSearchChange }: any) => (
+  ListEngine: ({
+    onRowClick,
+    onSearchChange,
+  }: {
+    onRowClick?: (row: Record<string, unknown>) => void;
+    onSearchChange?: (value: string) => void;
+  }) => (
     <div data-testid="list-engine">
       <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row', status: 'SHIPPED' })}>row</button>
-      <input data-testid="search-input" onChange={(e: any) => onSearchChange?.(e.target.value)} />
+      <input data-testid="search-input" onChange={(event) => onSearchChange?.(event.target.value)} />
     </div>
   ),
 }));
 jest.mock('../KanbanEngine', () => ({ KanbanEngine: () => <div data-testid="kanban-engine" /> }));
 jest.mock('../FormEngine', () => ({
   ...jest.requireActual('../FormEngine'),
-  FormEngine: ({ value, onChange, onSubmit }: any) => (
+  FormEngine: ({
+    value,
+    onChange,
+    onSubmit,
+  }: {
+    value: Record<string, unknown>;
+    onChange: (value: Record<string, unknown>) => void;
+    onSubmit?: () => void;
+  }) => (
     <div data-testid="form-engine">
-      <input data-testid="form-name" value={String(value?.name ?? '')} onChange={(e: any) => onChange?.({ ...value, name: e.target.value })} />
+      <input data-testid="form-name" value={String(value?.name ?? '')} onChange={(event) => onChange({ ...value, name: event.target.value })} />
       <button data-testid="form-submit" onClick={() => onSubmit?.()}>submit</button>
     </div>
   ),
 }));
 jest.mock('@/components/ui/Sheet', () => ({
-  Sheet: ({ open, children, onClose, title }: any) =>
+  Sheet: ({
+    open,
+    children,
+    onClose,
+    title,
+  }: {
+    open: boolean;
+    children: React.ReactNode;
+    onClose: () => void;
+    title: string;
+  }) =>
     open ? (
       <div data-testid="sheet">
         <span data-testid="sheet-title">{title}</span>

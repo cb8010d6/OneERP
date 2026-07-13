@@ -9,6 +9,8 @@ import type { ExecutionContext } from '@nestjs/common';
 
 describe('AuthController (cookie-based)', () => {
   let app: INestApplication;
+  const getTestServer = () =>
+    app.getHttpServer() as Parameters<typeof request>[0];
 
   const mockAuthService = {
     validateUser: jest.fn(),
@@ -64,7 +66,7 @@ describe('AuthController (cookie-based)', () => {
         companies: [],
       });
 
-      const res = await request(app.getHttpServer())
+      const res = await request(getTestServer())
         .post('/auth/login')
         .send({ email: 'a@b.com', password: 'pass' })
         .expect(200);
@@ -95,7 +97,7 @@ describe('AuthController (cookie-based)', () => {
         companies: [],
       });
 
-      const res = await request(app.getHttpServer())
+      const res = await request(getTestServer())
         .post('/auth/refresh')
         .set('Cookie', ['rt=rt-old', 'csrf=same-token'])
         .set('x-csrf-token', 'same-token')
@@ -112,7 +114,7 @@ describe('AuthController (cookie-based)', () => {
     });
 
     it('returns 401 when rt cookie is missing', async () => {
-      await request(app.getHttpServer())
+      await request(getTestServer())
         .post('/auth/refresh')
         .set('Cookie', ['csrf=same-token'])
         .set('x-csrf-token', 'same-token')
@@ -121,7 +123,7 @@ describe('AuthController (cookie-based)', () => {
     });
 
     it('returns 403 when CSRF header is missing', async () => {
-      await request(app.getHttpServer())
+      await request(getTestServer())
         .post('/auth/refresh')
         .set('Cookie', ['rt=rt-old', 'csrf=some-token'])
         .send()
@@ -129,7 +131,7 @@ describe('AuthController (cookie-based)', () => {
     });
 
     it('returns 403 when CSRF cookie and header mismatch', async () => {
-      await request(app.getHttpServer())
+      await request(getTestServer())
         .post('/auth/refresh')
         .set('Cookie', ['rt=rt-old', 'csrf=token-a'])
         .set('x-csrf-token', 'token-b')
@@ -142,7 +144,7 @@ describe('AuthController (cookie-based)', () => {
     it('clears rt and csrf cookies', async () => {
       mockAuthService.logout.mockResolvedValue({ success: true });
 
-      const res = await request(app.getHttpServer())
+      const res = await request(getTestServer())
         .post('/auth/logout')
         .set('Cookie', ['rt=rt-123', 'csrf=csrf-123'])
         .set('x-csrf-token', 'csrf-123')
@@ -161,7 +163,7 @@ describe('AuthController (cookie-based)', () => {
     it('calls authService.logoutAll', async () => {
       mockAuthService.logoutAll.mockResolvedValue({ success: true });
 
-      await request(app.getHttpServer())
+      await request(getTestServer())
         .post('/auth/logout-all')
         .set('Cookie', ['csrf=csrf-123'])
         .set('x-csrf-token', 'csrf-123')

@@ -9,6 +9,17 @@
  *  5. 写请求自动注入 x-csrf-token
  */
 
+import type { InternalAxiosRequestConfig } from 'axios';
+
+function requireCapturedConfig(
+  config: InternalAxiosRequestConfig | null,
+): InternalAxiosRequestConfig {
+  if (!config) {
+    throw new Error('Axios adapter was not called');
+  }
+  return config;
+}
+
 const mockGetState = jest.fn();
 const mockLogout = jest.fn().mockResolvedValue(undefined);
 const mockSetCurrentCompany = jest.fn();
@@ -56,8 +67,8 @@ describe('api.ts interceptors', () => {
   });
 
   it('修正非法 page < 1 和 limit > 100', () => {
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
+    let capturedConfig: InternalAxiosRequestConfig | null = null;
+    api.defaults.adapter = (config) => {
       capturedConfig = config;
       return Promise.resolve({
         data: {},
@@ -69,14 +80,14 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/v1/resource/test?page=0&limit=200').then(() => {
-      expect(capturedConfig.url).toContain('page=1');
-      expect(capturedConfig.url).toContain('limit=20');
+      expect(requireCapturedConfig(capturedConfig).url).toContain('page=1');
+      expect(requireCapturedConfig(capturedConfig).url).toContain('limit=20');
     });
   });
 
   it('合法分页参数不被修改', () => {
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
+    let capturedConfig: InternalAxiosRequestConfig | null = null;
+    api.defaults.adapter = (config) => {
       capturedConfig = config;
       return Promise.resolve({
         data: {},
@@ -88,14 +99,14 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/v1/resource/test?page=3&limit=50').then(() => {
-      expect(capturedConfig.url).toContain('page=3');
-      expect(capturedConfig.url).toContain('limit=50');
+      expect(requireCapturedConfig(capturedConfig).url).toContain('page=3');
+      expect(requireCapturedConfig(capturedConfig).url).toContain('limit=50');
     });
   });
 
   it('注入 Authorization 和 x-company-id', () => {
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
+    let capturedConfig: InternalAxiosRequestConfig | null = null;
+    api.defaults.adapter = (config) => {
       capturedConfig = config;
       return Promise.resolve({
         data: {},
@@ -107,14 +118,14 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/v1/resource/test').then(() => {
-      expect(capturedConfig.headers.Authorization).toContain('Bearer ');
-      expect(capturedConfig.headers['x-company-id']).toBe('c1');
+      expect(requireCapturedConfig(capturedConfig).headers.Authorization).toContain('Bearer ');
+      expect(requireCapturedConfig(capturedConfig).headers['x-company-id']).toBe('c1');
     });
   });
 
   it('auth 请求不注入 x-company-id', () => {
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
+    let capturedConfig: InternalAxiosRequestConfig | null = null;
+    api.defaults.adapter = (config) => {
       capturedConfig = config;
       return Promise.resolve({
         data: {},
@@ -126,7 +137,7 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/auth/login').then(() => {
-      expect(capturedConfig.headers['x-company-id']).toBeUndefined();
+      expect(requireCapturedConfig(capturedConfig).headers['x-company-id']).toBeUndefined();
     });
   });
 
@@ -140,16 +151,17 @@ describe('api.ts interceptors', () => {
       logout: mockLogout,
     });
 
-    return api.get('/v1/resource/test').catch((err: any) => {
-      expect(err.message).toContain('缺少有效登录态');
+    return api.get('/v1/resource/test').catch((reason: unknown) => {
+      expect(reason).toBeInstanceOf(Error);
+      expect((reason as Error).message).toContain('缺少有效登录态');
       expect(mockLogout).toHaveBeenCalled();
     });
   });
 
   it('写请求注入 x-csrf-token header', () => {
     mockGetCsrfTokenFromCookie.mockReturnValue('test-csrf-token');
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
+    let capturedConfig: InternalAxiosRequestConfig | null = null;
+    api.defaults.adapter = (config) => {
       capturedConfig = config;
       return Promise.resolve({
         data: {},
@@ -161,14 +173,14 @@ describe('api.ts interceptors', () => {
     };
 
     return api.post('/v1/resource/test', {}).then(() => {
-      expect(capturedConfig.headers['x-csrf-token']).toBe('test-csrf-token');
+      expect(requireCapturedConfig(capturedConfig).headers['x-csrf-token']).toBe('test-csrf-token');
     });
   });
 
   it('GET 请求不注入 x-csrf-token', () => {
     mockGetCsrfTokenFromCookie.mockReturnValue('test-csrf-token');
-    let capturedConfig: any = null;
-    api.defaults.adapter = (config: any) => {
+    let capturedConfig: InternalAxiosRequestConfig | null = null;
+    api.defaults.adapter = (config) => {
       capturedConfig = config;
       return Promise.resolve({
         data: {},
@@ -180,7 +192,7 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/v1/resource/test').then(() => {
-      expect(capturedConfig.headers['x-csrf-token']).toBeUndefined();
+      expect(requireCapturedConfig(capturedConfig).headers['x-csrf-token']).toBeUndefined();
     });
   });
 
@@ -193,9 +205,7 @@ describe('api.ts interceptors', () => {
         toJSON: () => ({}),
       });
 
-    const originalLocation = window.location;
-    delete (window as any).location;
-    (window as any).location = { href: '' };
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
 
     return api
       .get('/v1/resource/test')
@@ -203,7 +213,7 @@ describe('api.ts interceptors', () => {
         expect(mockLogout).toHaveBeenCalled();
       })
       .finally(() => {
-        (window as any).location = originalLocation;
+        consoleError.mockRestore();
       });
   });
 });
