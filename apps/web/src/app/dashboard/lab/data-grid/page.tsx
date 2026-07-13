@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { ColumnDef, createColumnHelper } from '@tanstack/react-table';
+import { createColumnHelper } from '@tanstack/react-table';
 import { DataGrid } from '@/components/ui/data-grid/DataGrid';
 
 type DemoRow = {
@@ -16,7 +16,7 @@ type DemoRow = {
 
 const columnHelper = createColumnHelper<DemoRow>();
 
-const columns: ColumnDef<DemoRow, any>[] = [
+const columns = [
   columnHelper.accessor('orderNo', { header: '订单号', size: 160 }),
   columnHelper.accessor('customer', { header: '客户', size: 180 }),
   columnHelper.accessor('sku', { header: 'SKU', size: 180 }),

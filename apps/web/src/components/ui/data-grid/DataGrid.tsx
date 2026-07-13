@@ -27,6 +27,9 @@ type DataGridColumnMeta<TData> = {
 };
 
 interface DataGridProps<TData extends { id: string }> {
+  // TanStack column definitions are invariant in TValue; a grid containing
+  // heterogeneous string/number columns must erase TValue at this boundary.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   columns: ColumnDef<TData, any>[];
   data: TData[];
   onCellUpdate?: (rowId: string, columnId: string, value: string) => void;
@@ -50,6 +53,9 @@ export function DataGrid<TData extends { id: string }>({
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
   const [editingValue, setEditingValue] = useState('');
 
+  // TanStack Table returns callable state accessors that React Compiler cannot
+  // safely memoize; the component already owns their state explicitly.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data,
     columns,
