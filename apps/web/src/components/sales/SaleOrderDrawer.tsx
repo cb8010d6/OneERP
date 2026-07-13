@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Sheet } from '@/components/ui/Sheet';
 import { DataGrid } from '@/components/ui/data-grid/DataGrid';
 import api from '@/lib/api';
@@ -8,6 +9,7 @@ import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSele
 import { CheckCircle2, Save, Activity, Layers, Info, Loader2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import toast from 'react-hot-toast';
+import { isSalesShipmentWorkbenchStatus } from '@/lib/sales-order-transition';
 
 interface OrderLine {
   id: string; // DataGrid 行唯一键
@@ -45,6 +47,7 @@ interface SaleOrderFormProps {
 type TabType = 'LINES' | 'INFO' | 'CHATTER';
 
 export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFormProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('LINES');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -430,11 +433,16 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       return;
     }
 
+    if (isSalesShipmentWorkbenchStatus(status)) {
+      onClose();
+      router.push(`/dashboard/orders/${orderId}`);
+      return;
+    }
+
     const actionMap: Record<string, string> = {
       DRAFT: 'submit',
       PENDING_APPROVAL: 'approve',
       PENDING: 'start_production',
-      IN_PRODUCTION: 'ship',
       SHIPPED: 'complete',
     };
     const action = actionMap[status];
@@ -460,7 +468,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     DRAFT: '提交订单',
     PENDING_APPROVAL: '审批通过',
     PENDING: '开始生产',
-    IN_PRODUCTION: '完工并入库',
+    IN_PRODUCTION: '打开发货工作台',
+    PARTIAL_SHIPPED: '继续发货',
     SHIPPED: '完成订单',
   };
 
