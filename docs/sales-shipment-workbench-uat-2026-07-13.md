@@ -1,7 +1,7 @@
 # 销售发货工作台受控 UAT
 
 日期：2026-07-13（Asia/Shanghai）
-当前部署标签：`uat-b223ea5`
+当前部署标签：`uat-d8d7283`
 分支：`refactor/remaining-tasks`
 
 ## 范围
@@ -12,13 +12,13 @@
 - 面板支持选择来源库位、指定批次和备注、逐行调整本次发货数量。
 - 成功结果显示已过账行数、跳过行数和实际订单状态；部分发货显示每条跳过原因。
 - 通用订单看板不再允许把 `IN_PRODUCTION` 直接拖到 `SHIPPED`；订单抽屉的相同动作改为打开销售发货工作台。
-- AI 工具 schema 不再暴露销售订单 `ship` 动作；草稿生成和确认执行均拒绝普通工作流发货，防止自然语言或旧确认 token 绕过库存过账。
+- AI 工作流工具改为安全白名单，仅暴露销售订单 `submit`、`start_production` 和 `complete`；销售发货、生产工单完成、发票过账与订单取消必须在对应业务工作台执行。
 
 ## 验证证据
 
 - Web 定向交互测试 2/2 通过：默认请求携带 `allowPartial=false`；显式部分发货携带 `allowPartial=true` 并展示跳过原因。
 - 看板边界定向测试 3/3 通过：库存相关发货被阻断，普通订单流转保持可用，生产中/部分发货订单均路由到发货工作台。
-- AI 定向回归新增 3 项并通过；全量 API 当前为 45 suites / 443 tests。
+- AI 定向回归 22 项通过；全量 API 当前为 45 suites / 446 tests。
 - `npm run validate` 通过：API 45 suites / 440 tests，Web 8 suites / 46 tests。
 - API/Web typecheck、lint、生产构建通过；仅保留既有 lint warning。
 - `npm run compose:config` 通过全部 Compose 配置。
@@ -53,3 +53,9 @@
 - API runtime 归档大小为 `154686193` 字节，本地与远端 SHA-256 均为 `e47107d666850ce457f2d05eb6088455cc43e119e8a8a24a8d0a1d17604aa117`。
 - 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-b223ea5`；长期服务均为 healthy，migration 退出码为 0，API 与 Web 均返回 HTTP 200。
 - 远端真实验收脚本 `scripts/ai-shipment-guard-acceptance.mjs` 返回：`status=400`、`shipmentDraftBlocked=true`、`workflowGuidanceVerified=true`。
+
+## AI 工作流安全白名单
+
+- API runtime 归档大小为 `154686929` 字节，本地与远端 SHA-256 均为 `903aa7bbe68f486d46c0a48fe4e957a8a383b27112c2015f84765c4a0aea42d8`。
+- 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-d8d7283`；长期服务均为 healthy，migration 退出码为 0，API 与 Web 均返回 HTTP 200。
+- 扩展远端真实验收通过：`schemaWhitelistVerified=true`、`shipmentDraftBlocked=true`、`workOrderCompletionBlocked=true`、`invoicePostingBlocked=true`、`orderCancellationBlocked=true`。
