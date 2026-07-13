@@ -1,7 +1,9 @@
 # Web 工作区稳定性受控 UAT
 
-日期：2026-07-13（Asia/Shanghai）  
-当前部署标签：`uat-2f2f8f7`  
+日期：2026-07-13（Asia/Shanghai）
+
+当前部署标签：`uat-2f2f8f7`
+
 分支：`refactor/remaining-tasks`
 
 ## 范围
