@@ -1,7 +1,7 @@
 # 销售发货工作台受控 UAT
 
 日期：2026-07-13（Asia/Shanghai）
-当前部署标签：`uat-d8d7283`
+当前部署标签：`uat-dcc2122`
 分支：`refactor/remaining-tasks`
 
 ## 范围
@@ -13,16 +13,18 @@
 - 成功结果显示已过账行数、跳过行数和实际订单状态；部分发货显示每条跳过原因。
 - 通用订单看板不再允许把 `IN_PRODUCTION` 直接拖到 `SHIPPED`；订单抽屉的相同动作改为打开销售发货工作台。
 - AI 工作流工具改为安全白名单，仅暴露销售订单 `submit`、`start_production` 和 `complete`；销售发货、生产工单完成、发票过账与订单取消必须在对应业务工作台执行。
+- 根 `WorkflowService` 增加领域事务守卫：通用 Workflow API 禁止销售发货、生产工单状态变更和发票状态变更；已部分发货或已发货订单在库存恢复前禁止取消。
+- 订单详情页同步隐藏已部分发货和已发货订单的普通取消按钮，避免界面引导用户走不完整的库存流程。
 
 ## 验证证据
 
 - Web 定向交互测试 2/2 通过：默认请求携带 `allowPartial=false`；显式部分发货携带 `allowPartial=true` 并展示跳过原因。
 - 看板边界定向测试 3/3 通过：库存相关发货被阻断，普通订单流转保持可用，生产中/部分发货订单均路由到发货工作台。
-- AI 定向回归 22 项通过；全量 API 当前为 45 suites / 446 tests。
-- `npm run validate` 通过：API 45 suites / 440 tests，Web 8 suites / 46 tests。
-- API/Web typecheck、lint、生产构建通过；仅保留既有 lint warning。
+- 工作流领域守卫定向测试 5/5、看板边界定向测试 4/4 通过。
+- `npm run validate` 通过：API 45 suites / 450 tests，Web 9 suites / 52 tests。
+- API/Web typecheck、lint、生产构建通过，lint 为零错误。
 - `npm run compose:config` 通过全部 Compose 配置。
-- Graphify 更新为 3672 nodes、7516 edges、279 communities。
+- Graphify 更新为 3710 nodes、7590 edges、277 communities。
 
 ## 部署验证
 
@@ -59,3 +61,11 @@
 - API runtime 归档大小为 `154686929` 字节，本地与远端 SHA-256 均为 `903aa7bbe68f486d46c0a48fe4e957a8a383b27112c2015f84765c4a0aea42d8`。
 - 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-d8d7283`；长期服务均为 healthy，migration 退出码为 0，API 与 Web 均返回 HTTP 200。
 - 扩展远端真实验收通过：`schemaWhitelistVerified=true`、`shipmentDraftBlocked=true`、`workOrderCompletionBlocked=true`、`invoicePostingBlocked=true`、`orderCancellationBlocked=true`。
+
+## 根工作流领域事务守卫
+
+- API/Web 组合归档大小为 `194234728` 字节，本地与远端 SHA-256 均为 `a63031c7269a75ca152a3b9a12435bec8f4c081db263bec4cec8c16cfb35bd63`。
+- 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-dcc2122`；API、Web、PostgreSQL、Redis 和 MinIO 均为 healthy，migration 容器退出码为 0。
+- 远程 API 健康端点返回 `status=ok`，Web 根路径返回预期的登录重定向。
+- 扩展远端真实验收通过：`schemaWhitelistVerified=true`、`shipmentDraftBlocked=true`、`workOrderCompletionBlocked=true`、`invoicePostingBlocked=true`、`orderCancellationBlocked=true`、`directWorkflowShipmentBlocked=true`。
+- 本次部署仍为受控 UAT，不代表生产就绪。
