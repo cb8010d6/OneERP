@@ -84,6 +84,7 @@ PGDB="$(env_value POSTGRES_DB oneerp)"
 cleanup() {
   if [ "${KEEP_PROJECT:-}" = "" ]; then
     compose down -v >/dev/null 2>&1 || true
+    rm -f "$DRILL_ENV"
   fi
 }
 trap cleanup EXIT
