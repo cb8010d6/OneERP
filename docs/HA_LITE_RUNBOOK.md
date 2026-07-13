@@ -77,6 +77,8 @@ docker compose -f docker-compose.ha-lite.yml down
 .\scripts\backup.ps1 -ComposeFile docker-compose.ha-lite.yml
 ```
 
+Windows 备份先写入 `.incomplete-*` 临时目录，PostgreSQL、MinIO、可选加密和清单全部成功后才原子发布。SQL 备份不携带源数据库角色所有权或授权，可恢复到使用不同 PostgreSQL 用户的独立环境。MinIO 归档由固定摘要的临时 helper 镜像完成，不依赖 MinIO 镜像内置 `tar`。
+
 安装 Windows 定时备份 / Install Windows scheduled backup:
 
 ```powershell
@@ -100,7 +102,17 @@ When real business data is used, backups must be copied off the application serv
 .\scripts\restore-drill.ps1
 ```
 
-演练脚本会创建临时 Docker Compose project，恢复 PostgreSQL 和 MinIO，校验核心数据，调用 `/api/health`，在凭据可用时尝试管理员登录，输出 `restore-drill-report.json`，并默认删除临时 project。
+演练脚本会创建临时 Docker Compose project，默认使用 API/Web 端口 `18001/13001`，恢复 PostgreSQL 和 MinIO，校验核心数据，调用 `/api/health`，在凭据可用时尝试管理员登录，输出 `restore-drill-report.json`，并默认删除临时 project。PostgreSQL、JWT 和 MinIO 的运行密钥会在临时环境中重新随机生成，不复用备份中的基础设施密钥；管理员凭据仍来自备份环境，用于验证恢复后的真实账号。
+
+需要叠加资源限制或避开端口时：
+
+```powershell
+.\scripts\restore-drill.ps1 `
+  -ComposeFile docker-compose.prod.yml `
+  -ComposeOverrideFile docker-compose.test-2gb.yml `
+  -DrillApiPort 18002 `
+  -DrillWebPort 13002
+```
 
 通过标准 / Passing criteria:
 

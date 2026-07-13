@@ -3,11 +3,24 @@ param(
   [string]$PolicyFile = "ops/backup-policy.example.json",
   [string]$ComposeFile = "docker-compose.easy.yml",
   [string]$EncryptionKey = "",
+  [string]$BackupHelperImage = "",
   [switch]$RequireEncryption
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+$defaultBackupHelperImage = "alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+
+if ($EncryptionKey -eq "" -and $env:ONEERP_BACKUP_ENCRYPTION_KEY) {
+  $EncryptionKey = $env:ONEERP_BACKUP_ENCRYPTION_KEY
+}
+if ($BackupHelperImage -eq "") {
+  $BackupHelperImage = if ($env:ONEERP_BACKUP_HELPER_IMAGE) {
+    $env:ONEERP_BACKUP_HELPER_IMAGE
+  } else {
+    $defaultBackupHelperImage
+  }
+}
 
 $envRequire = $env:ONEERP_BACKUP_REQUIRE_ENCRYPTION
 if ($envRequire -eq "true" -or $envRequire -eq "1") {
@@ -33,7 +46,9 @@ function Encrypt-File {
   $bytes = [System.IO.File]::ReadAllBytes($FilePath)
 
   $salt = New-Object byte[] 16
-  [System.Security.Cryptography.RandomNumberGenerator]::Fill($salt)
+  $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  $random.GetBytes($salt)
+  $random.Dispose()
 
   $deriveBytes = New-Object System.Security.Cryptography.Rfc2898DeriveBytes(
     [System.Text.Encoding]::UTF8.GetBytes($Key),
@@ -95,7 +110,7 @@ function Remove-ExpiredBackups {
 
   $cutoff = (Get-Date).AddDays(-1 * $RetentionDays)
   Get-ChildItem -Path $BackupRoot -Directory |
-    Where-Object { $_.LastWriteTime -lt $cutoff } |
+    Where-Object { $_.Name -notlike ".incomplete-*" -and $_.LastWriteTime -lt $cutoff } |
     ForEach-Object {
       Remove-Item -LiteralPath $_.FullName -Recurse -Force
       Write-Host "Removed expired backup $($_.FullName)"
@@ -109,21 +124,40 @@ if ($OutputDir -eq "") {
 
 $backupRoot = if ([System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path $root $OutputDir }
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$target = Join-Path $backupRoot $stamp
+$finalTarget = Join-Path $backupRoot $stamp
+$target = Join-Path $backupRoot ".incomplete-$stamp"
+$dbTempPath = "/tmp/oneerp-backup-$stamp.sql"
+$dbTempCreated = $false
+$published = $false
 
-New-Item -ItemType Directory -Force -Path $target | Out-Null
+New-Item -ItemType Directory -Force -Path $backupRoot | Out-Null
+if ((Test-Path $target) -or (Test-Path $finalTarget)) {
+  throw "Backup target already exists for timestamp $stamp"
+}
+New-Item -ItemType Directory -Path $target | Out-Null
 
 Push-Location $root
 try {
-  docker compose -f $ComposeFile exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > (Join-Path $target "postgres.sql")
+  docker compose -f $ComposeFile exec -T db sh -c "pg_dump -U `"`$POSTGRES_USER`" -d `"`$POSTGRES_DB`" --clean --if-exists --no-owner --no-privileges > $dbTempPath"
   if ($LASTEXITCODE -ne 0) { throw "PostgreSQL dump failed" }
-  docker compose -f $ComposeFile exec -T minio sh -c "tar czf /tmp/minio-data.tgz -C /data ."
+  $dbTempCreated = $true
+  docker compose -f $ComposeFile cp "db:$dbTempPath" (Join-Path $target "postgres.sql")
+  if ($LASTEXITCODE -ne 0) { throw "PostgreSQL dump copy failed" }
+
+  $minioContainer = [string](docker compose -f $ComposeFile ps -q minio)
+  if ($LASTEXITCODE -ne 0 -or $minioContainer.Trim() -eq "") {
+    throw "MinIO container is not running"
+  }
+  $targetMount = (Convert-Path $target)
+  docker run --rm --volumes-from $minioContainer.Trim() --mount "type=bind,source=$targetMount,destination=/backup" $BackupHelperImage tar czf /backup/minio-data.tgz -C /data .
   if ($LASTEXITCODE -ne 0) { throw "MinIO archive creation failed" }
-  docker compose -f $ComposeFile cp minio:/tmp/minio-data.tgz (Join-Path $target "minio-data.tgz")
-  if ($LASTEXITCODE -ne 0) { throw "MinIO archive copy failed" }
-  docker compose -f $ComposeFile exec -T minio sh -c "rm -f /tmp/minio-data.tgz" | Out-Null
+
+  $files = [System.Collections.Generic.List[string]]::new()
+  $files.Add("postgres.sql")
+  $files.Add("minio-data.tgz")
   if (Test-Path ".env") {
     Copy-Item .env (Join-Path $target ".env.copy")
+    $files.Add(".env.copy")
   }
 
   $manifest = [ordered]@{
@@ -133,22 +167,26 @@ try {
     minioIntervalMinutes = [int]$policy.minioIntervalMinutes
     retentionDays = [int]$policy.retentionDays
     encrypted = ($EncryptionKey -ne "")
-    files = @("postgres.sql", "minio-data.tgz", ".env.copy")
+    files = @($files)
   }
 
   if ($EncryptionKey -ne "") {
     Write-Host "Encrypting backup files..."
-    foreach ($file in $manifest.files) {
+    $encryptedFiles = [System.Collections.Generic.List[string]]::new()
+    foreach ($file in @($manifest.files)) {
       $filePath = Join-Path $target $file
       if (Test-Path $filePath) {
-        Encrypt-File -FilePath $filePath -Key $EncryptionKey
-        $manifest.files[$manifest.files.IndexOf($file)] = "$file.enc"
+        $encryptedFiles.Add((Split-Path -Leaf (Encrypt-File -FilePath $filePath -Key $EncryptionKey)))
       }
     }
+    $manifest.files = @($encryptedFiles)
     Write-Host "Backup encryption completed"
   }
 
   $manifest | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $target "backup-manifest.json") -Encoding UTF8
+
+  Move-Item -LiteralPath $target -Destination $finalTarget
+  $published = $true
 
   Remove-ExpiredBackups -BackupRoot $backupRoot -RetentionDays ([int]$policy.retentionDays)
 
@@ -156,11 +194,17 @@ try {
     $offsiteRoot = [string]$policy.offsiteDir
     $offsiteTarget = Join-Path $offsiteRoot $stamp
     New-Item -ItemType Directory -Force -Path $offsiteTarget | Out-Null
-    Copy-Item -Path (Join-Path $target "*") -Destination $offsiteTarget -Recurse -Force
+    Copy-Item -Path (Join-Path $finalTarget "*") -Destination $offsiteTarget -Recurse -Force
     Write-Host "Off-site backup copy written to $offsiteTarget"
   }
 
-  Write-Host "Backup written to $target"
+  Write-Host "Backup written to $finalTarget"
 } finally {
+  if ($dbTempCreated) {
+    docker compose -f $ComposeFile exec -T db rm -f $dbTempPath 2>$null | Out-Null
+  }
+  if (-not $published -and (Test-Path $target)) {
+    Remove-Item -LiteralPath $target -Recurse -Force
+  }
   Pop-Location
 }

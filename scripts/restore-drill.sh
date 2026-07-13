@@ -43,6 +43,11 @@ set_env_value() {
   fi
 }
 
+random_hex() {
+  bytes="$1"
+  od -An -N "$bytes" -tx1 /dev/urandom | tr -d ' \n'
+}
+
 json_escape() {
   printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -77,6 +82,10 @@ fi
 set_env_value API_PORT "$DRILL_API_PORT"
 set_env_value WEB_PORT "$DRILL_WEB_PORT"
 set_env_value CORS_ORIGINS "http://localhost:$DRILL_WEB_PORT"
+set_env_value POSTGRES_PASSWORD "$(random_hex 24)"
+set_env_value JWT_SECRET "$(random_hex 32)"
+set_env_value MINIO_ACCESS_KEY "drill$(random_hex 6)"
+set_env_value MINIO_SECRET_KEY "$(random_hex 24)"
 
 PGUSER="$(env_value POSTGRES_USER oneerp)"
 PGDB="$(env_value POSTGRES_DB oneerp)"

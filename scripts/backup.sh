@@ -37,7 +37,7 @@ cleanup_incomplete() {
 trap cleanup_incomplete EXIT HUP INT TERM
 cd "$ROOT"
 
-docker compose -f "$COMPOSE_FILE" exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' > "$TARGET/postgres.sql"
+docker compose -f "$COMPOSE_FILE" exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges' > "$TARGET/postgres.sql"
 MINIO_CONTAINER="$(docker compose -f "$COMPOSE_FILE" ps -q minio)"
 [ "$MINIO_CONTAINER" != "" ] || { echo "MinIO container is not running"; exit 1; }
 docker run --rm --volumes-from "$MINIO_CONTAINER" "$BACKUP_HELPER_IMAGE" \

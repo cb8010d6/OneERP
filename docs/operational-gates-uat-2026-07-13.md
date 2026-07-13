@@ -41,6 +41,13 @@ Compose project：`oneerp_test`
 - RPO 数据年龄：1 分钟，目标不超过 15 分钟。
 - RTO 演练耗时：82 秒，目标不超过 60 分钟。
 
+## Windows 脚本等价验证
+
+- `backup.ps1` 与 Linux 脚本统一为临时目录原子发布、固定摘要 MinIO helper，并使用 `pg_dump --no-owner --no-privileges`，避免源数据库角色阻断跨项目恢复。
+- `restore-drill.ps1` 已补齐 Compose override、独立端口、先恢复后迁移、API 健康轮询、RPO/RTO 判定和失败清理；Windows PowerShell 5.1 的随机数生成路径也完成兼容修复。
+- 本地使用当前 39 个迁移初始化一次性合成数据栈，再通过 Windows PowerShell 执行完整 Docker 备份和独立恢复。11 项检查全部通过，RPO 数据年龄 5 分钟，RTO 26 秒。
+- 演练结束后临时容器、卷、环境文件、备份副本和构建镜像均已删除。该证据验证跨平台运维脚本，不替代服务器上的受控 UAT 证据。
+
 ## 安全处置
 
 - 旧版部署检查曾把 Compose 展开的敏感环境值带入受控检查日志；脚本已修复为静默输出。
