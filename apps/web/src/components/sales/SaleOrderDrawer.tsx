@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sheet } from '@/components/ui/Sheet';
 import { DataGrid } from '@/components/ui/data-grid/DataGrid';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSelect';
 import { CheckCircle2, Save, Activity, Layers, Info, Loader2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -37,6 +37,21 @@ interface TimelineEvent {
   };
 }
 
+interface SaleOrderDetailResponse {
+  orderNo?: string;
+  status?: string;
+  partnerId?: string;
+  partner?: { name?: string | null } | null;
+  expectedDate?: string | null;
+  notes?: string | null;
+  items?: Array<{
+    id: string;
+    productId: string;
+    quantity: number | string;
+    unitPrice?: number | string | null;
+  }>;
+}
+
 interface SaleOrderFormProps {
   open: boolean;
   onClose: () => void;
@@ -45,6 +60,16 @@ interface SaleOrderFormProps {
 }
 
 type TabType = 'LINES' | 'INFO' | 'CHATTER';
+
+function readString(record: AsyncSelectRecord, key: string) {
+  const value = record[key];
+  return value === undefined || value === null ? '' : String(value);
+}
+
+function readNumber(record: AsyncSelectRecord, key: string) {
+  const value = Number(record[key] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
 
 export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFormProps) {
   const router = useRouter();
@@ -72,15 +97,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     return new Map(products.map((p) => [p.id, p]));
   }, [products]);
   const isEditable = status === 'DRAFT' || status === 'SUBMITTED' || status === 'PENDING_APPROVAL';
-  const readString = (record: AsyncSelectRecord, key: string) => {
-    const value = record[key];
-    return value === undefined || value === null ? '' : String(value);
-  };
-  const readNumber = (record: AsyncSelectRecord, key: string) => {
-    const value = Number(record[key] ?? 0);
-    return Number.isFinite(value) ? value : 0;
-  };
-  const mergeProductRecord = (record: AsyncSelectRecord) => {
+  const mergeProductRecord = useCallback((record: AsyncSelectRecord) => {
     const id = readString(record, 'id');
     if (!id) return;
 
@@ -96,8 +113,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       next.set(product.id, product);
       return Array.from(next.values());
     });
-  };
-  const resolveLinePrice = (line: OrderLine) => {
+  }, []);
+  const resolveLinePrice = useCallback((line: OrderLine) => {
     const product = productMap.get(line.productId);
     const productPrice = Number(product?.listPrice ?? 0);
     if (Number.isFinite(productPrice) && productPrice > 0) {
@@ -106,7 +123,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
 
     const fallbackPrice = Number(line.unitPrice ?? 0);
     return Number.isFinite(fallbackPrice) ? fallbackPrice : 0;
-  };
+  }, [productMap]);
   const validLines = useMemo(
     () =>
       lines.filter(
@@ -124,11 +141,11 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           Boolean(line.productId) &&
           (!Number.isFinite(line.quantity) || line.quantity <= 0 || resolveLinePrice(line) <= 0),
       ),
-    [lines, productMap],
+    [lines, resolveLinePrice],
   );
   const subtotal = useMemo(
     () => lines.reduce((acc, row) => acc + (row.quantity * resolveLinePrice(row)), 0),
-    [lines, productMap],
+    [lines, resolveLinePrice],
   );
   const tax = useMemo(() => subtotal * 0.13, [subtotal]);
   const total = useMemo(() => subtotal + tax, [subtotal, tax]);
@@ -162,7 +179,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     ]);
   };
 
-  const loadOrderProducts = async (productIds: string[]) => {
+  const loadOrderProducts = useCallback(async (productIds: string[]) => {
     const uniqueIds = Array.from(new Set(productIds.filter(Boolean)));
     const productEntries = await Promise.all(
       uniqueIds.map(async (productId) => {
@@ -187,13 +204,15 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     }
 
     return new Map(loadedProducts.map((item) => [item.id, item]));
-  };
+  }, []);
 
-  const loadOrderDetail = async (id: string) => {
-    const detail = await api.get<any>(`/orders/${id}`);
+  const loadOrderDetail = useCallback(async (id: string) => {
+    const detail = await api.get<SaleOrderDetailResponse>(`/orders/${id}`);
     const order = detail.data;
     const orderItems = order.items ?? [];
-    const productLookup = await loadOrderProducts(orderItems.map((item: any) => String(item.productId ?? '')));
+    const productLookup = await loadOrderProducts(
+      orderItems.map((item) => String(item.productId ?? '')),
+    );
     setOrderNo(order.orderNo || id);
     setStatus(order.status || 'DRAFT');
     setPartnerId(order.partnerId || '');
@@ -202,7 +221,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     setNotes(order.notes || '');
     setSelectedLineIds([]);
     setLines(
-      orderItems.map((item: any) => {
+      orderItems.map((item) => {
         const product = productLookup.get(item.productId);
         return {
           id: item.id,
@@ -218,7 +237,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
 
     const timelineRes = await api.get<{ events: TimelineEvent[] }>(`/orders/${id}/timeline`);
     setTimeline(timelineRes.data?.events ?? []);
-  };
+  }, [loadOrderProducts]);
 
   useEffect(() => {
     if (!open) {
@@ -235,8 +254,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
         } else {
           resetNewForm();
         }
-      } catch (error: any) {
-        toast.error(error?.response?.data?.message || '加载销售订单失败');
+      } catch (reason: unknown) {
+        toast.error(readApiError(reason, '加载销售订单失败'));
       } finally {
         if (active) {
           setLoading(false);
@@ -248,7 +267,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     return () => {
       active = false;
     };
-  }, [open, orderId]);
+  }, [loadOrderDetail, open, orderId]);
 
   const handleCellUpdate = (rowId: string, columnId: string, value: string) => {
     if (!isEditable) return;
@@ -331,7 +350,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
         return <span className="font-mono text-gray-900 font-semibold">{formatMoney(sub)}</span>;
       },
     },
-  ], [productMap]);
+  ], [mergeProductRecord, productMap, resolveLinePrice]);
 
   const handleAddLine = () => {
     if (!isEditable) return;
@@ -420,8 +439,13 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       toast.success('订单保存成功');
       await loadOrderDetail(orderId);
       onSaved?.();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || error?.message || '保存失败');
+    } catch (reason: unknown) {
+      toast.error(
+        readApiError(
+          reason,
+          reason instanceof Error ? reason.message : '保存失败',
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -457,8 +481,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       toast.success('状态流转成功');
       await loadOrderDetail(orderId);
       onSaved?.();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || '状态流转失败');
+    } catch (reason: unknown) {
+      toast.error(readApiError(reason, '状态流转失败'));
     } finally {
       setTransitioning(false);
     }
