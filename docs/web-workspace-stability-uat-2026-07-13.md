@@ -2,7 +2,7 @@
 
 日期：2026-07-13（Asia/Shanghai）
 
-当前部署标签：`uat-2f2f8f7`
+当前部署标签：`uat-8dbfac5`
 
 分支：`refactor/remaining-tasks`
 
@@ -13,12 +13,13 @@
 - 登录、邀请接受、试算平衡表、AI 命令、Chat2Dash/Chat2SQL 和 OCR 上传统一使用类型安全的 API 错误消息读取。
 - 订单时间线使用明确事件类型，不再以 `any` 透传服务端数据。
 - 销售订单抽屉使用明确订单详情响应类型；价格解析、产品合并和详情加载使用稳定回调，避免列定义和加载效果捕获陈旧数据。
+- DataGrid 将 TanStack 异构列值类型擦除和 React Compiler 不兼容限制在两处有说明的公共边界，业务页面不再扩散显式 `any` 或全局禁用规则。
 
 ## 门禁证据
 
 - `npm run validate` 通过：API 45 suites / 440 tests，Web 8 suites / 48 tests。
 - API/Web typecheck、lint 和生产构建通过。
-- Web lint warning 从本轮开始前的 64 条降至 31 条；剩余告警继续作为后续迭代项，不阻塞本次受控 UAT。
+- Web lint warning 从本轮开始前的 64 条降至 28 条；生产 Web 源码当前为零告警，剩余告警全部位于测试桩，继续作为后续迭代项。
 - `npm run compose:config` 通过全部 Compose 配置。
 - `graphify update .` 完成：3680 nodes、7537 edges、276 communities。
 
@@ -34,6 +35,12 @@
 - `2f2f8f7` 仅修改 Web 源码，API 和 migration 复用当前受控 UAT 的相同构建内容并追加精确提交标签。
 - Web-only 归档大小为 `96705016` 字节，本地与远端 SHA-256 均为 `d32da33867ec3d6b927bd4b60723b32c35361a5e723d501e0e64aadc6679e0d5`。
 - 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-2f2f8f7`；长期服务均为 healthy，migration 退出码为 0，API 与 Web 均返回 HTTP 200。
+
+## DataGrid 编译器边界增量部署
+
+- `8dbfac5` 仅修改 Web 源码，API 和 migration 复用当前受控 UAT 的相同构建内容并追加精确提交标签。
+- Web-only 归档大小为 `96706380` 字节，本地与远端 SHA-256 均为 `c86e6cb1ab839bf33797b64602f9861d08280566ff2efd91230ffd9826d395a5`。
+- 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-8dbfac5`；长期服务均为 healthy，migration 退出码为 0，API 与 Web 均返回 HTTP 200。
 
 ## 边界
 
