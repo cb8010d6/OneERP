@@ -64,7 +64,7 @@
 - `676364e` 修复嵌套 Dashboard 路由的标题、工作区标签和侧边栏激活状态；`/dashboard/sales/requirements` 显示“客户需求”，销售导航保持激活。
 - `npm run validate` 通过：API 45 suites / 452 tests，Web 14 suites / 66 tests；API/Web typecheck、lint、生产构建和全部 Compose 配置均通过。
 - Graphify 更新完成：3759 nodes、7668 edges、285 communities。
-- PR #15 当前 head 为 `676364e`；GitHub validate、commitlint、CodeQL 均通过，PR 保持 Draft。
+- 功能提交 `676364e` 的 GitHub validate、commitlint、CodeQL 均通过；PR #15 保持 Draft。
 - 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-676364e`；API、Web、PostgreSQL、Redis 和 MinIO 均为 healthy，migration 容器退出码为 0，API `/api/health` 和 Web `/login` 均返回 HTTP 200。
 - 桌面浏览器验收确认：登录成功；客户需求页面、头部标题和工作区标签正确；搜索 `REQ-2026-000009` 仅返回目标记录；新建需求抽屉具备 dialog 语义；Esc 关闭后焦点恢复；页面无横向溢出。
 - 浏览器工具设置 `390x844` 后页面仍报告 `1280x720`，因此本轮不声称已完成真实移动视口视觉验收；移动端仅有响应式样式契约和自动化交互覆盖。
