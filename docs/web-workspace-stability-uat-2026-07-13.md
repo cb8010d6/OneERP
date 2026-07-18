@@ -2,7 +2,7 @@
 
 日期：2026-07-13（Asia/Shanghai）
 
-当前部署标签：`uat-d7d71ca`
+当前部署标签：`uat-676364e`
 
 分支：`refactor/remaining-tasks`
 
@@ -58,7 +58,25 @@
 - 远端 Web 构建 ID 与本地均为 `LtM4dYHY0pGUIyImKWVnI`；`oneerp_test` 已切换至 `IMAGE_TAG=uat-d7d71ca`，长期服务均为 healthy，migration 退出码为 0，API 健康端点和 Web 工作台路由均返回 HTTP 200。
 - 部署使用临时 overlay 镜像，不是正式 GHCR 发布物；临时容器、远端归档和本地归档均已删除，保留上一标签用于回滚。
 
+## 同源 API 与嵌套路由标签增量部署
+
+- `8c02541` 将 Web 客户端默认 API 地址改为同源 `/api/proxy`，避免生产浏览器产物固化 `127.0.0.1:8000/api`。生产构建静态产物中该回环地址出现次数为 0，`/api/proxy` 出现在 3 个客户端 chunk。
+- `676364e` 修复嵌套 Dashboard 路由的标题、工作区标签和侧边栏激活状态；`/dashboard/sales/requirements` 显示“客户需求”，销售导航保持激活。
+- `npm run validate` 通过：API 45 suites / 452 tests，Web 14 suites / 66 tests；API/Web typecheck、lint、生产构建和全部 Compose 配置均通过。
+- Graphify 更新完成：3759 nodes、7668 edges、285 communities。
+- PR #15 当前 head 为 `676364e`；GitHub validate、commitlint、CodeQL 均通过，PR 保持 Draft。
+- 远程 `oneerp_test` 已切换至 `IMAGE_TAG=uat-676364e`；API、Web、PostgreSQL、Redis 和 MinIO 均为 healthy，migration 容器退出码为 0，API `/api/health` 和 Web `/login` 均返回 HTTP 200。
+- 桌面浏览器验收确认：登录成功；客户需求页面、头部标题和工作区标签正确；搜索 `REQ-2026-000009` 仅返回目标记录；新建需求抽屉具备 dialog 语义；Esc 关闭后焦点恢复；页面无横向溢出。
+- 浏览器工具设置 `390x844` 后页面仍报告 `1280x720`，因此本轮不声称已完成真实移动视口视觉验收；移动端仅有响应式样式契约和自动化交互覆盖。
+
+## 临时资源收尾
+
+- 2026-07-19 复核 `oneerp_test` 仍运行 `uat-676364e`，五个长期服务均为 healthy，migration 退出码为 0，API 健康端点和 Web 登录页均返回 HTTP 200。
+- 浏览器验收使用的合成 UAT 账号已禁用，数据库 `isActive=false`；未删除该记录，以保留审计历史。
+- `CORS_ORIGINS` 已恢复为仅包含 `https://oneerp-test.yutsufun.com`，API 已强制重建并恢复 healthy。
+- 远端 `/tmp/oneerp-web-overlay-676364e*` 文件数为 0；历史 UAT 数据卷和回滚镜像保留。
+
 ## 边界
 
 - 本次仅为受控 UAT，不代表生产就绪。
-- 登录页已完成真实浏览器交互检查；需要认证的售前工作台当前覆盖自动化交互、响应式样式契约、构建和 HTTP 健康状态，登录后的桌面/移动视觉检查仍需使用专用 UAT 账号完成。
+- 登录页和售前工作台已完成桌面真实浏览器交互检查；移动视口视觉检查仍待在可可靠控制 viewport 的浏览器环境中完成。
