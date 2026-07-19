@@ -126,6 +126,40 @@ function dateLabel(value: string | null) {
   return value ? new Date(value).toLocaleString('zh-CN') : '-';
 }
 
+function quoteStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    DRAFT: '草稿',
+    SENT: '已发出',
+    ACCEPTED: '已接受',
+    REJECTED: '已拒绝',
+    EXPIRED: '已过期',
+  };
+  return labels[status] ?? status;
+}
+
+function contractStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    DRAFT: '草稿',
+    PENDING_SALES_MANAGER: '待主管审批',
+    PENDING_FINANCE_REVIEW: '待财务审批',
+    PENDING_BUSINESS_REVIEW: '待商务审批',
+    APPROVED: '待签署',
+    SIGNED: '待生效',
+    ACTIVE: '已生效',
+    REJECTED: '已退回',
+  };
+  return labels[status] ?? status;
+}
+
+function salesStage(item: RequirementListItem) {
+  const version = item.quotes?.[0]?.versions?.[0];
+  const contract = version?.contract;
+  if (contract?.status === 'ACTIVE') return 4;
+  if (contract) return 3;
+  if (version) return 2;
+  return 1;
+}
+
 export function RequirementWorkbench() {
   const [requirements, setRequirements] = useState<RequirementListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -239,6 +273,19 @@ export function RequirementWorkbench() {
         (item) => !['LOST', 'CANCELLED', 'CONVERTED'].includes(item.status),
       ).length,
     [requirements],
+  );
+  const pipelineStats = useMemo(
+    () => ({
+      active: activeCount,
+      quoting: requirements.filter((item) => item.status === 'QUOTING').length,
+      accepted: requirements.filter(
+        (item) => item.quotes?.[0]?.versions?.[0]?.status === 'ACCEPTED',
+      ).length,
+      activeContracts: requirements.filter(
+        (item) => item.quotes?.[0]?.versions?.[0]?.contract?.status === 'ACTIVE',
+      ).length,
+    }),
+    [activeCount, requirements],
   );
 
   const resetCreateForm = () => {
@@ -636,6 +683,23 @@ export function RequirementWorkbench() {
         </button>
       </div>
 
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {[
+          { label: '活跃需求', value: pipelineStats.active, tone: 'text-slate-900' },
+          { label: '报价处理中', value: pipelineStats.quoting, tone: 'text-violet-700' },
+          { label: '报价已接受', value: pipelineStats.accepted, tone: 'text-emerald-700' },
+          { label: '生效合同', value: pipelineStats.activeContracts, tone: 'text-blue-700' },
+        ].map((stat) => (
+          <div
+            key={stat.label}
+            className="rounded-xl border border-slate-200 bg-white px-4 py-3"
+          >
+            <p className="text-xs font-medium text-slate-500">{stat.label}</p>
+            <p className={`mt-1 text-2xl font-black ${stat.tone}`}>{stat.value}</p>
+          </div>
+        ))}
+      </div>
+
       <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row">
         <label className="relative flex-1">
           <span className="sr-only">搜索客户需求</span>
@@ -730,6 +794,7 @@ export function RequirementWorkbench() {
                       负责人：{item.owner?.name ?? '-'} · 下次跟进：
                       {dateLabel(item.nextFollowUpAt)}
                     </p>
+                    <SalesStageRail stage={salesStage(item)} />
                     {item.quotes?.[0]?.versions?.[0] ? (
                       <QuoteSummary
                         quote={item.quotes[0]}
@@ -1328,13 +1393,13 @@ function QuoteSummary({
     permissions.includes(permission.split(':')[0] + ':*');
 
   return (
-    <div className="mt-3 space-y-2 border-l-2 border-emerald-500 pl-3 text-xs">
+    <div className="mt-3 space-y-2 rounded-lg border border-emerald-100 bg-emerald-50/40 p-3 text-xs">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="font-mono font-bold text-emerald-700">
           {quote.quoteNo}
         </span>
         <span className="font-semibold text-slate-700">
-          V{version.versionNo} · {version.status}
+          V{version.versionNo} · {quoteStatusLabel(version.status)}
         </span>
         <span className="text-slate-500">
           {version.currencyCode}{' '}
@@ -1345,8 +1410,8 @@ function QuoteSummary({
       </div>
       <div className="flex flex-wrap gap-2">
         {version.status === 'ACCEPTED' && contract ? (
-          <span className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-600">
-            {contract.contractNo} · V{contract.currentVersionNo} · {contract.status}
+          <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 font-semibold text-slate-600">
+            {contract.contractNo} · V{contract.currentVersionNo} · {contractStatusLabel(contract.status)}
           </span>
         ) : null}
         {version.status === 'ACCEPTED' && !contract ? (
@@ -1439,6 +1504,34 @@ function QuoteSummary({
           </>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+function SalesStageRail({ stage }: { stage: number }) {
+  const stages = ['需求', '报价', '合同', '订单'];
+  return (
+    <div className="mt-3 flex max-w-xl items-center gap-1.5" aria-label="销售阶段">
+      {stages.map((label, index) => {
+        const complete = index + 1 <= stage;
+        return (
+          <div key={label} className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span
+              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                complete ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'
+              }`}
+            >
+              {index + 1}
+            </span>
+            <span className={`truncate text-[11px] font-semibold ${complete ? 'text-blue-700' : 'text-slate-400'}`}>
+              {label}
+            </span>
+            {index < stages.length - 1 ? (
+              <span className={`h-px min-w-2 flex-1 ${index + 1 < stage ? 'bg-blue-300' : 'bg-slate-200'}`} />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
