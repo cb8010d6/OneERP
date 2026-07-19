@@ -8,7 +8,7 @@
 
 Graphify 本次结构图谱记录：
 
-- 最新 `graphify update .`：3246 nodes、6583 edges、258 communities；本次 AST 更新覆盖 396 个文件。
+- 最新 `graphify update .`：3764 nodes、7673 edges、278 communities；本次 AST 更新覆盖 462 个文件。
 - 图片等二进制资产已通过 `.graphifyignore` 排除；当前未使用外部 LLM 做文档/图片语义抽取，避免把 API key 引入图谱生成流程。
 - 图谱可用于导航和缩小检索范围，但精确依赖、事务和权限判断仍需回到源码验证。
 - 本地入口：`graphify-out/GRAPH_REPORT.md`、`graphify-out/graph.json`、`graphify-out/GRAPH_TREE.html`。
@@ -20,7 +20,7 @@ Graphify 本次结构图谱记录：
 | Root | `package.json` | 聚合验证、审计、部署、备份、恢复、风险预检脚本 |
 | API | `apps/api` | NestJS + Prisma + Kysely 后端，核心 ERP 业务、AI、审计、事件队列 |
 | Web | `apps/web` | Next.js 工作台前端，订单、库存、采购、财务、AI、设置等页面 |
-| Mobile | `apps/mobile` | Expo/React Native 移动端，仍有 moderate 级 Expo/uuid audit follow-up |
+| Mobile | `apps/mobile` | Expo/React Native 移动端；SDK 55 补丁依赖已对齐，生产依赖审计为 0 |
 | Desktop | `apps/desktop` | 桌面端目录存在，但当前主线门禁主要覆盖 API/Web/Mobile audit |
 | Ops | `scripts`、`.github/workflows`、`docker-compose*.yml` | 部署、备份恢复、冒烟、验收、CI/CD 与生产门禁 |
 
@@ -154,13 +154,13 @@ Deploy workflow 当前链路：
 - 状态: Draft
 - 当前策略: 不声明生产就绪，不直接合并。
 - 最近检查: 2026-07-10 分支 head `ad24a94` 的 commitlint、validate、CodeQL 均为 green。
-- 2 GB 远程 UAT 已启动 API、Web、PostgreSQL、Redis、MinIO 并两次通过现有 9 步业务验收；使用临时 overlay API 镜像。恢复演练、正式分支镜像、HTTPS 和真实业务数据签字仍未完成。
+- 2 GB 远程 UAT 已部署提交 `7d96fd7` 的正式 GHCR SHA 镜像；API、Web、PostgreSQL、Redis、MinIO 均 healthy，migration 退出码为 0。部署检查、核心冒烟、13 步员工权限、11 步业务验收和隔离恢复演练均通过。公网 DNS/Nginx/TLS、异地备份和真实业务数据签字仍未完成。
 
 ## 七、下一步优先级
 
-1. **真实环境门禁**：用正式分支镜像重跑 `deploy-check`、`prod-smoke`、`staff-permission-smoke`、`business-acceptance` 和 `restore-drill`。
+1. **公网入口门禁**：为 `oneerp-test.yutsufun.com` 配置 DNS，增加只代理回环 API/Web 端口的 Nginx site，并签发、验证 TLS 证书。
 2. **截图和 GitHub 门面**：补真实 Dashboard、订单、库存、采购、财务、AI 截图；补 GitHub About；保留“不宣称生产就绪”的措辞。
 3. **写流程分析**：只读分析 Purchase supplier payment / supplier credit note 的事务、事件、幂等、失败回滚和测试覆盖。
 4. **Inventory 引擎测试**：先增强 `executeStockMove`、冲销、循环部分成功的测试，再谈拆服务。
 5. **T13 enum 独立分支**：目标库脏数据报告为 0 后，再按业务域做 Prisma enum migration。
-6. **移动端依赖升级**：mobile 仍有 moderate Expo/uuid 链路告警，需单独升级验证，避免强行 `audit fix --force` 引入破坏性 Expo 变更。
+6. **移动端交付验证**：依赖审计已清零；后续在真实 Android/iOS 设备验证扫码、登录和弱网行为，不以 Metro bundle 替代设备验收。

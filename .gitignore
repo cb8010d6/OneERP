@@ -78,6 +78,7 @@ apps/api/generated/
 apps/api/.nestcli-generated/
 apps/web/.next/
 apps/mobile/.expo/
+.expo-export-check/
 
 # Python caches from reference tooling
 __pycache__/

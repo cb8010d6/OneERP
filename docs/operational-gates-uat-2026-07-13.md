@@ -61,3 +61,28 @@ Compose project：`oneerp_test`
 
 - 当前证据不包含异地备份、HTTPS 外部链路、真实业务负责人签字或生产数据验收。
 - 当前状态仍为受控 UAT，不代表生产就绪。
+
+## 2026-07-19 精确镜像升级复验
+
+- 部署提交：`7d96fd7`（`fix(mobile): align Expo dependencies and clear audit findings`）。
+- GitHub Deploy run：`29671502091`；release preflight、API、API migration 和 Web 镜像构建全部通过。
+- 运行镜像：`ghcr.io/cb8010d6/oneerp-api:7d96fd7`、`oneerp-api-migrate:7d96fd7`、`oneerp-web:7d96fd7`。
+- Compose project：`oneerp_test`；API、Web、PostgreSQL、Redis、MinIO 均 healthy，migration 退出码为 0。
+- 升级前备份：`backups/20260719-032241`；目录权限 `0700`，PostgreSQL、MinIO 和 manifest 文件权限均为 `0600`。
+- `deploy-check` 和 `prod-smoke` 通过，报告 `failed=0`。
+- 员工权限验收 13 步全部通过；完整业务验收 11 步全部通过。业务验收包含库存不足拒绝且数量不变、正常销售发货、发票平衡过账和试算平衡。
+- 隔离恢复项目 `oneerp_drill_7d96fd7` 使用升级前备份复验通过：RPO 10 分钟、RTO 89 秒；演练后容器、卷和临时环境文件均已清理。
+- 清理 91 个未被容器引用的旧 OneERP UAT 镜像标签，根盘使用率从 51% 降至 45%，可用空间从 18 GiB 增至 21 GiB；保留当前 `7d96fd7`、上一运行版 `uat-676364e` 和更早正式 SHA `0d09d9a` 三套镜像作为回滚点。
+
+服务器报告：
+
+- `uat-reports/staff-permission-smoke-7d96fd7.json`
+- `uat-reports/business-acceptance-7d96fd7.json`
+- `uat-reports/restore-drill-7d96fd7.json`
+
+公网边界复核：
+
+- `yutsufun.com` 的 A 记录指向 UAT 主机，但 `oneerp-test.yutsufun.com` 在公共 DNS 返回 `NXDOMAIN`。
+- 主机 Nginx 当前只有 `yutsufun.com`、`blog.yutsufun.com` 和 `edit.yutsufun.com` 站点；没有 OneERP 的 server block 或证书配置。
+- API/Web 继续只绑定主机回环地址 `127.0.0.1:18000` 和 `127.0.0.1:13000`，数据库、Redis、MinIO 未向公网暴露。
+- 因此本次只证明精确镜像受控 UAT 部署和内部门禁通过；公网 DNS、Nginx 反向代理、TLS 证书、异地备份和人工签字仍未闭环。
