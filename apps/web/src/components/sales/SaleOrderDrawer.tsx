@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Sheet } from '@/components/ui/Sheet';
 import { DataGrid } from '@/components/ui/data-grid/DataGrid';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
+import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSelect';
 import { CheckCircle2, Save, Activity, Layers, Info, Loader2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import toast from 'react-hot-toast';
+import { isSalesShipmentWorkbenchStatus } from '@/lib/sales-order-transition';
 
 interface OrderLine {
   id: string; // DataGrid 行唯一键
@@ -18,16 +21,11 @@ interface OrderLine {
   unitPrice: number;
 }
 
-interface PartnerOption {
-  id: string;
-  name: string;
-  code?: string | null;
-}
-
 interface ProductOption {
   id: string;
-  sku: string;
-  name: string;
+  sku?: string;
+  name?: string;
+  listPrice: number;
 }
 
 interface TimelineEvent {
@@ -39,6 +37,21 @@ interface TimelineEvent {
   };
 }
 
+interface SaleOrderDetailResponse {
+  orderNo?: string;
+  status?: string;
+  partnerId?: string;
+  partner?: { name?: string | null } | null;
+  expectedDate?: string | null;
+  notes?: string | null;
+  items?: Array<{
+    id: string;
+    productId: string;
+    quantity: number | string;
+    unitPrice?: number | string | null;
+  }>;
+}
+
 interface SaleOrderFormProps {
   open: boolean;
   onClose: () => void;
@@ -48,7 +61,18 @@ interface SaleOrderFormProps {
 
 type TabType = 'LINES' | 'INFO' | 'CHATTER';
 
+function readString(record: AsyncSelectRecord, key: string) {
+  const value = record[key];
+  return value === undefined || value === null ? '' : String(value);
+}
+
+function readNumber(record: AsyncSelectRecord, key: string) {
+  const value = Number(record[key] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
 export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFormProps) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<TabType>('LINES');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -61,8 +85,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
 
-  const [partners, setPartners] = useState<PartnerOption[]>([]);
   const [products, setProducts] = useState<ProductOption[]>([]);
+  const [partnerName, setPartnerName] = useState('');
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
 
   const [lines, setLines] = useState<OrderLine[]>([]);
@@ -72,17 +96,41 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
   const productMap = useMemo(() => {
     return new Map(products.map((p) => [p.id, p]));
   }, [products]);
-  const partnerName = useMemo(() => partners.find((p) => p.id === partnerId)?.name || '', [partners, partnerId]);
-  const isEditable = status === 'DRAFT' || status === 'SUBMITTED';
+  const isEditable = status === 'DRAFT' || status === 'SUBMITTED' || status === 'PENDING_APPROVAL';
+  const mergeProductRecord = useCallback((record: AsyncSelectRecord) => {
+    const id = readString(record, 'id');
+    if (!id) return;
+
+    const product: ProductOption = {
+      id,
+      sku: readString(record, 'sku'),
+      name: readString(record, 'name'),
+      listPrice: readNumber(record, 'listPrice'),
+    };
+
+    setProducts((prev) => {
+      const next = new Map(prev.map((item) => [item.id, item]));
+      next.set(product.id, product);
+      return Array.from(next.values());
+    });
+  }, []);
+  const resolveLinePrice = useCallback((line: OrderLine) => {
+    const product = productMap.get(line.productId);
+    const productPrice = Number(product?.listPrice ?? 0);
+    if (Number.isFinite(productPrice) && productPrice > 0) {
+      return productPrice;
+    }
+
+    const fallbackPrice = Number(line.unitPrice ?? 0);
+    return Number.isFinite(fallbackPrice) ? fallbackPrice : 0;
+  }, [productMap]);
   const validLines = useMemo(
     () =>
       lines.filter(
         (line) =>
           Boolean(line.productId) &&
           Number.isFinite(line.quantity) &&
-          Number.isFinite(line.unitPrice) &&
-          line.quantity > 0 &&
-          line.unitPrice >= 0,
+          line.quantity > 0,
       ),
     [lines],
   );
@@ -91,37 +139,30 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       lines.filter(
         (line) =>
           Boolean(line.productId) &&
-          (!Number.isFinite(line.quantity) || !Number.isFinite(line.unitPrice) || line.quantity <= 0 || line.unitPrice < 0),
+          (!Number.isFinite(line.quantity) || line.quantity <= 0 || resolveLinePrice(line) <= 0),
       ),
-    [lines],
+    [lines, resolveLinePrice],
   );
+  const subtotal = useMemo(
+    () => lines.reduce((acc, row) => acc + (row.quantity * resolveLinePrice(row)), 0),
+    [lines, resolveLinePrice],
+  );
+  const tax = useMemo(() => subtotal * 0.13, [subtotal]);
+  const total = useMemo(() => subtotal + tax, [subtotal, tax]);
   const canSaveDraft =
     isEditable &&
     !saving &&
     Boolean(partnerId) &&
     Boolean(orderDate) &&
     validLines.length > 0 &&
-    invalidConfiguredLines.length === 0;
-
-  const loadBaseOptions = async () => {
-    const [partnerRes, productRes] = await Promise.all([
-      api.get<{ data: PartnerOption[] }>('/v1/resource/partner?page=1&limit=200&orderBy={"createdAt":"desc"}'),
-      api.get<{ data: ProductOption[] }>('/v1/resource/product?page=1&limit=200&orderBy={"createdAt":"desc"}'),
-    ]);
-
-    const partnerData = partnerRes.data?.data ?? [];
-    const productData = productRes.data?.data ?? [];
-
-    setPartners(partnerData);
-    setProducts(productData);
-
-    return { partnerData, productData };
-  };
+    invalidConfiguredLines.length === 0 &&
+    total > 0;
 
   const resetNewForm = () => {
     setStatus('DRAFT');
     setOrderNo('SO-NEW-DRAFT');
     setPartnerId('');
+    setPartnerName('');
     setOrderDate(new Date().toISOString().slice(0, 10));
     setNotes('');
     setTimeline([]);
@@ -138,18 +179,49 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     ]);
   };
 
-  const loadOrderDetail = async (id: string, productData?: ProductOption[]) => {
-    const productLookup = new Map((productData ?? products).map((item) => [item.id, item]));
-    const detail = await api.get<any>(`/orders/${id}`);
+  const loadOrderProducts = useCallback(async (productIds: string[]) => {
+    const uniqueIds = Array.from(new Set(productIds.filter(Boolean)));
+    const productEntries = await Promise.all(
+      uniqueIds.map(async (productId) => {
+        try {
+          const res = await api.get<ProductOption>(`/v1/resource/product/${productId}`);
+          return res.data;
+        } catch {
+          return null;
+        }
+      }),
+    );
+
+    const loadedProducts = productEntries.filter((item): item is ProductOption => Boolean(item?.id));
+    if (loadedProducts.length) {
+      setProducts((prev) => {
+        const next = new Map(prev.map((item) => [item.id, item]));
+        for (const product of loadedProducts) {
+          next.set(product.id, product);
+        }
+        return Array.from(next.values());
+      });
+    }
+
+    return new Map(loadedProducts.map((item) => [item.id, item]));
+  }, []);
+
+  const loadOrderDetail = useCallback(async (id: string) => {
+    const detail = await api.get<SaleOrderDetailResponse>(`/orders/${id}`);
     const order = detail.data;
+    const orderItems = order.items ?? [];
+    const productLookup = await loadOrderProducts(
+      orderItems.map((item) => String(item.productId ?? '')),
+    );
     setOrderNo(order.orderNo || id);
     setStatus(order.status || 'DRAFT');
     setPartnerId(order.partnerId || '');
+    setPartnerName(order.partner?.name || '');
     setOrderDate(order.expectedDate ? new Date(order.expectedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
     setNotes(order.notes || '');
     setSelectedLineIds([]);
     setLines(
-      (order.items || []).map((item: any) => {
+      orderItems.map((item) => {
         const product = productLookup.get(item.productId);
         return {
           id: item.id,
@@ -158,14 +230,14 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           productCode: product?.sku || '',
           description: product?.name || item.productId,
           quantity: Number(item.quantity || 0),
-          unitPrice: Number(item.unitPrice || 0),
+          unitPrice: Number(product?.listPrice ?? item.unitPrice ?? 0),
         };
       }),
     );
 
     const timelineRes = await api.get<{ events: TimelineEvent[] }>(`/orders/${id}/timeline`);
     setTimeline(timelineRes.data?.events ?? []);
-  };
+  }, [loadOrderProducts]);
 
   useEffect(() => {
     if (!open) {
@@ -176,15 +248,14 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     const run = async () => {
       setLoading(true);
       try {
-        const base = await loadBaseOptions();
         if (!active) return;
         if (orderId) {
-          await loadOrderDetail(orderId, base.productData);
+          await loadOrderDetail(orderId);
         } else {
           resetNewForm();
         }
-      } catch (error: any) {
-        toast.error(error?.response?.data?.message || '加载销售订单失败');
+      } catch (reason: unknown) {
+        toast.error(readApiError(reason, '加载销售订单失败'));
       } finally {
         if (active) {
           setLoading(false);
@@ -196,7 +267,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     return () => {
       active = false;
     };
-  }, [open, orderId]);
+  }, [loadOrderDetail, open, orderId]);
 
   const handleCellUpdate = (rowId: string, columnId: string, value: string) => {
     if (!isEditable) return;
@@ -206,12 +277,13 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       const updated = { ...line };
 
       if (columnId === 'quantity') updated.quantity = Math.max(1, Number(value) || 1);
-      if (columnId === 'unitPrice') updated.unitPrice = Math.max(0, Number(value) || 0);
+      if (columnId === 'unitPrice') return line;
       if (columnId === 'productId') {
         const product = productMap.get(value);
         updated.productId = value;
         updated.productCode = product?.sku || '';
         updated.description = product?.name || '';
+        updated.unitPrice = Number(product?.listPrice ?? 0);
       }
 
       return updated;
@@ -231,10 +303,27 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
         return <span className="font-medium text-slate-800">{product ? `${product.sku} · ${product.name}` : value}</span>;
       },
       meta: {
-        options: products.map((product) => ({
-          label: `${product.sku} · ${product.name}`,
-          value: product.id,
-        })),
+        reference: { model: 'product', labelField: 'name', valueField: 'id' },
+        onReferenceSelect: (
+          rowId: string,
+          _columnId: string,
+          value: string,
+          record: AsyncSelectRecord,
+        ) => {
+          mergeProductRecord(record);
+          setLines((prev) =>
+            prev.map((line) => {
+              if (line.id !== rowId) return line;
+              return {
+                ...line,
+                productId: value,
+                productCode: readString(record, 'sku'),
+                description: readString(record, 'name'),
+                unitPrice: readNumber(record, 'listPrice'),
+              };
+            }),
+          );
+        },
       },
     },
     { accessorKey: 'description', header: '描述', cell: (info) => <span className="text-slate-600">{String(info.getValue() ?? '')}</span> },
@@ -245,25 +334,23 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
     },
     { 
       accessorKey: 'unitPrice', 
-      header: '单价',
-      cell: (info) => <span className="font-mono text-gray-700">{formatMoney(info.getValue() as number)}</span>,
+      header: '参考售价',
+      cell: (info) => {
+        const row = info.row.original;
+        return <span className="font-mono text-gray-700">{formatMoney(resolveLinePrice(row))}</span>;
+      },
+      meta: { editable: false },
     },
     { 
       id: 'subtotal',
       header: '小计',
       cell: (info) => {
         const row = info.row.original;
-        const sub = row.quantity * row.unitPrice;
+        const sub = row.quantity * resolveLinePrice(row);
         return <span className="font-mono text-gray-900 font-semibold">{formatMoney(sub)}</span>;
       },
     },
-  ], [products, productMap]);
-
-  const { subtotal, tax, total } = useMemo(() => {
-    const sub = lines.reduce((acc, row) => acc + (row.quantity * row.unitPrice), 0);
-    const taxAmt = sub * 0.13;
-    return { subtotal: sub, tax: taxAmt, total: sub + taxAmt };
-  }, [lines]);
+  ], [mergeProductRecord, productMap, resolveLinePrice]);
 
   const handleAddLine = () => {
     if (!isEditable) return;
@@ -306,7 +393,6 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       .map((line) => ({
         productId: line.productId,
         quantity: Math.max(1, Number(line.quantity || 1)),
-        unitPrice: Math.max(0, Number(line.unitPrice || 0)),
       }));
 
     if (!items.length) {
@@ -331,10 +417,6 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       setSaving(true);
       const payload = buildOrderPayload();
 
-      if (total <= 0) {
-        throw new Error('订单总金额必须大于 0');
-      }
-
       if (!orderId) {
         const created = await api.post('/orders', payload);
         toast.success('订单创建成功');
@@ -344,48 +426,26 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
         return;
       }
 
-      await api.put(`/v1/resource/order/${orderId}`, {
+      await api.put(`/orders/${orderId}`, {
         partnerId: payload.partnerId,
         expectedDate: payload.expectedDate,
         notes: payload.notes,
-        totalAmount: total,
       });
 
-      const detail = await api.get<any>(`/orders/${orderId}`);
-      const existingItems = detail.data?.items ?? [];
-
-      const existingItemIds = new Set<string>(existingItems.map((item: any) => String(item.id)));
-      const keepItemIds = new Set<string>(
-        lines.filter((line) => line.orderItemId).map((line) => String(line.orderItemId)),
-      );
-
-      const toDelete = Array.from(existingItemIds).filter((id) => !keepItemIds.has(id));
-      await Promise.all(toDelete.map((id) => api.delete(`/v1/resource/orderItem/${id}`)));
-
-      const upserts = lines
-        .filter((line) => line.productId)
-        .map((line) => {
-          const rowPayload = {
-            orderId,
-            productId: line.productId,
-            quantity: Math.max(1, Number(line.quantity || 1)),
-            unitPrice: Math.max(0, Number(line.unitPrice || 0)),
-            totalPrice: Math.max(1, Number(line.quantity || 1)) * Math.max(0, Number(line.unitPrice || 0)),
-          };
-
-          if (line.orderItemId) {
-            return api.put(`/v1/resource/orderItem/${line.orderItemId}`, rowPayload);
-          }
-          return api.post('/v1/resource/orderItem', rowPayload);
-        });
-
-      await Promise.all(upserts);
+      await api.put(`/orders/${orderId}/items`, {
+        items: payload.items,
+      });
 
       toast.success('订单保存成功');
       await loadOrderDetail(orderId);
       onSaved?.();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || error?.message || '保存失败');
+    } catch (reason: unknown) {
+      toast.error(
+        readApiError(
+          reason,
+          reason instanceof Error ? reason.message : '保存失败',
+        ),
+      );
     } finally {
       setSaving(false);
     }
@@ -397,10 +457,16 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       return;
     }
 
+    if (isSalesShipmentWorkbenchStatus(status)) {
+      onClose();
+      router.push(`/dashboard/orders/${orderId}`);
+      return;
+    }
+
     const actionMap: Record<string, string> = {
       DRAFT: 'submit',
+      PENDING_APPROVAL: 'approve',
       PENDING: 'start_production',
-      IN_PRODUCTION: 'ship',
       SHIPPED: 'complete',
     };
     const action = actionMap[status];
@@ -415,8 +481,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
       toast.success('状态流转成功');
       await loadOrderDetail(orderId);
       onSaved?.();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || '状态流转失败');
+    } catch (reason: unknown) {
+      toast.error(readApiError(reason, '状态流转失败'));
     } finally {
       setTransitioning(false);
     }
@@ -424,20 +490,96 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
 
   const nextActionLabel: Record<string, string> = {
     DRAFT: '提交订单',
+    PENDING_APPROVAL: '审批通过',
     PENDING: '开始生产',
-    IN_PRODUCTION: '发货',
+    IN_PRODUCTION: '打开发货工作台',
+    PARTIAL_SHIPPED: '继续发货',
     SHIPPED: '完成订单',
   };
 
+  const toggleMobileLineSelection = (lineId: string) => {
+    setSelectedLineIds((prev) =>
+      prev.includes(lineId)
+        ? prev.filter((id) => id !== lineId)
+        : [...prev, lineId],
+    );
+  };
+
+  const renderMobileLineCards = () => (
+    <div className="space-y-3 md:hidden">
+      {lines.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+          暂无商品明细
+        </div>
+      ) : (
+        lines.map((line) => {
+          const product = productMap.get(line.productId);
+          const unitPrice = resolveLinePrice(line);
+          const lineSubtotal = line.quantity * unitPrice;
+          const selected = selectedLineIds.includes(line.id);
+          return (
+            <div
+              key={line.id}
+              className={`rounded-xl border bg-white p-3 shadow-sm ${
+                selected ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <label className="flex min-w-0 items-start gap-2">
+                  {isEditable ? (
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      onChange={() => toggleMobileLineSelection(line.id)}
+                      className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600"
+                    />
+                  ) : null}
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-slate-900">
+                      {product
+                        ? `${product.sku || line.productCode} · ${product.name || line.description}`
+                        : line.description || line.productCode || '未选择产品'}
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-slate-500">
+                      {line.productId || '请选择产品'}
+                    </span>
+                  </span>
+                </label>
+                <span className="shrink-0 rounded-md bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700">
+                  x {line.quantity}
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-3 border-t border-slate-100 pt-3 text-xs">
+                <div>
+                  <p className="text-slate-500">参考售价</p>
+                  <p className="mt-1 font-mono font-medium text-slate-800">
+                    {formatMoney(unitPrice)}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-slate-500">小计</p>
+                  <p className="mt-1 font-mono font-semibold text-slate-900">
+                    {formatMoney(lineSubtotal)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+
   const renderActions = () => (
-    <div className="flex items-center gap-3">
+    <div className="grid w-full gap-2 sm:flex sm:w-auto sm:items-center sm:gap-3">
       {(status === 'DRAFT' || status === 'SUBMITTED') ? (
         <>
           <button 
             type="button" 
             disabled={!canSaveDraft}
             onClick={saveOrder}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-gray-100 text-gray-700 font-medium text-sm hover:bg-gray-200 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <Save className="h-4 w-4" />
             {saving ? '保存中...' : '保存草稿'}
@@ -446,7 +588,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
             type="button" 
             disabled={transitioning || !orderId}
             onClick={runWorkflowTransition}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 transition shadow-sm shadow-blue-200"
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:opacity-70"
           >
             <CheckCircle2 className="h-4 w-4" />
             {transitioning ? '流转中...' : (nextActionLabel[status] || '执行流转')}
@@ -457,7 +599,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           type="button"
           disabled={transitioning}
           onClick={runWorkflowTransition}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 text-white font-medium text-sm hover:bg-blue-700 transition shadow-sm shadow-blue-200 disabled:opacity-70"
+          className="flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700 disabled:opacity-70"
         >
           <CheckCircle2 className="h-4 w-4" />
           {transitioning ? '流转中...' : nextActionLabel[status]}
@@ -486,72 +628,77 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           <Loader2 className="h-4 w-4 animate-spin" /> 正在加载订单详情...
         </div>
       ) : (
-      <div className="flex flex-col h-full bg-slate-50/50 -mx-5 -my-4 p-5">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4 rounded-2xl bg-white p-5 border border-slate-200/60 shadow-sm">
-          <div className="flex flex-col gap-1 w-full max-w-sm">
-            <h2 className="text-2xl font-black tracking-tight text-slate-900">
+      <div className="flex h-full flex-col bg-slate-50/50 -mx-5 -my-4 p-3 sm:p-5">
+        <div className="mb-4 flex flex-col gap-4 rounded-xl border border-slate-200/60 bg-white p-4 shadow-sm sm:mb-6 sm:flex-row sm:items-start sm:justify-between sm:rounded-2xl sm:p-5">
+          <div className="flex min-w-0 flex-col gap-1 sm:max-w-sm">
+            <h2 className="truncate text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
               {orderNo}
             </h2>
-            <div className="flex items-center gap-2 mt-1">
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
               <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold tracking-wide ${
                 status === 'DRAFT' || status === 'SUBMITTED' ? 'bg-slate-100 text-slate-600' : 'bg-green-100 text-green-700'
               }`}>
                 {status}
               </span>
-              <span className="text-sm text-slate-500">客户: {partnerName || '未选择'}</span>
+              <span className="min-w-0 truncate text-sm text-slate-500">客户: {partnerName || '未选择'}</span>
             </div>
           </div>
           {renderActions()}
         </div>
 
-        <div className="flex gap-1 border-b border-slate-200 mb-5">
-          {[
-            { id: 'LINES', label: '商品明细', icon: Layers },
-            { id: 'INFO', label: '开票与物流', icon: Info },
-            { id: 'CHATTER', label: '操作台账', icon: Activity }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id as TabType)}
-              className={`flex items-center gap-2 px-5 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === tab.id 
-                  ? 'border-blue-600 text-blue-700' 
-                  : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300'
-              }`}
-            >
-              <tab.icon className="h-4 w-4" />
-              {tab.label}
-            </button>
-          ))}
+        <div className="mb-4 overflow-x-auto border-b border-slate-200 sm:mb-5">
+          <div className="flex min-w-max gap-1">
+            {[
+              { id: 'LINES', label: '商品明细', icon: Layers },
+              { id: 'INFO', label: '开票与物流', icon: Info },
+              { id: 'CHATTER', label: '操作台账', icon: Activity }
+            ].map(tab => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id as TabType)}
+                className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors sm:px-5 ${
+                  activeTab === tab.id
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-slate-500 hover:border-slate-300 hover:text-slate-800'
+                }`}
+              >
+                <tab.icon className="h-4 w-4" />
+                {tab.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="flex-1 overflow-auto">
           {activeTab === 'LINES' && (
              <div className="flex flex-col h-full gap-4">
                 {isEditable && (
-                  <div className="flex justify-between items-center bg-blue-50/50 border border-blue-100 p-3 rounded-xl">
-                    <p className="text-xs text-blue-800 flex items-center gap-2">
-                       <span className="text-lg">i</span> 双击单元格可编辑，产品列支持下拉选择真实物料。
+                  <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="flex items-start gap-2 text-xs text-blue-800">
+                       <span className="text-lg leading-none">i</span>
+                       <span>桌面端可双击单元格编辑；手机端先查看明细，复杂编辑建议切到桌面。</span>
                     </p>
-                    <div className="flex items-center gap-2">
+                    <div className="grid gap-2 sm:flex sm:items-center">
                       <button
                         onClick={handleDeleteSelectedLines}
-                        className="text-xs font-semibold text-rose-600 hover:text-rose-700 px-3 py-1 rounded bg-rose-100/60 hover:bg-rose-100 transition"
+                        className="rounded bg-rose-100/60 px-3 py-1.5 text-xs font-semibold text-rose-600 transition hover:bg-rose-100 hover:text-rose-700"
                       >
                         删除选中 ({selectedLineIds.length})
                       </button>
                       <button 
                         onClick={handleAddLine}
-                        className="text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1 rounded bg-blue-100/50 hover:bg-blue-100 transition"
+                        className="rounded bg-blue-100/50 px-3 py-1.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-100 hover:text-blue-800"
                       >
                         + 新增空行
                       </button>
                     </div>
                   </div>
                 )}
-                
-                <div className="bg-white rounded-xl border border-slate-200/60 shadow-sm p-2 flex-1">
+
+                {renderMobileLineCards()}
+
+                <div className="hidden flex-1 rounded-xl border border-slate-200/60 bg-white p-2 shadow-sm md:block">
                   <DataGrid 
                     columns={columns} 
                     data={lines} 
@@ -568,8 +715,8 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
                   </div>
                 ) : null}
 
-                <div className="flex justify-end mt-2">
-                  <div className="w-80 bg-white rounded-xl border border-slate-200/60 shadow-sm p-5 space-y-3">
+                <div className="mt-2 flex justify-end">
+                  <div className="w-full rounded-xl border border-slate-200/60 bg-white p-4 shadow-sm sm:w-80 sm:p-5 space-y-3">
                      <div className="flex justify-between items-center text-sm text-slate-600">
                         <span>小计 (Subtotal)</span>
                         <span className="font-mono">{formatMoney(subtotal)}</span>
@@ -589,24 +736,26 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           )}
 
           {activeTab === 'INFO' && (
-            <div className="grid grid-cols-2 gap-6 bg-white p-6 rounded-2xl border border-slate-200/60">
-               <div className="space-y-4 border-r border-slate-100 pr-6">
+            <div className="grid gap-5 rounded-xl border border-slate-200/60 bg-white p-4 sm:rounded-2xl sm:p-6 md:grid-cols-2 md:gap-6">
+               <div className="space-y-4 md:border-r md:border-slate-100 md:pr-6">
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-2">客户与发票</h3>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">选中客户</label>
-                    <select
+                    <AsyncSelect
+                      id="partnerId"
                       value={partnerId}
-                      onChange={(e) => setPartnerId(e.target.value)}
+                      reference={{ model: 'partner', labelField: 'name', valueField: 'id' }}
+                      onChange={(val) => {
+                        setPartnerId(val);
+                        if (!val) {
+                          setPartnerName('');
+                        }
+                      }}
+                      onSelectRecord={(record) => setPartnerName(readString(record, 'name'))}
                       disabled={!isEditable}
+                      placeholder="搜索或选择客户..."
                       className="w-full text-sm p-2 rounded-lg border border-slate-200 outline-none focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50 disabled:text-slate-500"
-                    >
-                      <option value="">请选择客户</option>
-                      {partners.map((partner) => (
-                        <option key={partner.id} value={partner.id}>
-                          {(partner.code ? `${partner.code} · ` : '') + partner.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">付款条款 (Payment Terms)</label>
@@ -619,7 +768,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
                     </select>
                   </div>
                </div>
-               <div className="space-y-4 pl-2">
+               <div className="space-y-4 md:pl-2">
                   <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider mb-2">排程与其他</h3>
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">交货日期 (Expected Date)</label>
@@ -647,7 +796,7 @@ export function SaleOrderDrawer({ open, onClose, orderId, onSaved }: SaleOrderFo
           )}
 
           {activeTab === 'CHATTER' && (
-             <div className="bg-white p-6 rounded-2xl border border-slate-200/60 max-w-3xl">
+             <div className="max-w-3xl rounded-xl border border-slate-200/60 bg-white p-4 sm:rounded-2xl sm:p-6">
                 {timeline.length === 0 ? (
                   <div className="text-sm text-slate-500">暂无台账记录。</div>
                 ) : (

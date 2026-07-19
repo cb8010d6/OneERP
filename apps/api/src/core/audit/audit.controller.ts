@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentCompany } from '../decorators/current-company.decorator';
 import { CurrentUser } from '../decorators/current-user.decorator';
@@ -17,6 +25,28 @@ interface CurrentUserPayload {
 @Controller('v1/timeline')
 export class AuditController {
   constructor(private readonly auditService: AuditService) {}
+
+  @Get('actions/:action')
+  @ApiOperation({ summary: '按操作类型查询审计事件' })
+  listActionLogs(
+    @Param('action') action: string,
+    @CurrentCompany() companyId: string,
+    @Query('entity') entity?: string,
+    @Query('limit') limit?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('userId') userId?: string,
+    @Query('status') status?: 'POSTED' | 'FAILED' | 'SKIPPED',
+  ) {
+    return this.auditService.listActionLogs(companyId, action, {
+      entity,
+      limit: limit ? Number(limit) : undefined,
+      startDate,
+      endDate,
+      userId,
+      status,
+    });
+  }
 
   @Get(':modelName/:recordId')
   @ApiOperation({ summary: '获取指定单据的时间线事件' })

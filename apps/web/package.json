@@ -1,7 +1,9 @@
 {
   "name": "web",
   "version": "0.1.0",
+  "description": "OneERP Web 前端：面向制造企业的订单、库存、财务、权限和 AI 工作台。",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -19,13 +21,17 @@
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
     "lucide-react": "^0.577.0",
-    "next": "16.2.1",
+    "next": "^16.2.7",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hot-toast": "^2.6.0",
     "recharts": "^3.8.0",
     "tailwind-merge": "^3.5.0",
     "zustand": "^5.0.12"
+  },
+  "overrides": {
+    "form-data": "4.0.6",
+    "postcss": "8.5.16"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -37,7 +43,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.1",
+    "eslint-config-next": "^16.2.7",
     "identity-obj-proxy": "^3.0.0",
     "jest": "^30.0.0",
     "jest-environment-jsdom": "^30.0.0",
@@ -46,6 +52,7 @@
     "typescript": "^5"
   },
   "jest": {
+    "maxWorkers": 2,
     "testEnvironment": "jsdom",
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.ts"
@@ -66,6 +73,9 @@
     "testPathIgnorePatterns": [
       "<rootDir>/.next/",
       "<rootDir>/node_modules/"
+    ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.next/"
     ]
   }
 }

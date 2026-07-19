@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EventQueueService } from '../events/event-queue.service';
 
 type CrudAction = 'CRUD_CREATE' | 'CRUD_UPDATE' | 'CRUD_DELETE';
 
@@ -30,7 +31,10 @@ const MODEL_ALIASES: Record<string, string[]> = {
 export class AuditService {
   private readonly logger = new Logger(AuditService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly eventQueueService: EventQueueService,
+  ) {}
 
   async logCrudAction(payload: CrudAuditPayload) {
     if (!payload.companyId || !payload.userId) {
@@ -53,9 +57,31 @@ export class AuditService {
       });
     } catch (error) {
       this.logger.warn(
-        `Failed to write audit log for ${payload.modelName}:${payload.recordId}`,
+        `Failed to write audit log for ${payload.modelName}:${payload.recordId}, queuing to DLQ`,
       );
       this.logger.debug(String(error));
+
+      try {
+        await this.eventQueueService.enqueue({
+          eventName: 'audit.log.failed',
+          idempotencyKey: `audit:${payload.companyId}:${payload.userId}:${entity}:${payload.recordId}:${payload.action}`,
+          payload: {
+            userId: payload.userId,
+            companyId: payload.companyId,
+            entity,
+            entityId: payload.recordId,
+            action: payload.action,
+            details,
+            originalError: String(error),
+          },
+          companyId: payload.companyId,
+          maxAttempts: 3,
+        });
+      } catch (dlqError) {
+        this.logger.error(
+          `Failed to enqueue audit log to DLQ: ${String(dlqError)}`,
+        );
+      }
     }
   }
 
@@ -125,6 +151,78 @@ export class AuditService {
         details: item.details,
       })),
     };
+  }
+
+  async listActionLogs(
+    companyId: string,
+    action: string,
+    options?: {
+      entity?: string;
+      limit?: number;
+      startDate?: string;
+      endDate?: string;
+      userId?: string;
+      status?: 'POSTED' | 'FAILED' | 'SKIPPED';
+    },
+  ) {
+    const limit = Math.min(Math.max(Number(options?.limit ?? 20), 1), 100);
+    const createdAt: Prisma.DateTimeFilter = {};
+    if (options?.startDate) {
+      createdAt.gte = new Date(options.startDate);
+    }
+    if (options?.endDate) {
+      createdAt.lte = new Date(options.endDate);
+    }
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        companyId,
+        action,
+        ...(options?.entity ? { entity: options.entity } : {}),
+        ...(options?.userId ? { userId: options.userId } : {}),
+        ...(Object.keys(createdAt).length ? { createdAt } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true },
+        },
+      },
+      take: limit,
+    });
+    const status = options?.status;
+    const filteredLogs = status
+      ? logs.filter((item) => this.auditDetailsHasStatus(item.details, status))
+      : logs;
+
+    return {
+      action,
+      events: filteredLogs.map((item) => ({
+        id: item.id,
+        action: item.action,
+        entity: item.entity,
+        entityId: item.entityId,
+        createdAt: item.createdAt,
+        user: item.user,
+        details: item.details,
+      })),
+    };
+  }
+
+  private auditDetailsHasStatus(
+    details: Prisma.JsonValue,
+    status: 'POSTED' | 'FAILED' | 'SKIPPED',
+  ) {
+    if (!this.isRecord(details)) {
+      return false;
+    }
+    const key =
+      status === 'POSTED'
+        ? 'posted'
+        : status === 'FAILED'
+          ? 'failed'
+          : 'skipped';
+    return Number(details[key] ?? 0) > 0;
   }
 
   private buildCrudDetails(payload: CrudAuditPayload) {

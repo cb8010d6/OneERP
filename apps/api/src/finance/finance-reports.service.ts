@@ -1,0 +1,634 @@
+import { Injectable, BadRequestException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { FinanceAccountMappingService } from './finance-account-mapping.service';
+import { EntryPostingStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+import { roundDecimal } from '../core/utils/decimal';
+import type {
+  BalanceSheetResult,
+  BalanceSheetRow,
+  CashFlowCategory,
+  CashFlowResult,
+  CashFlowRow,
+  GeneralLedgerAccount,
+  GeneralLedgerResult,
+  IncomeStatementResult,
+  IncomeStatementRow,
+  TrialBalanceResult,
+  TrialBalanceRow,
+} from './finance.types';
+
+@Injectable()
+export class FinanceReportsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financeAccountMappingService: FinanceAccountMappingService,
+  ) {}
+
+  private parseTrialBalanceDate(
+    value: string | undefined,
+    fieldName: 'startDate' | 'endDate',
+  ) {
+    if (!value) return undefined;
+    const normalized =
+      fieldName === 'endDate' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T23:59:59.999Z`
+        : value;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`${fieldName} 日期格式无效`);
+    }
+    return date;
+  }
+
+  private parseAsOfDate(value?: string) {
+    if (!value) return new Date();
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('asOfDate 日期格式无效');
+    }
+    return date;
+  }
+
+  private accountBalanceEffect(type: string, debit: number, credit: number) {
+    return ['ASSET', 'EXPENSE'].includes(type)
+      ? debit - credit
+      : credit - debit;
+  }
+
+  private incomeStatementAmount(type: string, debit: number, credit: number) {
+    return type === 'REVENUE' ? credit - debit : debit - credit;
+  }
+
+  private balanceSheetAmount(type: string, debit: number, credit: number) {
+    return this.accountBalanceEffect(type, debit, credit);
+  }
+
+  private cashFlowCategory(
+    ref: string | null,
+    description: string | null,
+  ): CashFlowCategory {
+    const text = `${ref ?? ''} ${description ?? ''}`.toLowerCase();
+    if (
+      text.includes('采购') ||
+      text.includes('purchase') ||
+      text.includes('工资') ||
+      text.includes('salary') ||
+      text.includes('费用') ||
+      text.includes('expense')
+    ) {
+      return 'OPERATING';
+    }
+    if (
+      text.includes('投资') ||
+      text.includes('invest') ||
+      text.includes('固定资产')
+    ) {
+      return 'INVESTING';
+    }
+    if (
+      text.includes('融资') ||
+      text.includes('financ') ||
+      text.includes('借款') ||
+      text.includes('贷款')
+    ) {
+      return 'FINANCING';
+    }
+    return 'OPERATING';
+  }
+
+  async getTrialBalance(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<TrialBalanceResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate = this.parseTrialBalanceDate(endDate, 'endDate');
+
+    if (
+      parsedStartDate &&
+      parsedEndDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const journalEntryWhere: Prisma.JournalEntryWhereInput = {
+      companyId,
+      postingStatus: EntryPostingStatus.POSTED,
+    };
+    const dateFilter: Prisma.DateTimeFilter = {};
+    if (parsedStartDate) dateFilter.gte = parsedStartDate;
+    if (parsedEndDate) dateFilter.lte = parsedEndDate;
+    if (Object.keys(dateFilter).length > 0) {
+      journalEntryWhere.date = dateFilter;
+    }
+
+    const aggregated = await this.prisma.journalEntryLine.groupBy({
+      by: ['accountId'],
+      where: { journalEntry: journalEntryWhere },
+      _sum: { debit: true, credit: true },
+    });
+
+    const accountIds = aggregated.map((r) => r.accountId);
+    const accounts = await this.prisma.account.findMany({
+      where: { id: { in: accountIds } },
+      select: { id: true, code: true, name: true, type: true },
+    });
+    const accountMap = new Map(accounts.map((a) => [a.id, a]));
+
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    const rows: TrialBalanceRow[] = aggregated
+      .map((r) => {
+        const debit = roundDecimal(Number(r._sum.debit ?? 0));
+        const credit = roundDecimal(Number(r._sum.credit ?? 0));
+        totalDebit = roundDecimal(totalDebit + debit);
+        totalCredit = roundDecimal(totalCredit + credit);
+        const account = accountMap.get(r.accountId)!;
+        return {
+          accountId: r.accountId,
+          code: account.code,
+          name: account.name,
+          type: account.type,
+          debit,
+          credit,
+          balance: roundDecimal(debit - credit),
+        };
+      })
+      .sort((a, b) => a.code.localeCompare(b.code));
+
+    const difference = roundDecimal(totalDebit - totalCredit);
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate?.toISOString() ?? null,
+      totalDebit,
+      totalCredit,
+      difference,
+      balanced: Math.abs(difference) < 0.01,
+      rows,
+    };
+  }
+
+  async getGeneralLedger(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+    accountCode?: string,
+  ): Promise<GeneralLedgerResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate =
+      this.parseTrialBalanceDate(endDate, 'endDate') ?? new Date();
+
+    if (
+      parsedStartDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const normalizedAccountCode = accountCode?.trim() || undefined;
+    const lineWhere: Prisma.JournalEntryLineWhereInput = {
+      journalEntry: {
+        companyId,
+        postingStatus: EntryPostingStatus.POSTED,
+        date: { lte: parsedEndDate },
+      },
+    };
+    if (normalizedAccountCode) {
+      lineWhere.account = { code: normalizedAccountCode };
+    }
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: lineWhere,
+      include: {
+        account: true,
+        journalEntry: true,
+        partner: true,
+      },
+      orderBy: [
+        { account: { code: 'asc' } },
+        { journalEntry: { date: 'asc' } },
+        { journalEntry: { entryNo: 'asc' } },
+        { lineNo: 'asc' },
+      ],
+    });
+
+    const accountsById = new Map<string, GeneralLedgerAccount>();
+    for (const line of lines) {
+      const account = accountsById.get(line.accountId) ?? {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type: line.account.type,
+        openingBalance: 0,
+        periodDebit: 0,
+        periodCredit: 0,
+        endingBalance: 0,
+        lines: [],
+      };
+      accountsById.set(line.accountId, account);
+
+      const debit = roundDecimal(Number(line.debit ?? 0));
+      const credit = roundDecimal(Number(line.credit ?? 0));
+      const balanceEffect = this.accountBalanceEffect(
+        line.account.type,
+        debit,
+        credit,
+      );
+      const lineDate = line.journalEntry.date;
+
+      if (parsedStartDate && lineDate.getTime() < parsedStartDate.getTime()) {
+        account.openingBalance = roundDecimal(
+          account.openingBalance + balanceEffect,
+        );
+        account.endingBalance = account.openingBalance;
+        continue;
+      }
+
+      account.periodDebit = roundDecimal(account.periodDebit + debit);
+      account.periodCredit = roundDecimal(account.periodCredit + credit);
+      account.endingBalance = roundDecimal(
+        account.endingBalance + balanceEffect,
+      );
+      account.lines.push({
+        lineId: line.id,
+        journalEntryId: line.journalEntryId,
+        entryNo: line.journalEntry.entryNo,
+        date: lineDate.toISOString(),
+        ref: line.journalEntry.ref,
+        description: line.journalEntry.description,
+        lineNo: line.lineNo,
+        partnerName: line.partner?.name ?? null,
+        memo: line.memo,
+        debit,
+        credit,
+        runningBalance: account.endingBalance,
+      });
+    }
+
+    const accounts = [...accountsById.values()]
+      .map((account) => ({
+        ...account,
+        endingBalance: roundDecimal(
+          account.openingBalance +
+            this.accountBalanceEffect(
+              account.type,
+              account.periodDebit,
+              account.periodCredit,
+            ),
+        ),
+      }))
+      .filter(
+        (account) =>
+          Math.abs(account.openingBalance) >= 0.01 ||
+          Math.abs(account.periodDebit) >= 0.01 ||
+          Math.abs(account.periodCredit) >= 0.01 ||
+          Math.abs(account.endingBalance) >= 0.01,
+      )
+      .sort((a, b) => a.code.localeCompare(b.code));
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate.toISOString(),
+      accountCode: normalizedAccountCode ?? null,
+      totalOpeningBalance: roundDecimal(
+        accounts.reduce((sum, account) => sum + account.openingBalance, 0),
+      ),
+      totalDebit: roundDecimal(
+        accounts.reduce((sum, account) => sum + account.periodDebit, 0),
+      ),
+      totalCredit: roundDecimal(
+        accounts.reduce((sum, account) => sum + account.periodCredit, 0),
+      ),
+      totalEndingBalance: roundDecimal(
+        accounts.reduce((sum, account) => sum + account.endingBalance, 0),
+      ),
+      accounts,
+    };
+  }
+
+  async getIncomeStatement(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<IncomeStatementResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate = this.parseTrialBalanceDate(endDate, 'endDate');
+
+    if (
+      parsedStartDate &&
+      parsedEndDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const journalEntryWhere: Prisma.JournalEntryWhereInput = {
+      companyId,
+      postingStatus: EntryPostingStatus.POSTED,
+    };
+    const dateFilter: Prisma.DateTimeFilter = {};
+    if (parsedStartDate) dateFilter.gte = parsedStartDate;
+    if (parsedEndDate) dateFilter.lte = parsedEndDate;
+    if (Object.keys(dateFilter).length > 0) {
+      journalEntryWhere.date = dateFilter;
+    }
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: {
+        journalEntry: journalEntryWhere,
+        account: { type: { in: ['REVENUE', 'EXPENSE'] } },
+      },
+      include: { account: true },
+    });
+
+    const rowsByAccount = new Map<string, IncomeStatementRow>();
+    for (const line of lines) {
+      const debit = roundDecimal(Number(line.debit ?? 0));
+      const credit = roundDecimal(Number(line.credit ?? 0));
+      const type = line.account.type === 'REVENUE' ? 'REVENUE' : 'EXPENSE';
+      const existing = rowsByAccount.get(line.accountId);
+
+      if (existing) {
+        existing.debit = roundDecimal(existing.debit + debit);
+        existing.credit = roundDecimal(existing.credit + credit);
+        existing.amount = this.incomeStatementAmount(
+          existing.type,
+          existing.debit,
+          existing.credit,
+        );
+        continue;
+      }
+
+      rowsByAccount.set(line.accountId, {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type,
+        debit,
+        credit,
+        amount: this.incomeStatementAmount(type, debit, credit),
+      });
+    }
+
+    const rows = [...rowsByAccount.values()].sort((a, b) =>
+      a.code.localeCompare(b.code),
+    );
+    const totalRevenue = roundDecimal(
+      rows
+        .filter((row) => row.type === 'REVENUE')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const totalExpense = roundDecimal(
+      rows
+        .filter((row) => row.type === 'EXPENSE')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate?.toISOString() ?? null,
+      totalRevenue,
+      totalExpense,
+      netIncome: roundDecimal(totalRevenue - totalExpense),
+      rows,
+    };
+  }
+
+  async getBalanceSheet(
+    companyId: string,
+    asOfDate?: string,
+  ): Promise<BalanceSheetResult> {
+    const parsedAsOfDate = this.parseAsOfDate(asOfDate);
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: {
+        journalEntry: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          date: { lte: parsedAsOfDate },
+        },
+        account: {
+          type: { in: ['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE'] },
+        },
+      },
+      include: { account: true },
+    });
+
+    const rowsByAccount = new Map<string, BalanceSheetRow>();
+    let totalRevenue = 0;
+    let totalExpense = 0;
+
+    for (const line of lines) {
+      const debit = roundDecimal(Number(line.debit ?? 0));
+      const credit = roundDecimal(Number(line.credit ?? 0));
+      const accountType = line.account.type;
+
+      if (accountType === 'REVENUE') {
+        totalRevenue = roundDecimal(
+          totalRevenue + this.incomeStatementAmount('REVENUE', debit, credit),
+        );
+        continue;
+      }
+      if (accountType === 'EXPENSE') {
+        totalExpense = roundDecimal(
+          totalExpense + this.incomeStatementAmount('EXPENSE', debit, credit),
+        );
+        continue;
+      }
+      if (
+        accountType !== 'ASSET' &&
+        accountType !== 'LIABILITY' &&
+        accountType !== 'EQUITY'
+      ) {
+        continue;
+      }
+
+      const existing = rowsByAccount.get(line.accountId);
+      if (existing) {
+        existing.debit = roundDecimal(existing.debit + debit);
+        existing.credit = roundDecimal(existing.credit + credit);
+        existing.amount = this.balanceSheetAmount(
+          existing.type,
+          existing.debit,
+          existing.credit,
+        );
+        continue;
+      }
+
+      rowsByAccount.set(line.accountId, {
+        accountId: line.accountId,
+        code: line.account.code,
+        name: line.account.name,
+        type: accountType,
+        debit,
+        credit,
+        amount: this.balanceSheetAmount(accountType, debit, credit),
+      });
+    }
+
+    const rows = [...rowsByAccount.values()].sort((a, b) =>
+      a.code.localeCompare(b.code),
+    );
+    const totalAssets = roundDecimal(
+      rows
+        .filter((row) => row.type === 'ASSET')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const totalLiabilities = roundDecimal(
+      rows
+        .filter((row) => row.type === 'LIABILITY')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const totalEquity = roundDecimal(
+      rows
+        .filter((row) => row.type === 'EQUITY')
+        .reduce((sum, row) => sum + row.amount, 0),
+    );
+    const currentEarnings = roundDecimal(totalRevenue - totalExpense);
+    const totalLiabilitiesAndEquity = roundDecimal(
+      totalLiabilities + totalEquity + currentEarnings,
+    );
+    const difference = roundDecimal(totalAssets - totalLiabilitiesAndEquity);
+
+    return {
+      asOfDate: parsedAsOfDate.toISOString(),
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+      currentEarnings,
+      totalLiabilitiesAndEquity,
+      difference,
+      balanced: Math.abs(difference) < 0.01,
+      rows,
+    };
+  }
+
+  async getCashFlowStatement(
+    companyId: string,
+    startDate?: string,
+    endDate?: string,
+  ): Promise<CashFlowResult> {
+    const parsedStartDate = this.parseTrialBalanceDate(startDate, 'startDate');
+    const parsedEndDate =
+      this.parseTrialBalanceDate(endDate, 'endDate') ?? new Date();
+
+    if (
+      parsedStartDate &&
+      parsedStartDate.getTime() > parsedEndDate.getTime()
+    ) {
+      throw new BadRequestException('startDate 不能晚于 endDate');
+    }
+
+    const cashAccountCodes = [
+      ...new Set(
+        (
+          await Promise.all([
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'BANK',
+            ),
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'CASH',
+            ),
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'ALIPAY',
+            ),
+            this.financeAccountMappingService.resolveLineAccount(
+              companyId,
+              'WECHAT',
+            ),
+          ])
+        ).map((account) => account.accountCode),
+      ),
+    ].sort((a, b) => a.localeCompare(b));
+
+    const lines = await this.prisma.journalEntryLine.findMany({
+      where: {
+        journalEntry: {
+          companyId,
+          postingStatus: EntryPostingStatus.POSTED,
+          date: { lte: parsedEndDate },
+        },
+        account: { code: { in: cashAccountCodes } },
+      },
+      include: {
+        account: true,
+        journalEntry: true,
+      },
+      orderBy: [{ journalEntry: { date: 'asc' } }, { lineNo: 'asc' }],
+    });
+
+    let beginningCash = 0;
+    let totalCashInflow = 0;
+    let totalCashOutflow = 0;
+    const rows: CashFlowRow[] = [];
+
+    for (const line of lines) {
+      const cashInflow = roundDecimal(Number(line.debit ?? 0));
+      const cashOutflow = roundDecimal(Number(line.credit ?? 0));
+      const netCashFlow = roundDecimal(cashInflow - cashOutflow);
+      const lineDate = line.journalEntry.date;
+
+      if (parsedStartDate && lineDate.getTime() < parsedStartDate.getTime()) {
+        beginningCash = roundDecimal(beginningCash + netCashFlow);
+        continue;
+      }
+
+      totalCashInflow = roundDecimal(totalCashInflow + cashInflow);
+      totalCashOutflow = roundDecimal(totalCashOutflow + cashOutflow);
+      rows.push({
+        journalEntryId: line.journalEntryId,
+        entryNo: line.journalEntry.entryNo,
+        date: lineDate.toISOString(),
+        ref: line.journalEntry.ref,
+        description: line.journalEntry.description,
+        accountCode: line.account.code,
+        accountName: line.account.name,
+        category: this.cashFlowCategory(
+          line.journalEntry.ref,
+          line.journalEntry.description,
+        ),
+        cashInflow,
+        cashOutflow,
+        netCashFlow,
+      });
+    }
+
+    const operatingCashFlow = roundDecimal(
+      rows
+        .filter((row) => row.category === 'OPERATING')
+        .reduce((sum, row) => sum + row.netCashFlow, 0),
+    );
+    const investingCashFlow = roundDecimal(
+      rows
+        .filter((row) => row.category === 'INVESTING')
+        .reduce((sum, row) => sum + row.netCashFlow, 0),
+    );
+    const financingCashFlow = roundDecimal(
+      rows
+        .filter((row) => row.category === 'FINANCING')
+        .reduce((sum, row) => sum + row.netCashFlow, 0),
+    );
+    const netCashFlow = roundDecimal(totalCashInflow - totalCashOutflow);
+
+    return {
+      startDate: parsedStartDate?.toISOString() ?? null,
+      endDate: parsedEndDate.toISOString(),
+      beginningCash,
+      totalCashInflow,
+      totalCashOutflow,
+      operatingCashFlow,
+      investingCashFlow,
+      financingCashFlow,
+      netCashFlow,
+      endingCash: roundDecimal(beginningCash + netCashFlow),
+      cashAccountCodes,
+      rows,
+    };
+  }
+}

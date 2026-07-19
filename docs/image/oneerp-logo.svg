@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="220" viewBox="0 0 720 220" role="img" aria-labelledby="title desc">
+  <title id="title">OneERP logo</title>
+  <desc id="desc">OneERP wordmark with connected operations, inventory, and finance nodes.</desc>
+  <rect width="720" height="220" rx="32" fill="#f8fafc"/>
+  <g transform="translate(58 42)">
+    <rect x="0" y="0" width="136" height="136" rx="28" fill="#0f766e"/>
+    <path d="M38 48h60v16H54v18h38v16H54v22H38V48z" fill="#ffffff"/>
+    <circle cx="100" cy="36" r="9" fill="#facc15"/>
+    <circle cx="110" cy="104" r="9" fill="#38bdf8"/>
+    <circle cx="34" cy="104" r="9" fill="#a7f3d0"/>
+    <path d="M96 43 48 97M42 104h59" stroke="#ffffff" stroke-width="6" stroke-linecap="round" opacity=".72"/>
+  </g>
+  <g transform="translate(230 62)">
+    <text x="0" y="56" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="58" font-weight="800" fill="#0f172a">OneERP</text>
+    <text x="3" y="96" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" font-weight="500" fill="#475569">AI-native ERP for manufacturing operations</text>
+  </g>
+</svg>

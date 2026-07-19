@@ -7,9 +7,9 @@ export class LoginDto {
   @IsNotEmpty({ message: '邮箱不能为空' })
   email!: string;
 
-  @ApiProperty({ description: '密码', example: 'admin123' })
+  @ApiProperty({ description: '密码', example: 'ChangeMe123' })
   @IsString()
   @IsNotEmpty({ message: '密码不能为空' })
-  @MinLength(5, { message: '密码长度不能少于5位' })
+  @MinLength(8, { message: '密码长度不能少于8位' })
   password!: string;
 }

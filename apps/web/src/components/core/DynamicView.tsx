@@ -3,13 +3,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { LayoutGrid, Rows3, SquarePen } from 'lucide-react';
-import { FormEngine } from './FormEngine';
+import { FormEngine, validateFormValue } from './FormEngine';
 import { Sheet } from '../ui/Sheet';
+import { Button } from '../ui/Button';
+import { BusinessCorrectionWizard } from './BusinessCorrectionWizard';
 import { KanbanEngine } from './KanbanEngine';
 import { ListEngine } from './ListEngine';
 import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
+import type { UiActionSchema } from '@/lib/ui-schema';
+import { useAuthStore } from '@/store/authStore';
+import { useI18n } from '@/lib/i18n';
+import { evaluateFormCondition } from './FormEngine';
 
 type ViewMode = 'list' | 'kanban';
 
@@ -17,9 +23,37 @@ interface DynamicViewProps {
   modelName: string;
   title?: string;
   externalDraft?: Record<string, unknown> | null;
+  slots?: DynamicViewSlots;
 }
 
-export function DynamicView({ modelName, title, externalDraft }: DynamicViewProps) {
+interface DynamicViewSlotContext {
+  schema: UiSchema;
+  selected: Record<string, unknown> | null;
+  data: Record<string, unknown>[];
+  reload: () => Promise<void>;
+  openCreate: () => void;
+}
+
+interface DynamicViewSlots {
+  headerActions?: (context: DynamicViewSlotContext) => ReactNode;
+  beforeList?: (context: DynamicViewSlotContext) => ReactNode;
+  formTop?: (context: DynamicViewSlotContext) => ReactNode;
+  formBottom?: (context: DynamicViewSlotContext) => ReactNode;
+  detailAsideTop?: (context: DynamicViewSlotContext) => ReactNode;
+  detailAsideBottom?: (context: DynamicViewSlotContext) => ReactNode;
+}
+
+function hasPermission(permissions: readonly string[], required: string) {
+  if (permissions.includes('ALL') || permissions.includes(required)) return true;
+  const parts = required.split(':');
+  const resource = parts[0];
+  const action = parts[parts.length - 1];
+  return permissions.includes(`${resource}:*`) || permissions.includes(`*:${action}`);
+}
+
+export function DynamicView({ modelName, title, externalDraft, slots }: DynamicViewProps) {
+  const { companies, currentCompanyId } = useAuthStore();
+  const { t } = useI18n();
   const [schema, setSchema] = useState<UiSchema | null>(null);
   const [data, setData] = useState<Record<string, unknown>[]>([]);
   const [page, setPage] = useState(1);
@@ -37,6 +71,8 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   const [commentInput, setCommentInput] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [correctionAction, setCorrectionAction] = useState<UiActionSchema | null>(null);
 
   const initialFormValue = useMemo(() => {
     if (!schema) return {};
@@ -46,6 +82,48 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   }, [schema]);
 
   const activeTitle = title ?? schema?.label ?? modelName;
+  const currentPermissions = useMemo(
+    () => companies.find((company) => company.id === currentCompanyId)?.permissions ?? [],
+    [companies, currentCompanyId],
+  );
+  const permissionResource = modelName.charAt(0).toLowerCase() + modelName.slice(1);
+  const allowGenericWrite = schema?.allowGenericWrite !== false;
+  const canCreate =
+    allowGenericWrite &&
+    hasPermission(currentPermissions, `${permissionResource}:create`);
+  const canUpdate =
+    allowGenericWrite &&
+    hasPermission(currentPermissions, `${permissionResource}:update`);
+  const selectedCanSave =
+    selected && typeof selected.id === 'string' && selected.id.trim()
+      ? canUpdate
+      : canCreate;
+  const openCreate = useCallback(() => {
+    setSelected(initialFormValue);
+    setFormErrors({});
+    setIsFormOpen(true);
+  }, [initialFormValue]);
+  const validateSelectedForm = useCallback(
+    (next: Record<string, unknown>) =>
+      schema
+        ? validateFormValue(
+            schema,
+            next,
+            (label) => `${label}${t('dynamicRequiredFieldSuffix')}`,
+          )
+        : {},
+    [schema, t],
+  );
+  const selectedActions = useMemo(() => {
+    if (!schema || !selected) return [];
+    return (schema.actions ?? []).filter((action) => {
+      if (action.permission && !hasPermission(currentPermissions, action.permission)) {
+        return false;
+      }
+      if (!action.visibleWhen) return true;
+      return evaluateFormCondition(action.visibleWhen, selected);
+    });
+  }, [currentPermissions, schema, selected]);
 
   const loadSchema = useCallback(async () => {
     try {
@@ -98,6 +176,17 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     }
   }, [limit, modelName, orderBy, page, schema, search]);
 
+  const slotContext = useMemo<DynamicViewSlotContext | null>(() => {
+    if (!schema) return null;
+    return {
+      schema,
+      selected,
+      data,
+      reload: loadList,
+      openCreate,
+    };
+  }, [data, loadList, openCreate, schema, selected]);
+
   useEffect(() => {
     void loadSchema();
   }, [loadSchema]);
@@ -147,7 +236,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     };
 
     void fetchTimeline();
-  }, [mode, modelName, selected?.id]);
+  }, [isFormOpen, modelName, selected?.id]);
 
   const submitComment = async () => {
     const selectedId = selected?.id;
@@ -169,8 +258,14 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     }
   };
 
-  const saveForm = async () => {
-    if (!schema || !selected || saving) {
+  const saveForm = useCallback(async () => {
+    if (!schema || !selected || saving || !selectedCanSave) {
+      return;
+    }
+
+    const validationErrors = validateSelectedForm(selected);
+    setFormErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
       return;
     }
 
@@ -187,11 +282,12 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       }
 
       setSelected(persisted);
+      setFormErrors({});
       await loadList();
     } finally {
       setSaving(false);
     }
-  };
+  }, [loadList, modelName, saving, schema, selected, selectedCanSave, validateSelectedForm]);
 
   useEffect(() => {
     const onShortcutSave = () => {
@@ -204,7 +300,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
     return () => {
       window.removeEventListener('erp:shortcut-save', onShortcutSave as EventListener);
     };
-  }, [mode, selected, schema]);
+  }, [isFormOpen, saveForm]);
 
   if (error) {
     return (
@@ -217,7 +313,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
   if (!schema) {
     return (
       <div className="rounded-xl border border-gray-200 bg-white px-4 py-6 text-sm text-gray-500">
-        元数据加载中...
+        {t('dynamicMetadataLoading')}
       </div>
     );
   }
@@ -227,32 +323,33 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-tight text-gray-900">{activeTitle}</h2>
-          <p className="mt-1 text-sm text-gray-500">{schema.description ?? '元数据驱动的通用视图'}</p>
+          <p className="mt-1 text-sm text-gray-500">{schema.description ?? t('dynamicDefaultDescription')}</p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-white p-1">
           <ViewButton
             icon={<Rows3 className="h-4 w-4" />}
             active={mode === 'list'}
             onClick={() => setMode('list')}
-            label="列表"
+            label={t('dynamicList')}
           />
           <ViewButton
             icon={<LayoutGrid className="h-4 w-4" />}
             active={mode === 'kanban'}
             onClick={() => setMode('kanban')}
-            label="看板"
+            label={t('dynamicKanban')}
           />
           <ViewButton
             icon={<SquarePen className="h-4 w-4" />}
             active={isFormOpen}
-            onClick={() => {
-              setSelected(initialFormValue);
-              setIsFormOpen(true);
-            }}
-            label="新建 / 编辑"
+            disabled={!canCreate}
+            onClick={openCreate}
+            label={t('dynamicNewEdit')}
           />
         </div>
+        {slotContext ? slots?.headerActions?.(slotContext) : null}
       </div>
+
+      {slotContext ? slots?.beforeList?.(slotContext) : null}
 
       {mode === 'list' ? (
         <ListEngine
@@ -274,6 +371,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
           onPageChange={(nextPage) => setPage(nextPage)}
           onRowClick={(row) => {
             setSelected(row);
+            setFormErrors({});
             setIsFormOpen(true);
           }}
           fieldMap={schema.fields.reduce<Record<string, UiSchema['fields'][number]>>((acc, field) => {
@@ -315,38 +413,63 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
       <Sheet
         open={isFormOpen}
         onClose={() => setIsFormOpen(false)}
-        title={selected && selected.id ? `编辑 ${activeTitle}` : `新建 ${activeTitle}`}
+        title={selected && selected.id ? `${t('dynamicEdit')} ${activeTitle}` : `${t('dynamicNew')} ${activeTitle}`}
         widthClassName="w-[min(1000px,95vw)]"
       >
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-10">
           <div className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-7">
-            <div className="mb-3 flex justify-end">
-              <button
+            <div className="mb-3 flex flex-wrap justify-end gap-2">
+              {selectedActions.map((action) => (
+                <Button
+                  key={action.name}
+                  type="button"
+                  variant={action.tone ?? 'secondary'}
+                  size="sm"
+                  onClick={() => {
+                    if (action.kind === 'correction') {
+                      setCorrectionAction(action);
+                    }
+                  }}
+                >
+                  {action.label}
+                </Button>
+              ))}
+              <Button
                 type="button"
                 onClick={() => void saveForm()}
-                disabled={saving}
-                className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={saving || !selectedCanSave}
+                loading={saving}
+                size="sm"
               >
-                {saving ? '保存中...' : '保存 (Ctrl+Enter)'}
-              </button>
+                {saving ? t('commonSaving') : selectedCanSave ? t('dynamicSaveShortcut') : t('dynamicNoSavePermission')}
+              </Button>
             </div>
+            {slotContext ? slots?.formTop?.(slotContext) : null}
             <FormEngine
               schema={schema}
               value={(selected ?? initialFormValue) as Record<string, unknown>}
-              onChange={(next) => setSelected(next)}
+              validationErrors={formErrors}
+              onChange={(next) => {
+                setSelected(next);
+                if (Object.keys(formErrors).length > 0) {
+                  setFormErrors(validateSelectedForm(next));
+                }
+              }}
               onSubmit={() => {
                 void saveForm();
               }}
             />
+            {slotContext ? slots?.formBottom?.(slotContext) : null}
           </div>
 
           <aside className="rounded-xl border border-gray-200 bg-white p-4 lg:col-span-3">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">Chatter Timeline</h3>
-            <p className="mt-1 text-xs text-gray-500">员工批注、系统告警、自动化动作会出现在这里。</p>
+            {slotContext ? slots?.detailAsideTop?.(slotContext) : null}
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">{t('dynamicTimeline')}</h3>
+            <p className="mt-1 text-xs text-gray-500">{t('dynamicTimelineHint')}</p>
 
             <div className="mt-3 max-h-[65vh] space-y-2 overflow-auto">
               {timelineLoading ? (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">时间线加载中...</div>
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-500">{t('dynamicTimelineLoading')}</div>
               ) : timeline.length ? (
                 timeline.map((event, index) => (
                   <div key={String(event.id ?? index)} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
@@ -361,7 +484,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                   </div>
                 ))
               ) : (
-                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-500">暂无时间线事件。</div>
+                <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 text-xs text-gray-500">{t('dynamicTimelineEmpty')}</div>
               )}
             </div>
 
@@ -369,7 +492,7 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
               <textarea
                 value={commentInput}
                 onChange={(event) => setCommentInput(event.target.value)}
-                placeholder="写入团队批注..."
+                placeholder={t('dynamicCommentPlaceholder')}
                 rows={3}
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-xs text-gray-700 outline-none focus:border-gray-300 focus:ring-2 focus:ring-gray-100"
               />
@@ -380,13 +503,21 @@ export function DynamicView({ modelName, title, externalDraft }: DynamicViewProp
                   disabled={commentSaving || !commentInput.trim()}
                   className="rounded-md bg-gray-900 px-3 py-1.5 text-xs text-white transition hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {commentSaving ? '提交中...' : '发布批注'}
+                  {commentSaving ? t('dynamicSubmitting') : t('dynamicPublishComment')}
                 </button>
               </div>
             </div>
+            {slotContext ? slots?.detailAsideBottom?.(slotContext) : null}
           </aside>
         </div>
       </Sheet>
+      <BusinessCorrectionWizard
+        open={Boolean(correctionAction)}
+        action={correctionAction}
+        record={selected}
+        onClose={() => setCorrectionAction(null)}
+        onCompleted={loadList}
+      />
     </div>
   );
 }
@@ -424,18 +555,20 @@ function setNestedValue(
 interface ViewButtonProps {
   icon: ReactNode;
   active: boolean;
+  disabled?: boolean;
   label: string;
   onClick: () => void;
 }
 
-function ViewButton({ icon, active, label, onClick }: ViewButtonProps) {
+function ViewButton({ icon, active, disabled = false, label, onClick }: ViewButtonProps) {
   return (
     <button
       type="button"
       className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-sm transition ${
         active ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
-      }`}
+      } disabled:cursor-not-allowed disabled:opacity-50`}
       onClick={onClick}
+      disabled={disabled}
     >
       {icon}
       {label}

@@ -37,8 +37,22 @@ export class EventQueueService {
    * 若已存在则跳过入队并返回 null（幂等语义）。
    */
   async enqueue(input: EnqueueEventInput) {
+    return this.enqueueWithClient(this.prisma, input);
+  }
+
+  async enqueueInTransaction(
+    tx: Prisma.TransactionClient,
+    input: EnqueueEventInput,
+  ) {
+    return this.enqueueWithClient(tx, input);
+  }
+
+  private async enqueueWithClient(
+    client: PrismaService | Prisma.TransactionClient,
+    input: EnqueueEventInput,
+  ) {
     if (input.idempotencyKey) {
-      const existing = await this.prisma.eventDlq.findFirst({
+      const existing = await client.eventDlq.findFirst({
         where: {
           eventName: input.eventName,
           idempotencyKey: input.idempotencyKey,
@@ -55,7 +69,7 @@ export class EventQueueService {
       }
     }
 
-    return this.prisma.eventDlq.create({
+    return client.eventDlq.create({
       data: {
         eventName: input.eventName,
         idempotencyKey: input.idempotencyKey ?? null,
@@ -79,8 +93,9 @@ export class EventQueueService {
     return queued;
   }
 
-  async list(limit = 50) {
+  async list(limit = 50, companyId?: string) {
     return this.prisma.eventDlq.findMany({
+      where: companyId ? { companyId } : undefined,
       orderBy: [{ updatedAt: 'desc' }],
       take: limit,
     });
@@ -95,10 +110,19 @@ export class EventQueueService {
     return this.processItem(item);
   }
 
-  async retryPending(limit = 20): Promise<RetryPendingResult> {
+  async retryPending(
+    limit = 20,
+    companyId?: string,
+    eventNames?: string[],
+  ): Promise<RetryPendingResult> {
     const now = new Date();
+    const scopedEventNames = [...new Set(eventNames ?? [])].filter(Boolean);
     const items = await this.prisma.eventDlq.findMany({
       where: {
+        ...(companyId ? { companyId } : {}),
+        ...(scopedEventNames.length
+          ? { eventName: { in: scopedEventNames } }
+          : {}),
         status: { in: ['PENDING', 'RETRYING'] },
         OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
       },

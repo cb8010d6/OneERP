@@ -99,8 +99,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: var(--font-geist-mono), ui-monospace, 'Cascadia Code', monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
 }
 
 /* ---- Reset & Base ---- */
@@ -292,6 +292,16 @@ body {
 
 .erp-btn--secondary:hover {
   background: var(--surface-subtle);
+}
+
+.erp-btn--info {
+  background: #ecfeff;
+  border-color: #a5f3fc;
+  color: #0e7490;
+}
+
+.erp-btn--info:hover {
+  background: #cffafe;
 }
 
 .erp-btn--danger {

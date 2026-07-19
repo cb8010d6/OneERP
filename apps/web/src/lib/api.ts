@@ -1,5 +1,24 @@
-﻿import axios, { AxiosHeaders, AxiosError } from 'axios';
-import { useAuthStore } from '../store/authStore';
+import axios, { AxiosError, AxiosHeaders } from 'axios';
+import { useAuthStore, getCsrfTokenFromCookie } from '../store/authStore';
+import { resolvePublicApiBaseUrl } from './public-api-base';
+
+declare module 'axios' {
+  export interface InternalAxiosRequestConfig {
+    _retry?: boolean;
+  }
+}
+
+export function readApiError(reason: unknown, fallback: string): string {
+  if (typeof reason !== 'object' || reason === null || !('response' in reason)) {
+    return fallback;
+  }
+
+  const response = (reason as { response?: { data?: { message?: unknown } } })
+    .response;
+  return typeof response?.data?.message === 'string'
+    ? response.data.message
+    : fallback;
+}
 
 function sanitizePaginationInUrl(url?: string): string | undefined {
   if (!url) return url;
@@ -29,16 +48,40 @@ function sanitizePaginationInUrl(url?: string): string | undefined {
   }
 }
 
-// API 基础地址：优先读取环境变量，未配置时回退到本地开发默认值
-const baseURL = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000/api';
+const baseURL = resolvePublicApiBaseUrl();
 
-// 创建可以复用的 axios 实例
 const api = axios.create({
   baseURL,
   timeout: 10000,
+  withCredentials: true,
 });
 
-// 请求拦截器：防屎山核心 - 自动为主管带上身份证明(Token)和当前所处的公司阵营(X-Company-Id)
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const csrf = getCsrfTokenFromCookie();
+  if (!csrf) return null;
+
+  const response = await axios.post(
+    `${baseURL.replace(/\/$/, '')}/auth/refresh`,
+    {},
+    { withCredentials: true, headers: { 'x-csrf-token': csrf } },
+  );
+  const { accessToken, user, companies } = response.data as {
+    accessToken: string;
+    user: { id: string; email?: string; name?: string };
+    companies: Array<{ id: string; name: string; role: string; permissions?: string[] }>;
+  };
+  useAuthStore.getState().setAuth(accessToken, user, companies);
+  return accessToken;
+}
+
+function navigateToLogin() {
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login';
+  }
+}
+
 api.interceptors.request.use(
   (config) => {
     config.url = sanitizePaginationInUrl(config.url);
@@ -58,35 +101,63 @@ api.interceptors.request.use(
     if (token) {
       headers.set('Authorization', `Bearer ${token}`);
     }
-    
-    // 如果该请求不是 auth/login 这种接口，必须带上当前公司 ID
+
     if (!isAuthRequest && companyId) {
       headers.set('x-company-id', companyId);
     }
 
-    if (!isAuthRequest && (!token || !companyId)) {
-      useAuthStore.getState().logout();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+    const method = (config.method ?? 'get').toLowerCase();
+    if (['post', 'put', 'patch', 'delete'].includes(method)) {
+      const csrf = getCsrfTokenFromCookie();
+      if (csrf) {
+        headers.set('x-csrf-token', csrf);
       }
-      return Promise.reject(new AxiosError('缺少有效登录态或公司上下文，已阻止请求。', 'ERR_AUTH_CONTEXT_INVALID', config));
+    }
+
+    if (!isAuthRequest && (!token || !companyId)) {
+      void useAuthStore.getState().logout().then(navigateToLogin);
+      return Promise.reject(
+        new AxiosError(
+          '缺少有效登录态或公司上下文，已阻止请求。',
+          'ERR_AUTH_CONTEXT_INVALID',
+          config,
+        ),
+      );
     }
 
     config.headers = headers;
-
     return config;
   },
-  (error) => Promise.reject(error)
+  (error) => Promise.reject(error),
 );
 
-// 响应拦截器：当 Token 过期或者无权限时，强制踢回登录页
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    const originalConfig = error.config;
+
     if (error.response?.status === 401) {
-      // 401 未授权
-      useAuthStore.getState().logout();
-      window.location.href = '/login';
+      const isRefreshRequest = String(originalConfig?.url ?? '').includes(
+        '/auth/refresh',
+      );
+      if (originalConfig && !originalConfig._retry && !isRefreshRequest) {
+        originalConfig._retry = true;
+        try {
+          refreshPromise = refreshPromise ?? refreshAccessToken();
+          const nextToken = await refreshPromise;
+          refreshPromise = null;
+          if (nextToken) {
+            const headers = AxiosHeaders.from(originalConfig.headers);
+            headers.set('Authorization', `Bearer ${nextToken}`);
+            originalConfig.headers = headers;
+            return api.request(originalConfig);
+          }
+        } catch {
+          refreshPromise = null;
+        }
+      }
+
+      void useAuthStore.getState().logout().then(navigateToLogin);
     }
 
     if (error.response?.status === 403) {
@@ -98,13 +169,12 @@ api.interceptors.response.use(
         message.includes('尚未登录');
 
       if (isTenantOrAuthContextError) {
-        useAuthStore.getState().logout();
-        window.location.href = '/login';
+        void useAuthStore.getState().logout().then(navigateToLogin);
       }
     }
 
     return Promise.reject(error);
-  }
+  },
 );
 
 export default api;

@@ -1,6 +1,5 @@
-import React from 'react';
-import { DynamicView } from '@/components/core';
+import { EngineeringDocumentWorkbench } from '@/components/engineering/EngineeringDocumentWorkbench';
 
 export default function FilesPage() {
-  return <DynamicView modelName="fileRecord" title="图纸文档管理" />;
+  return <EngineeringDocumentWorkbench />;
 }

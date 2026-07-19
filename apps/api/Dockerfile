@@ -37,11 +37,14 @@ WORKDIR /app
 # Install runtime dependencies for native modules and Prisma
 RUN apk add --no-cache tini openssl
 
+# Create non-root user
+RUN addgroup -S oneerp && adduser -S oneerp -G oneerp
+
 # Copy API package files
 COPY apps/api/package.json apps/api/package-lock.json ./apps/api/
 
 # Install production dependencies only
-RUN npm ci --omit=dev --prefix apps/api
+RUN npm ci --omit=dev --prefix apps/api && chown -R oneerp:oneerp /app
 
 # Copy Prisma schema and generated client
 COPY apps/api/prisma ./apps/api/prisma
@@ -53,13 +56,17 @@ COPY --from=builder /app/apps/api/dist ./apps/api/dist
 # Copy seed file (optional, for init scripts)
 COPY apps/api/seed.ts ./apps/api/seed.ts
 
+RUN chown -R oneerp:oneerp /app
+
 WORKDIR /app/apps/api
 
 # Expose API port
 EXPOSE 8000
 
+USER oneerp
+
 # Use tini as init system for proper signal handling
 ENTRYPOINT ["/sbin/tini", "--"]
 
 # Start the production server
-CMD ["node", "dist/main"]
+CMD ["node", "dist/src/main.js"]

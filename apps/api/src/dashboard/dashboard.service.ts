@@ -18,7 +18,7 @@ export class DashboardService {
     const [
       totalOrders,
       activeOrders,
-      allStocks,
+      stockAggregation,
       totalCustomers,
       pendingInvoices,
     ] = await Promise.all([
@@ -26,10 +26,15 @@ export class DashboardService {
       this.prisma.order.count({
         where: { companyId, status: { notIn: ['COMPLETED', 'CANCELLED'] } },
       }),
-      this.prisma.stockQuant.findMany({
-        where: { location: { companyId } },
-        include: { material: true },
-      }),
+      this.prisma.$queryRaw<{ total_value: number; low_stock_count: number }[]>`
+        SELECT
+          COALESCE(SUM(CAST(sq.quantity AS NUMERIC) * CAST(m."unitPrice" AS NUMERIC)), 0) AS total_value,
+          COUNT(*) FILTER (WHERE CAST(sq.quantity AS NUMERIC) < CAST(COALESCE(m."minStock", 10) AS NUMERIC)) AS low_stock_count
+        FROM "StockQuant" sq
+        JOIN "Material" m ON sq."materialId" = m.id
+        JOIN "StockLocation" sl ON sq."locationId" = sl.id
+        WHERE sl."companyId" = ${companyId}
+      `,
       this.prisma.partner.count({
         where: { companyId, type: { in: ['CUSTOMER', 'BOTH'] } },
       }),
@@ -38,57 +43,55 @@ export class DashboardService {
       }),
     ]);
 
-    let totalStockValue = 0;
-    let lowStockItems = 0;
-
-    allStocks.forEach((stock) => {
-      // 使用物料真实单价，未设置则为 0
-      const unitPrice = stock.material?.unitPrice ?? 0;
-      totalStockValue += stock.quantity * unitPrice;
-      // 低库存预警：库存量低于物料设定的最低库存
-      const minStock = stock.material?.minStock ?? 10;
-      if (stock.quantity < minStock) {
-        lowStockItems++;
-      }
-    });
-
     const result = {
       totalOrders,
       activeOrders,
-      totalStockValue,
-      lowStockItems,
+      totalStockValue: Number(stockAggregation[0]?.total_value ?? 0),
+      lowStockItems: Number(stockAggregation[0]?.low_stock_count ?? 0),
       totalCustomers,
       pendingInvoices,
     };
 
-    await this.cacheManager.set(cacheKey, result, 60000); // 缓存60秒
+    await this.cacheManager.set(cacheKey, result, 60000);
     return result;
   }
 
   async getChartData(companyId: string) {
     const days = 7;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - (days - 1));
+    startDate.setHours(0, 0, 0, 0);
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 1);
+    endDate.setHours(0, 0, 0, 0);
+
+    const [orderRows, invoiceRows] = await Promise.all([
+      this.prisma.$queryRaw<{ date: string; count: number }[]>`
+        SELECT TO_CHAR("createdAt"::date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
+        FROM "Order"
+        WHERE "companyId" = ${companyId} AND "createdAt" >= ${startDate} AND "createdAt" < ${endDate}
+        GROUP BY "createdAt"::date
+      `,
+      this.prisma.$queryRaw<{ date: string; count: number }[]>`
+        SELECT TO_CHAR("issuedDate"::date, 'YYYY-MM-DD') AS date, COUNT(*)::int AS count
+        FROM "Invoice"
+        WHERE "companyId" = ${companyId} AND "issuedDate" >= ${startDate} AND "issuedDate" < ${endDate}
+        GROUP BY "issuedDate"::date
+      `,
+    ]);
+
+    const orderMap = new Map(orderRows.map((r) => [r.date, r.count]));
+    const invoiceMap = new Map(invoiceRows.map((r) => [r.date, r.count]));
+
     const result: { date: string; orders: number; invoices: number }[] = [];
     for (let i = days - 1; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      const start = new Date(date);
-      start.setHours(0, 0, 0, 0);
-      const end = new Date(date);
-      end.setHours(23, 59, 59, 999);
-
-      const [orders, invoices] = await Promise.all([
-        this.prisma.order.count({
-          where: { companyId, createdAt: { gte: start, lte: end } },
-        }),
-        this.prisma.invoice.count({
-          where: { companyId, issuedDate: { gte: start, lte: end } },
-        }),
-      ]);
-
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = d.toISOString().split('T')[0];
       result.push({
-        date: start.toISOString().split('T')[0],
-        orders,
-        invoices,
+        date: dateStr,
+        orders: orderMap.get(dateStr) ?? 0,
+        invoices: invoiceMap.get(dateStr) ?? 0,
       });
     }
     return result;

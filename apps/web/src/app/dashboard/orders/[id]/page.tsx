@@ -1,11 +1,15 @@
-'use client';
+"use client";
 
-import React, { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
-import api from '../../../../lib/api';
-import { useAuthStore } from '../../../../store/authStore';
-import { ArrowLeft, Loader2, FileText, Package } from 'lucide-react';
-import toast from 'react-hot-toast';
+import React, { useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import api from "../../../../lib/api";
+import { useAuthStore } from "../../../../store/authStore";
+import { ArrowLeft, Loader2, FileText, Package } from "lucide-react";
+import toast from "react-hot-toast";
+import { formatCurrency, formatDateTime } from "../../../../lib/format";
+import { SalesShipmentPanel } from "./SalesShipmentPanel";
+import { SalesShipmentReversalPanel } from "./SalesShipmentReversalPanel";
+import { canCancelSalesOrder } from "../../../../lib/sales-order-transition";
 
 interface OrderDetail {
   id: string;
@@ -48,21 +52,61 @@ interface OrderDetail {
   }>;
 }
 
-const statusMap: Record<string, { label: string, color: string }> = {
-  DRAFT: { label: '草稿', color: 'bg-gray-100 text-gray-800' },
-  PENDING: { label: '待处理', color: 'bg-yellow-100 text-yellow-800' },
-  IN_PRODUCTION: { label: '生产中', color: 'bg-blue-100 text-blue-800' },
-  SHIPPED: { label: '已发货', color: 'bg-indigo-100 text-indigo-800' },
-  COMPLETED: { label: '已完成', color: 'bg-green-100 text-green-800' },
-  CANCELLED: { label: '已取消', color: 'bg-red-100 text-red-800' },
+interface FulfillmentAvailability {
+  overallStatus: "READY" | "COVERED_BY_PRODUCTION" | "SHORTAGE" | "UNMAPPED";
+  lines: Array<{
+    orderItemId: string;
+    productId: string;
+    productSku: string | null;
+    productName: string;
+    orderedQty: number;
+    onHandQty: number;
+    inProductionQty: number;
+    projectedQty: number;
+    shortageQty: number;
+    status: "READY" | "COVERED_BY_PRODUCTION" | "SHORTAGE" | "UNMAPPED";
+  }>;
+}
+
+interface OrderTimelineEvent {
+  id: string;
+  action: string;
+  createdAt: string;
+  details?: unknown;
+  user?: {
+    name?: string | null;
+    email?: string | null;
+  } | null;
+}
+
+const statusMap: Record<string, { label: string; color: string }> = {
+  DRAFT: { label: "草稿", color: "bg-gray-100 text-gray-800" },
+  PENDING: { label: "待处理", color: "bg-yellow-100 text-yellow-800" },
+  IN_PRODUCTION: { label: "生产中", color: "bg-blue-100 text-blue-800" },
+  PARTIAL_SHIPPED: { label: "部分发货", color: "bg-amber-100 text-amber-800" },
+  SHIPPED: { label: "已发货", color: "bg-indigo-100 text-indigo-800" },
+  COMPLETED: { label: "已完成", color: "bg-green-100 text-green-800" },
+  CANCELLED: { label: "已取消", color: "bg-red-100 text-red-800" },
+};
+
+const fulfillmentStatusMap: Record<
+  FulfillmentAvailability["overallStatus"],
+  { label: string; color: string }
+> = {
+  READY: { label: "现货可交", color: "bg-green-100 text-green-800" },
+  COVERED_BY_PRODUCTION: {
+    label: "生产覆盖",
+    color: "bg-blue-100 text-blue-800",
+  },
+  SHORTAGE: { label: "存在缺口", color: "bg-red-100 text-red-800" },
+  UNMAPPED: { label: "缺成品映射", color: "bg-amber-100 text-amber-800" },
 };
 
 function resolveOrderAction(from: string, to: string) {
-  if (from === 'DRAFT' && to === 'PENDING') return 'submit';
-  if (from === 'PENDING' && to === 'IN_PRODUCTION') return 'start_production';
-  if (from === 'IN_PRODUCTION' && to === 'SHIPPED') return 'ship';
-  if (from === 'SHIPPED' && to === 'COMPLETED') return 'complete';
-  if (to === 'CANCELLED') return 'cancel';
+  if (from === "DRAFT" && to === "PENDING") return "submit";
+  if (from === "PENDING" && to === "IN_PRODUCTION") return "start_production";
+  if (from === "SHIPPED" && to === "COMPLETED") return "complete";
+  if (to === "CANCELLED") return "cancel";
   return null;
 }
 
@@ -71,7 +115,9 @@ export default function OrderDetailPage() {
   const router = useRouter();
   const { currentCompanyId } = useAuthStore();
   const [order, setOrder] = useState<OrderDetail | null>(null);
-  const [timeline, setTimeline] = useState<any[]>([]);
+  const [fulfillmentAvailability, setFulfillmentAvailability] =
+    useState<FulfillmentAvailability | null>(null);
+  const [timeline, setTimeline] = useState<OrderTimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -79,9 +125,9 @@ export default function OrderDetailPage() {
       try {
         const res = await api.get(`/orders/${params.id}`);
         setOrder(res.data);
-      } catch (err: any) {
-        toast.error('加载订单详情失败');
-        router.push('/dashboard/orders');
+      } catch {
+        toast.error("加载订单详情失败");
+        router.push("/dashboard/orders");
       } finally {
         setLoading(false);
       }
@@ -93,11 +139,28 @@ export default function OrderDetailPage() {
   }, [currentCompanyId, params.id, router]);
 
   useEffect(() => {
+    const fetchFulfillmentAvailability = async () => {
+      try {
+        const res = await api.get(
+          `/orders/${params.id}/fulfillment-availability`,
+        );
+        setFulfillmentAvailability(res.data);
+      } catch {
+        setFulfillmentAvailability(null);
+      }
+    };
+
+    if (currentCompanyId && params.id) {
+      fetchFulfillmentAvailability();
+    }
+  }, [currentCompanyId, params.id]);
+
+  useEffect(() => {
     const fetchTimeline = async () => {
       try {
         const res = await api.get(`/orders/${params.id}/timeline`);
         setTimeline(res.data?.events || []);
-      } catch (err) {
+      } catch {
         setTimeline([]);
       }
     };
@@ -111,16 +174,16 @@ export default function OrderDetailPage() {
     if (!order) return;
     const action = resolveOrderAction(order.status, newStatus);
     if (!action) {
-      toast.error('当前状态不支持此流转');
+      toast.error("当前状态不支持此流转");
       return;
     }
 
     try {
       await api.post(`/v1/workflow/order/${params.id}/transition`, { action });
-      toast.success('状态更新成功');
-      setOrder(prev => prev ? { ...prev, status: newStatus } : null);
-    } catch (err) {
-      toast.error('状态更新失败');
+      toast.success("状态更新成功");
+      setOrder((prev) => (prev ? { ...prev, status: newStatus } : null));
+    } catch {
+      toast.error("状态更新失败");
     }
   };
 
@@ -134,7 +197,13 @@ export default function OrderDetailPage() {
 
   if (!order) return null;
 
-  const currentStatusInfo = statusMap[order.status] || { label: order.status, color: 'bg-gray-100 text-gray-800' };
+  const currentStatusInfo = statusMap[order.status] || {
+    label: order.status,
+    color: "bg-gray-100 text-gray-800",
+  };
+  const fulfillmentStatusInfo = fulfillmentAvailability
+    ? fulfillmentStatusMap[fulfillmentAvailability.overallStatus]
+    : null;
 
   const relatedCards = (
     <>
@@ -145,23 +214,36 @@ export default function OrderDetailPage() {
           <p className="text-sm text-gray-500 text-center py-4">暂无工单记录</p>
         ) : (
           <div className="space-y-3">
-            {order.workOrders.map(wo => (
-              <div key={wo.id} className="p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors">
+            {order.workOrders.map((wo) => (
+              <div
+                key={wo.id}
+                className="p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+              >
                 <div className="flex justify-between items-center mb-1">
-                  <span className="font-medium text-sm text-gray-900">{wo.workOrderNo}</span>
-                  <span className="text-xs px-2 py-0.5 bg-gray-100 rounded text-gray-600">{wo.status}</span>
+                  <span className="font-medium text-sm text-gray-900">
+                    {wo.workOrderNo}
+                  </span>
+                  <span className="text-xs px-2 py-0.5 bg-gray-100 rounded text-gray-600">
+                    {wo.status}
+                  </span>
                 </div>
                 <div className="flex justify-between text-xs text-gray-500">
                   <span>计划: {wo.plannedQty}</span>
-                  <span className={wo.completedQty > 0 ? 'text-green-600 font-medium' : ''}>完成: {wo.completedQty}</span>
+                  <span
+                    className={
+                      wo.completedQty > 0 ? "text-green-600 font-medium" : ""
+                    }
+                  >
+                    完成: {wo.completedQty}
+                  </span>
                 </div>
               </div>
             ))}
           </div>
         )}
-        {order.status === 'PENDING' && (
+        {order.status === "PENDING" && (
           <button
-            onClick={() => router.push('/dashboard/production')}
+            onClick={() => router.push("/dashboard/production")}
             className="w-full mt-4 py-2 text-sm border border-dashed border-gray-300 text-blue-600 rounded-lg hover:bg-blue-50"
           >
             + 去安排生产
@@ -176,26 +258,37 @@ export default function OrderDetailPage() {
           <p className="text-sm text-gray-500 text-center py-4">暂无发票记录</p>
         ) : (
           <div className="space-y-3">
-            {order.invoices.map(inv => (
-              <div key={inv.id} className="p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors">
+            {order.invoices.map((inv) => (
+              <div
+                key={inv.id}
+                className="p-3 border border-gray-100 rounded-lg hover:bg-gray-50 transition-colors"
+              >
                 <div className="flex justify-between items-center mb-1">
-                  <span className="font-medium text-sm text-gray-900">{inv.invoiceNo}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded ${
-                    inv.status === 'PAID' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
-                  }`}>
+                  <span className="font-medium text-sm text-gray-900">
+                    {inv.invoiceNo}
+                  </span>
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      inv.status === "PAID"
+                        ? "bg-green-100 text-green-700"
+                        : "bg-yellow-100 text-yellow-700"
+                    }`}
+                  >
                     {inv.status}
                   </span>
                 </div>
                 <div className="flex justify-between text-xs text-gray-500">
-                  <span>总额: ¥{inv.amount.toLocaleString()}</span>
-                  <span className="text-blue-600">已收: ¥{inv.paidAmount.toLocaleString()}</span>
+                  <span>总额: {formatCurrency(inv.amount)}</span>
+                  <span className="text-blue-600">
+                    已收: {formatCurrency(inv.paidAmount)}
+                  </span>
                 </div>
               </div>
             ))}
           </div>
         )}
         <button
-          onClick={() => router.push('/dashboard/finance')}
+          onClick={() => router.push("/dashboard/finance")}
           className="w-full mt-4 py-2 text-sm border border-dashed border-gray-300 text-blue-600 rounded-lg hover:bg-blue-50"
         >
           + 去开具发票
@@ -209,62 +302,60 @@ export default function OrderDetailPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button 
-            onClick={() => router.back()} 
+          <button
+            onClick={() => router.back()}
             className="p-2 hover:bg-gray-100 rounded-full transition-colors"
           >
             <ArrowLeft className="h-5 w-5 text-gray-600" />
           </button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-gray-900">订单 {order.orderNo}</h1>
-              <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${currentStatusInfo.color}`}>
+              <h1 className="text-2xl font-bold text-gray-900">
+                订单 {order.orderNo}
+              </h1>
+              <span
+                className={`px-2.5 py-1 text-xs font-medium rounded-full ${currentStatusInfo.color}`}
+              >
                 {currentStatusInfo.label}
               </span>
             </div>
-            <p className="text-sm text-gray-500 mt-1">创建时间: {new Date(order.createdAt).toLocaleString()}</p>
+            <p className="text-sm text-gray-500 mt-1">
+              创建时间: {formatDateTime(order.createdAt)}
+            </p>
           </div>
         </div>
 
         {/* Action Buttons based on status */}
         <div className="flex gap-2">
-          {order.status === 'DRAFT' && (
+          {order.status === "DRAFT" && (
             <button
-              onClick={() => handleStatusChange('PENDING')}
+              onClick={() => handleStatusChange("PENDING")}
               className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
             >
               提交订单
             </button>
           )}
-          {order.status === 'PENDING' && (
+          {order.status === "PENDING" && (
             <button
-              onClick={() => handleStatusChange('IN_PRODUCTION')}
+              onClick={() => handleStatusChange("IN_PRODUCTION")}
               className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
             >
               开始生产
             </button>
           )}
-          {order.status === 'IN_PRODUCTION' && (
+          {order.status === "SHIPPED" && (
             <button
-              onClick={() => handleStatusChange('SHIPPED')}
-              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700"
-            >
-              标记发货
-            </button>
-          )}
-          {order.status === 'SHIPPED' && (
-            <button
-              onClick={() => handleStatusChange('COMPLETED')}
+              onClick={() => handleStatusChange("COMPLETED")}
               className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700"
             >
               完成订单
             </button>
           )}
-          {(order.status !== 'COMPLETED' && order.status !== 'CANCELLED') && (
+          {canCancelSalesOrder(order.status) && (
             <button
               onClick={() => {
-                if (confirm('确定要取消此订单吗？')) {
-                  handleStatusChange('CANCELLED');
+                if (confirm("确定要取消此订单吗？")) {
+                  handleStatusChange("CANCELLED");
                 }
               }}
               className="px-4 py-2 border border-red-200 text-red-600 text-sm font-medium rounded-lg hover:bg-red-50"
@@ -291,7 +382,8 @@ export default function OrderDetailPage() {
               <div>
                 <p className="text-sm text-gray-500">联系信息</p>
                 <p className="font-medium mt-1">
-                  {order.partner.contact} {order.partner.phone && `(${order.partner.phone})`}
+                  {order.partner.contact}{" "}
+                  {order.partner.phone && `(${order.partner.phone})`}
                 </p>
               </div>
               <div>
@@ -301,7 +393,9 @@ export default function OrderDetailPage() {
               <div>
                 <p className="text-sm text-gray-500">交付日期</p>
                 <p className="font-medium mt-1">
-                  {order.expectedDate ? new Date(order.expectedDate).toLocaleDateString() : '未设置'}
+                  {order.expectedDate
+                    ? new Date(order.expectedDate).toLocaleDateString()
+                    : "未设置"}
                 </p>
               </div>
             </div>
@@ -312,6 +406,111 @@ export default function OrderDetailPage() {
               </div>
             )}
           </div>
+
+          {fulfillmentAvailability && fulfillmentStatusInfo && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-lg font-bold text-gray-900 flex items-center">
+                  <Package className="h-5 w-5 mr-2 text-gray-400" />
+                  交付可承诺
+                </h2>
+                <span
+                  className={`px-2.5 py-1 text-xs font-medium rounded-full ${fulfillmentStatusInfo.color}`}
+                >
+                  {fulfillmentStatusInfo.label}
+                </span>
+              </div>
+              <div className="space-y-3">
+                {fulfillmentAvailability.lines.map((line) => {
+                  const lineStatus = fulfillmentStatusMap[line.status];
+                  return (
+                    <div
+                      key={line.orderItemId}
+                      className="rounded-lg border border-gray-100 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-gray-900">
+                            {line.productSku ? `${line.productSku} · ` : ""}
+                            {line.productName}
+                          </p>
+                          <p className="mt-1 text-xs text-gray-500">
+                            订购 {line.orderedQty} · 预计 {line.projectedQty}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${lineStatus.color}`}
+                        >
+                          {lineStatus.label}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
+                        <div>
+                          <p className="text-gray-500">现存</p>
+                          <p className="font-semibold text-gray-900">
+                            {line.onHandQty}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">生产中</p>
+                          <p className="font-semibold text-gray-900">
+                            {line.inProductionQty}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">预计</p>
+                          <p className="font-semibold text-gray-900">
+                            {line.projectedQty}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">缺口</p>
+                          <p
+                            className={
+                              line.shortageQty > 0
+                                ? "font-semibold text-red-700"
+                                : "font-semibold text-green-700"
+                            }
+                          >
+                            {line.shortageQty}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {["IN_PRODUCTION", "PARTIAL_SHIPPED"].includes(order.status) && (
+            <SalesShipmentPanel
+              orderId={order.id}
+              orderNo={order.orderNo}
+              items={order.items}
+              onPosted={(shipment) => {
+                setOrder((current) =>
+                  current ? { ...current, status: shipment.status } : current,
+                );
+              }}
+            />
+          )}
+
+          {["PARTIAL_SHIPPED", "SHIPPED", "COMPLETED"].includes(
+            order.status,
+          ) && (
+            <SalesShipmentReversalPanel
+              orderId={order.id}
+              orderNo={order.orderNo}
+              onReversed={() => {
+                setOrder((current) =>
+                  current
+                    ? { ...current, status: "IN_PRODUCTION" }
+                    : current,
+                );
+              }}
+            />
+          )}
 
           {/* Items */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -325,24 +524,42 @@ export default function OrderDetailPage() {
                     <th className="px-4 py-3 rounded-l-lg">产品ID</th>
                     <th className="px-4 py-3 text-right">单价 (¥)</th>
                     <th className="px-4 py-3 text-right">数量</th>
-                    <th className="px-4 py-3 text-right rounded-r-lg">小计 (¥)</th>
+                    <th className="px-4 py-3 text-right rounded-r-lg">
+                      小计 (¥)
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {order.items.map((item) => (
-                    <tr key={item.id} className="border-b last:border-0 border-gray-100">
-                      <td className="px-4 py-3 font-medium text-gray-900">{item.productId}</td>
-                      <td className="px-4 py-3 text-right">{item.unitPrice.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-right text-blue-600 font-medium">{item.quantity}</td>
-                      <td className="px-4 py-3 text-right font-medium">{item.totalPrice.toLocaleString()}</td>
+                    <tr
+                      key={item.id}
+                      className="border-b last:border-0 border-gray-100"
+                    >
+                      <td className="px-4 py-3 font-medium text-gray-900">
+                        {item.productId}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {formatCurrency(item.unitPrice)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-blue-600 font-medium">
+                        {item.quantity}
+                      </td>
+                      <td className="px-4 py-3 text-right font-medium">
+                        {formatCurrency(item.totalPrice)}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={3} className="px-4 py-4 text-right font-medium text-gray-500">总计金额:</td>
+                    <td
+                      colSpan={3}
+                      className="px-4 py-4 text-right font-medium text-gray-500"
+                    >
+                      总计金额:
+                    </td>
                     <td className="px-4 py-4 text-right font-bold text-lg text-blue-600">
-                      ¥{order.totalAmount.toLocaleString()}
+                      {formatCurrency(order.totalAmount)}
                     </td>
                   </tr>
                 </tfoot>
@@ -357,8 +574,12 @@ export default function OrderDetailPage() {
         {/* Right 30%: chatter timeline */}
         <aside className="lg:col-span-3">
           <div className="sticky top-6 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-semibold tracking-wide text-gray-900 uppercase">Chatter Timeline</h3>
-            <p className="mt-1 text-xs text-gray-500">记录状态流转、系统事件与 AI 建议。</p>
+            <h3 className="text-sm font-semibold tracking-wide text-gray-900 uppercase">
+              Chatter Timeline
+            </h3>
+            <p className="mt-1 text-xs text-gray-500">
+              记录状态流转、系统事件与 AI 建议。
+            </p>
 
             <div className="mt-4 space-y-3 max-h-[70vh] overflow-auto pr-1">
               {timeline.length === 0 ? (
@@ -367,14 +588,25 @@ export default function OrderDetailPage() {
                 </div>
               ) : (
                 timeline.map((event) => (
-                  <div key={event.id} className="rounded-lg border border-gray-100 bg-gray-50 p-3">
+                  <div
+                    key={event.id}
+                    className="rounded-lg border border-gray-100 bg-gray-50 p-3"
+                  >
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium text-gray-800">{event.action}</p>
-                      <span className="text-[11px] text-gray-500">{new Date(event.createdAt).toLocaleString()}</span>
+                      <p className="text-xs font-medium text-gray-800">
+                        {event.action}
+                      </p>
+                      <span className="text-[11px] text-gray-500">
+                        {formatDateTime(event.createdAt)}
+                      </span>
                     </div>
-                    <p className="mt-1 text-xs text-gray-600">{event.user?.name || event.user?.email || '系统'}</p>
-                    {event.details && (
-                      <pre className="mt-2 overflow-auto rounded bg-white p-2 text-[11px] text-gray-600">{JSON.stringify(event.details, null, 2)}</pre>
+                    <p className="mt-1 text-xs text-gray-600">
+                      {event.user?.name || event.user?.email || "系统"}
+                    </p>
+                    {event.details !== undefined && event.details !== null && (
+                      <pre className="mt-2 overflow-auto rounded bg-white p-2 text-[11px] text-gray-600">
+                        {JSON.stringify(event.details, null, 2)}
+                      </pre>
                     )}
                   </div>
                 ))

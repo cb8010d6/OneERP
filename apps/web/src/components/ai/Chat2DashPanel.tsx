@@ -11,7 +11,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
 
 type ChartPoint = {
   status: string;
@@ -28,15 +28,39 @@ type Chat2DashResponse = {
   };
 };
 
+type Chat2SqlResponse = {
+  sql: string;
+  rows: Array<Record<string, unknown>>;
+  explanation?: {
+    summary?: string;
+    filters?: string[];
+    safety?: string[];
+  };
+  export?: {
+    fileName?: string;
+    content?: string;
+  };
+};
+
 export function Chat2DashPanel() {
   const [input, setInput] = useState('过去一周发货异常的订单明细');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Chat2DashResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [sqlResult, setSqlResult] = useState<{
-    sql: string;
-    rows: Array<Record<string, unknown>>;
-  } | null>(null);
+  const [sqlResult, setSqlResult] = useState<Chat2SqlResponse | null>(null);
+
+  const downloadCsv = () => {
+    if (!sqlResult?.export?.content) return;
+    const blob = new Blob([sqlResult.export.content], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = sqlResult.export.fileName || 'chat2sql.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   const runQuery = async () => {
     const prompt = input.trim();
@@ -48,8 +72,8 @@ export function Chat2DashPanel() {
       const response = await api.post('/v1/ai/chat2dash', { input: prompt });
       setResult(response.data as Chat2DashResponse);
       setSqlResult(null);
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || '分析失败，请稍后重试。');
+    } catch (reason: unknown) {
+      setError(readApiError(reason, '分析失败，请稍后重试。'));
       setResult(null);
     } finally {
       setLoading(false);
@@ -64,13 +88,10 @@ export function Chat2DashPanel() {
     setError(null);
     try {
       const response = await api.post('/v1/ai/chat2sql', { input: prompt });
-      setSqlResult({
-        sql: String(response.data?.sql ?? ''),
-        rows: (response.data?.rows as Array<Record<string, unknown>>) ?? [],
-      });
+      setSqlResult(response.data as Chat2SqlResponse);
       setResult(null);
-    } catch (reason: any) {
-      setError(reason?.response?.data?.message || 'Chat2SQL 查询失败。');
+    } catch (reason: unknown) {
+      setError(readApiError(reason, 'Chat2SQL 查询失败。'));
       setSqlResult(null);
     } finally {
       setLoading(false);
@@ -148,6 +169,40 @@ export function Chat2DashPanel() {
           <div>
             <h4 className="text-base font-semibold text-slate-900">Chat2SQL 结果</h4>
             <pre className="mt-2 overflow-auto rounded bg-slate-50 p-2 text-xs text-slate-600">{sqlResult.sql}</pre>
+          </div>
+          {sqlResult.explanation ? (
+            <div className="rounded-xl border border-cyan-100 bg-cyan-50 p-3 text-sm text-cyan-900">
+              <p className="font-medium">数据提取逻辑说明</p>
+              <p className="mt-1">{sqlResult.explanation.summary}</p>
+              <div className="mt-2 grid gap-2 md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-cyan-700">过滤与口径</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {(sqlResult.explanation.filters || []).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase text-cyan-700">安全约束</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4">
+                    {(sqlResult.explanation.safety || []).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={downloadCsv}
+              disabled={!sqlResult.export?.content}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              导出明细 CSV
+            </button>
           </div>
           {sqlResult.rows.length ? (
             <div className="overflow-auto rounded border border-slate-200">

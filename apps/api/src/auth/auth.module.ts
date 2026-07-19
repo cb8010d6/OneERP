@@ -11,8 +11,8 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     UsersModule,
     PassportModule,
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'EIP_SECRET_KEY_SUPER_SECURE',
-      signOptions: { expiresIn: '7d' }, // 7天过期，方便移动端免频繁登录
+      secret: process.env.JWT_SECRET,
+      signOptions: { expiresIn: '15m' },
     }),
   ],
   controllers: [AuthController],

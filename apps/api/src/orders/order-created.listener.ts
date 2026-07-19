@@ -7,6 +7,7 @@ interface OrderCreatedPayload {
   companyId: string;
   operatorId: string;
   partnerId: string;
+  status?: string;
   items: Array<{
     productId: string;
     quantity: number;
@@ -21,6 +22,11 @@ export class OrderCreatedListener {
 
   @OnEvent('order.created')
   async onOrderCreated(payload: OrderCreatedPayload) {
+    // 待审批订单不触发后续业务逻辑
+    if (payload.status === 'PENDING_APPROVAL') {
+      return;
+    }
+
     try {
       const shortages: Array<{
         productId: string;

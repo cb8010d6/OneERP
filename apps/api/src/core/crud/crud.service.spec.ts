@@ -120,7 +120,7 @@ describe('CrudService – 租户隔离: list()', () => {
     delegate.findMany.mockResolvedValue([{ id: '1', companyId: 'c1' }]);
     delegate.count.mockResolvedValue(1);
 
-    await service.list('order', {}, 'c1');
+    await service.list('partner', {}, 'c1');
 
     expect(delegate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -132,7 +132,7 @@ describe('CrudService – 租户隔离: list()', () => {
   it('不传 companyId 时不注入', async () => {
     const { service, delegate } = buildService();
 
-    await service.list('order', {});
+    await service.list('partner', {});
 
     expect(delegate.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: {} }),
@@ -144,7 +144,7 @@ describe('CrudService – 租户隔离: list()', () => {
 
     await expect(
       service.list(
-        'order',
+        'partner',
         { filter: JSON.stringify({ companyId: 'c2' }) },
         'c1',
       ),
@@ -162,7 +162,7 @@ describe('CrudService – 租户隔离: findOne()', () => {
     const record = { id: 'r1', companyId: 'c1' };
     delegate.findFirst.mockResolvedValue(record);
 
-    const result = await service.findOne('order', 'r1', {}, 'c1');
+    const result = await service.findOne('partner', 'r1', {}, 'c1');
 
     expect(result).toEqual(record);
     expect(delegate.findFirst).toHaveBeenCalledWith(
@@ -180,7 +180,7 @@ describe('CrudService – 租户隔离: findOne()', () => {
     delegate.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.findOne('order', 'r1', {}, 'c1'),
+      service.findOne('partner', 'r1', {}, 'c1'),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
@@ -194,7 +194,7 @@ describe('CrudService – 租户隔离: create()', () => {
     const { service, delegate } = buildService();
     delegate.create.mockResolvedValue({ id: 'new1', companyId: 'c1' });
 
-    await service.create('order', { name: 'test' }, 'c1');
+    await service.create('partner', { name: 'test' }, 'c1');
 
     expect(delegate.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -207,7 +207,7 @@ describe('CrudService – 租户隔离: create()', () => {
     const { service } = buildService();
 
     await expect(
-      service.create('order', { companyId: 'other', name: 'test' }, 'c1'),
+      service.create('partner', { companyId: 'other', name: 'test' }, 'c1'),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
@@ -222,7 +222,7 @@ describe('CrudService – 租户隔离: update()', () => {
     delegate.findFirst.mockResolvedValue({ id: 'r1', companyId: 'c1' });
     delegate.update.mockResolvedValue({ id: 'r1', name: 'updated' });
 
-    await service.update('order', 'r1', { name: 'updated' }, 'c1');
+    await service.update('partner', 'r1', { name: 'updated' }, 'c1');
 
     expect(delegate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -239,7 +239,7 @@ describe('CrudService – 租户隔离: update()', () => {
     delegate.findFirst.mockResolvedValue(null);
 
     await expect(
-      service.update('order', 'r1', { name: 'x' }, 'c1'),
+      service.update('partner', 'r1', { name: 'x' }, 'c1'),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
@@ -254,7 +254,7 @@ describe('CrudService – 租户隔离: remove()', () => {
     delegate.findFirst.mockResolvedValue({ id: 'r1', companyId: 'c1' });
     delegate.delete.mockResolvedValue({ id: 'r1' });
 
-    await service.remove('order', 'r1', 'c1');
+    await service.remove('partner', 'r1', 'c1');
 
     expect(delegate.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -270,8 +270,62 @@ describe('CrudService – 租户隔离: remove()', () => {
     const { service, delegate } = buildService();
     delegate.findFirst.mockResolvedValue(null);
 
-    await expect(service.remove('order', 'r1', 'c1')).rejects.toBeInstanceOf(
+    await expect(service.remove('partner', 'r1', 'c1')).rejects.toBeInstanceOf(
       NotFoundException,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 专用模型写入拦截
+// ---------------------------------------------------------------------------
+
+describe('CrudService – 专用模型写入拦截', () => {
+  it('order 写入必须走订单专用接口', async () => {
+    const { service } = buildService();
+
+    await expect(
+      service.create('order', { orderNo: 'SO-1' }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.update('order', 'o1', { totalAmount: 1 }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.remove('order', 'o1', 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('orderItem 写入必须走订单专用接口', async () => {
+    const { service } = buildService();
+
+    await expect(
+      service.create('orderItem', { orderId: 'o1' }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.update('orderItem', 'oi1', { quantity: 1 }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      service.remove('orderItem', 'oi1', 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it.each([
+    ['purchaseOrder', { supplierId: 's1' }],
+    ['purchaseOrderLine', { purchaseOrderId: 'po1' }],
+    ['purchaseReceipt', { purchaseOrderId: 'po1' }],
+    ['purchaseReceiptLine', { purchaseReceiptId: 'gr1' }],
+    ['purchaseInvoice', { purchaseOrderId: 'po1' }],
+  ])('%s 写入必须走采购专用接口', async (model, data) => {
+    const { service } = buildService();
+
+    await expect(service.create(model, data, 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(
+      service.update(model, 'id1', data, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.remove(model, 'id1', 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
     );
   });
 });

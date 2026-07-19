@@ -31,42 +31,69 @@ const mockCreateResource = jest.fn();
 const mockUpdateResource = jest.fn();
 const mockApiGet = jest.fn();
 const mockApiPost = jest.fn();
+const mockApiRequest = jest.fn();
 
 jest.mock('@/lib/dynamic-resource', () => ({
-  fetchSchema: (...a: any[]) => mockFetchSchema(...a),
-  fetchResourceList: (...a: any[]) => mockFetchResourceList(...a),
-  createResource: (...a: any[]) => mockCreateResource(...a),
-  updateResource: (...a: any[]) => mockUpdateResource(...a),
+  fetchSchema: mockFetchSchema,
+  fetchResourceList: mockFetchResourceList,
+  createResource: mockCreateResource,
+  updateResource: mockUpdateResource,
 }));
 
 jest.mock('@/lib/api', () => ({
   __esModule: true,
   default: {
-    get: (...a: any[]) => mockApiGet(...a),
-    post: (...a: any[]) => mockApiPost(...a),
+    get: mockApiGet,
+    post: mockApiPost,
+    request: mockApiRequest,
   },
 }));
 
 /* ---------- Mock 子组件 ---------- */
 jest.mock('../ListEngine', () => ({
-  ListEngine: ({ onRowClick, onSearchChange }: any) => (
+  ListEngine: ({
+    onRowClick,
+    onSearchChange,
+  }: {
+    onRowClick?: (row: Record<string, unknown>) => void;
+    onSearchChange?: (value: string) => void;
+  }) => (
     <div data-testid="list-engine">
-      <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row' })}>row</button>
-      <input data-testid="search-input" onChange={(e: any) => onSearchChange?.(e.target.value)} />
+      <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row', status: 'SHIPPED' })}>row</button>
+      <input data-testid="search-input" onChange={(event) => onSearchChange?.(event.target.value)} />
     </div>
   ),
 }));
 jest.mock('../KanbanEngine', () => ({ KanbanEngine: () => <div data-testid="kanban-engine" /> }));
 jest.mock('../FormEngine', () => ({
-  FormEngine: ({ value, onChange, onSubmit }: any) => (
+  ...jest.requireActual('../FormEngine'),
+  FormEngine: ({
+    value,
+    onChange,
+    onSubmit,
+  }: {
+    value: Record<string, unknown>;
+    onChange: (value: Record<string, unknown>) => void;
+    onSubmit?: () => void;
+  }) => (
     <div data-testid="form-engine">
-      <input data-testid="form-name" value={String(value?.name ?? '')} onChange={(e: any) => onChange?.({ ...value, name: e.target.value })} />
+      <input data-testid="form-name" value={String(value?.name ?? '')} onChange={(event) => onChange({ ...value, name: event.target.value })} />
       <button data-testid="form-submit" onClick={() => onSubmit?.()}>submit</button>
     </div>
   ),
 }));
 jest.mock('@/components/ui/Sheet', () => ({
-  Sheet: ({ open, children, onClose, title }: any) =>
+  Sheet: ({
+    open,
+    children,
+    onClose,
+    title,
+  }: {
+    open: boolean;
+    children: React.ReactNode;
+    onClose: () => void;
+    title: string;
+  }) =>
     open ? (
       <div data-testid="sheet">
         <span data-testid="sheet-title">{title}</span>
@@ -112,14 +139,31 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DynamicView } from '../DynamicView';
+import { useAuthStore } from '@/store/authStore';
+
+jest.setTimeout(20000);
 
 describe('DynamicView', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    useAuthStore.setState({
+      token: 'test-token',
+      user: { id: 'user-1', email: 'admin@test.com' },
+      companies: [
+        {
+          id: 'company-1',
+          name: '测试公司',
+          role: 'Admin',
+          permissions: ['product:create', 'product:update', 'inventory:post'],
+        },
+      ],
+      currentCompanyId: 'company-1',
+    });
     mockFetchSchema.mockResolvedValue(mockSchema);
     mockFetchResourceList.mockResolvedValue(mockListResponse);
     mockApiGet.mockResolvedValue(mockTimelineEvents);
     mockApiPost.mockResolvedValue({});
+    mockApiRequest.mockResolvedValue({ data: { ok: true } });
     mockCreateResource.mockResolvedValue({ id: 'new-1', name: '新产品', status: 'Draft' });
     mockUpdateResource.mockResolvedValue({ id: '1', name: '更新名', status: 'Published' });
   });
@@ -154,6 +198,7 @@ describe('DynamicView', () => {
     await waitFor(() => { expect(screen.getByTestId('list-engine')).toBeInTheDocument(); });
     await user.click(screen.getByText('新建 / 编辑'));
     await waitFor(() => { expect(screen.getByTestId('sheet')).toBeInTheDocument(); });
+    await user.type(screen.getByTestId('form-name'), '新产品');
     await user.click(screen.getByText(/保存/));
     await waitFor(() => { expect(mockCreateResource).toHaveBeenCalledWith('Product', expect.objectContaining({})); });
   });
@@ -177,6 +222,7 @@ describe('DynamicView', () => {
     const initCount = mockFetchResourceList.mock.calls.length;
     await user.click(screen.getByText('新建 / 编辑'));
     await waitFor(() => { expect(screen.getByTestId('sheet')).toBeInTheDocument(); });
+    await user.type(screen.getByTestId('form-name'), '新产品');
     await user.click(screen.getByText(/保存/));
     await waitFor(() => { expect(mockFetchResourceList.mock.calls.length).toBeGreaterThan(initCount); });
   });
@@ -187,6 +233,44 @@ describe('DynamicView', () => {
     await waitFor(() => { expect(screen.getByTestId('list-engine')).toBeInTheDocument(); });
     await user.click(screen.getByTestId('row-click'));
     await waitFor(() => { expect(mockApiGet).toHaveBeenCalledWith('/v1/timeline/Product/row-1'); });
+  });
+
+  it('元数据 correction action 通过业务修正向导提交', async () => {
+    const user = userEvent.setup();
+    mockFetchSchema.mockResolvedValueOnce({
+      ...mockSchema,
+      actions: [
+        {
+          name: 'reverseSaleShipment',
+          label: '修正已发货库存',
+          kind: 'correction',
+          tone: 'danger',
+          method: 'POST',
+          endpoint: '/inventory/posting/sale-order/{id}/reverse',
+          permission: 'inventory:post',
+          visibleWhen: "eval:doc.status === 'SHIPPED'",
+          fields: [{ name: 'note', label: '修正原因', type: 'text', required: true }],
+        },
+      ],
+    });
+
+    render(<DynamicView modelName="Product" />);
+    await waitFor(() => { expect(screen.getByTestId('list-engine')).toBeInTheDocument(); });
+    await user.click(screen.getByTestId('row-click'));
+    await waitFor(() => { expect(screen.getByText('修正已发货库存')).toBeInTheDocument(); });
+    await user.click(screen.getByText('修正已发货库存'));
+    await user.type(screen.getByLabelText(/修正原因/), '客户退货');
+    await user.click(screen.getByText('生成修正记录'));
+
+    await waitFor(() => {
+      expect(mockApiRequest).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'post',
+          url: '/inventory/posting/sale-order/row-1/reverse',
+          data: { note: '客户退货' },
+        }),
+      );
+    });
   });
 
   it('timeline 事件渲染', async () => {

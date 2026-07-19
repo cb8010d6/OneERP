@@ -29,12 +29,12 @@ export class FinanceDlqService {
     });
   }
 
-  async list(limit = 50) {
-    return this.eventQueueService.list(limit);
+  async list(limit = 50, companyId?: string) {
+    return this.eventQueueService.list(limit, companyId);
   }
 
-  async retryPending(limit = 20) {
-    return this.eventQueueService.retryPending(limit);
+  async retryPending(limit = 20, companyId?: string, eventNames?: string[]) {
+    return this.eventQueueService.retryPending(limit, companyId, eventNames);
   }
 
   @Cron(CronExpression.EVERY_5_MINUTES)

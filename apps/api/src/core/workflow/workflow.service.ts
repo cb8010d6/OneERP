@@ -4,9 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { EventQueueService } from '../events/event-queue.service';
 
 interface WorkflowTargetConfig {
   delegate: string;
@@ -159,26 +159,63 @@ const DEFAULT_WORKFLOW_DEFINITIONS: Record<string, DefaultWorkflowDefinition> =
       statusField: 'status',
       states: [
         { value: 'DRAFT', label: '草稿', sort: 10, isInitial: true },
-        { value: 'PENDING', label: '待处理', sort: 20 },
-        { value: 'IN_PRODUCTION', label: '生产中', sort: 30 },
-        { value: 'SHIPPED', label: '已发货', sort: 40 },
-        { value: 'COMPLETED', label: '已完成', sort: 50, isFinal: true },
+        { value: 'PENDING_APPROVAL', label: '待审批', sort: 20 },
+        { value: 'PENDING', label: '待处理', sort: 30 },
+        { value: 'IN_PRODUCTION', label: '生产中', sort: 40 },
+        { value: 'PARTIAL_SHIPPED', label: '部分发货', sort: 50 },
+        { value: 'SHIPPED', label: '已发货', sort: 60 },
+        { value: 'COMPLETED', label: '已完成', sort: 70, isFinal: true },
         { value: 'CANCELLED', label: '已取消', sort: 99, isFinal: true },
       ],
       transitions: [
         { from: 'DRAFT', to: 'PENDING', action: 'submit', label: '提交订单' },
+        {
+          from: 'DRAFT',
+          to: 'PENDING_APPROVAL',
+          action: 'submit_for_approval',
+          label: '提交审批',
+        },
+        {
+          from: 'PENDING_APPROVAL',
+          to: 'PENDING',
+          action: 'approve',
+          label: '审批通过',
+        },
         {
           from: 'PENDING',
           to: 'IN_PRODUCTION',
           action: 'start_production',
           label: '开始生产',
         },
-        { from: 'IN_PRODUCTION', to: 'SHIPPED', action: 'ship', label: '发货' },
+        {
+          from: 'IN_PRODUCTION',
+          to: 'PARTIAL_SHIPPED',
+          action: 'ship',
+          label: '发货',
+        },
+        {
+          from: 'PARTIAL_SHIPPED',
+          to: 'SHIPPED',
+          action: 'ship',
+          label: '完成发货',
+        },
         { from: 'SHIPPED', to: 'COMPLETED', action: 'complete', label: '完成' },
         { from: 'DRAFT', to: 'CANCELLED', action: 'cancel', label: '取消' },
         { from: 'PENDING', to: 'CANCELLED', action: 'cancel', label: '取消' },
         {
           from: 'IN_PRODUCTION',
+          to: 'CANCELLED',
+          action: 'cancel',
+          label: '取消',
+        },
+        {
+          from: 'PARTIAL_SHIPPED',
+          to: 'CANCELLED',
+          action: 'cancel',
+          label: '取消',
+        },
+        {
+          from: 'PENDING_APPROVAL',
           to: 'CANCELLED',
           action: 'cancel',
           label: '取消',
@@ -192,7 +229,7 @@ const DEFAULT_WORKFLOW_DEFINITIONS: Record<string, DefaultWorkflowDefinition> =
 export class WorkflowService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventQueueService: EventQueueService,
   ) {}
 
   async transition(
@@ -252,6 +289,11 @@ export class WorkflowService {
                     typeof rawCurrentState === 'bigint'
                   ? String(rawCurrentState)
                   : '';
+          this.assertDomainTransitionAllowed(
+            normalizedModel,
+            action,
+            currentState,
+          );
           const matched = workflow.transitions.find(
             (item) =>
               item.action === action && item.fromState.value === currentState,
@@ -325,10 +367,17 @@ export class WorkflowService {
       record: updatedRecord,
     };
 
-    this.eventEmitter.emit(`workflow.action.${eventModel}.${toEvent}`, payload);
+    await this.publishWorkflowActionEvent(
+      eventModel,
+      recordId,
+      toEvent,
+      payload,
+    );
     if (actionEvent !== toEvent) {
-      this.eventEmitter.emit(
-        `workflow.action.${eventModel}.${actionEvent}`,
+      await this.publishWorkflowActionEvent(
+        eventModel,
+        recordId,
+        actionEvent,
         payload,
       );
     }
@@ -353,8 +402,59 @@ export class WorkflowService {
     return normalized;
   }
 
+  private assertDomainTransitionAllowed(
+    modelName: string,
+    action: string,
+    currentState: string,
+  ) {
+    const normalizedAction = action.trim().toLowerCase();
+    if (modelName === 'order' && normalizedAction === 'ship') {
+      throw new BadRequestException(
+        '销售发货必须通过销售发货工作台执行，以确保库存原子过账和审计完整。',
+      );
+    }
+
+    if (
+      modelName === 'order' &&
+      normalizedAction === 'cancel' &&
+      ['PARTIAL_SHIPPED', 'SHIPPED'].includes(currentState)
+    ) {
+      throw new BadRequestException(
+        '订单已有发货记录，取消前必须先通过库存冲销或销售退货恢复库存。',
+      );
+    }
+
+    if (modelName === 'workOrder') {
+      throw new BadRequestException(
+        '生产工单状态必须通过生产报工工作台更新，以确保库存和工单进度原子一致。',
+      );
+    }
+
+    if (modelName === 'invoice') {
+      throw new BadRequestException(
+        '发票状态必须通过财务工作台更新，以确保会计分录和应收状态一致。',
+      );
+    }
+  }
+
   private toEventKey(value: string) {
     return value.trim().toLowerCase().replace(/\s+/g, '_');
+  }
+
+  private publishWorkflowActionEvent(
+    eventModel: string,
+    recordId: string,
+    eventKey: string,
+    payload: Record<string, unknown>,
+  ) {
+    const eventName = `workflow.action.${eventModel}.${eventKey}`;
+    return this.eventQueueService.publish({
+      eventName,
+      idempotencyKey: `${eventName}:${recordId}`,
+      companyId:
+        typeof payload.companyId === 'string' ? payload.companyId : undefined,
+      payload,
+    });
   }
 
   private async findOrBootstrapWorkflow(

@@ -46,6 +46,7 @@ export class TenantGuard implements CanActivate {
         },
       },
       include: {
+        user: { select: { isActive: true } },
         role: true,
       },
     });
@@ -54,6 +55,9 @@ export class TenantGuard implements CanActivate {
       throw new ForbiddenException(
         '非法操作: 您无权访问或操作该公司的任何数据',
       );
+    }
+    if (!userRole.user.isActive) {
+      throw new ForbiddenException('账号已被禁用，请联系管理员');
     }
 
     // 将通过鉴权的安全参数附在 request 上

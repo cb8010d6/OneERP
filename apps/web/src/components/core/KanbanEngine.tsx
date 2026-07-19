@@ -2,7 +2,8 @@
 
 import { useMemo, useState, useEffect } from 'react';
 import toast from 'react-hot-toast';
-import api from '@/lib/api';
+import api, { readApiError } from '@/lib/api';
+import { requiresSalesShipmentWorkbench } from '@/lib/sales-order-transition';
 import type { UiKanbanColumn, UiSchema } from '@/lib/ui-schema';
 import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 
@@ -48,12 +49,10 @@ export function KanbanEngine({
       ? kanban.columns
       : buildColumnsFromData(data, kanban.statusField);
   }, [kanban, data]);
-  const transitionForms = kanban?.transitionForms ?? {};
-
   const activeFields = useMemo(() => {
     if (!kanban) return [];
     if (!pendingTransition) return [];
-    const configured = transitionForms[pendingTransition.toStatus] ?? [];
+    const configured = kanban.transitionForms?.[pendingTransition.toStatus] ?? [];
     if (configured.length) return configured;
     if (pendingTransition.toStatus === 'SHIPPED') {
       return [
@@ -63,7 +62,7 @@ export function KanbanEngine({
       ];
     }
     return [];
-  }, [kanban, pendingTransition, transitionForms]);
+  }, [kanban, pendingTransition]);
 
   const handleDragEnd = (result: DropResult) => {
     const { source, destination, draggableId } = result;
@@ -75,6 +74,11 @@ export function KanbanEngine({
     const toStatus = destination.droppableId;
     const id = draggableId;
     if (!id || !fromStatus || fromStatus === toStatus) return;
+
+    if (requiresSalesShipmentWorkbench(schema.model, fromStatus, toStatus)) {
+      toast.error('请在订单详情的销售发货工作台执行库存过账');
+      return;
+    }
 
     const action = resolveTransitionAction(schema.model, fromStatus, toStatus);
     if (!action) {
@@ -230,9 +234,9 @@ export function KanbanEngine({
                     setPendingTransition(null);
                     setTransitionData({});
                     onTransitionSuccess?.();
-                  } catch (error: any) {
+                  } catch (reason: unknown) {
                     onRollbackTransition?.(optimisticId, optimisticFrom);
-                    toast.error(error?.response?.data?.message || '流转失败');
+                    toast.error(readApiError(reason, '流转失败'));
                   } finally {
                     setSubmitting(false);
                   }
@@ -248,12 +252,12 @@ export function KanbanEngine({
   );
 }
 
-function resolveTransitionAction(modelName: string, fromStatus: string, toStatus: string) {
+export function resolveTransitionAction(modelName: string, fromStatus: string, toStatus: string) {
   const normalized = modelName.toLowerCase();
   if (normalized === 'order' || normalized === 'sale_order') {
     if (fromStatus === 'DRAFT' && toStatus === 'PENDING') return 'submit';
     if (fromStatus === 'PENDING' && toStatus === 'IN_PRODUCTION') return 'start_production';
-    if (fromStatus === 'IN_PRODUCTION' && toStatus === 'SHIPPED') return 'ship';
+    if (requiresSalesShipmentWorkbench(modelName, fromStatus, toStatus)) return null;
     if (fromStatus === 'SHIPPED' && toStatus === 'COMPLETED') return 'complete';
     if (toStatus === 'CANCELLED') return 'cancel';
     return null;

@@ -27,8 +27,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate commit messages
-        run: npx commitlint --config commitlint.config.cjs --from=${{ github.event.pull_request.base.sha }} --to=${{ github.event.pull_request.head.sha }}
+      - name: Validate PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf "%s\n" "$PR_TITLE" | npx commitlint --config commitlint.config.cjs
 
   # ---- Validate: prisma validate -> prisma generate -> typecheck -> lint -> test -> build ----
   validate:
@@ -82,9 +84,18 @@ jobs:
         run: npm ci
         working-directory: apps/web
 
+      - name: Run dependency security audit
+        run: npm run audit:security
+
       - name: Run Prisma migrations
         run: npx prisma migrate deploy --schema=./prisma/schema.prisma
         working-directory: apps/api
+
+      - name: Run release risk preflight
+        run: npm run risk:preflight:db
+
+      - name: Validate Docker Compose files
+        run: npm run compose:config
 
       # Policy: ``npm run validate`` runs format -> lint -> typecheck -> test -> build.
       # The lint step must NOT use --fix in CI; developers use ``npm run lint:fix`` locally.

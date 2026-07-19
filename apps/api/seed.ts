@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { ROLE_TEMPLATES } from './src/core/permissions/permissions';
 
 const prisma = new PrismaClient();
 
@@ -10,13 +11,26 @@ async function main() {
   const admin = await prisma.user.upsert({
     where: { email: 'admin@erp.com' },
     update: { passwordHash: pass },
-    create: { email: 'admin@erp.com', name: '系统大Boss', passwordHash: pass },
+    create: { email: 'admin@erp.com', name: '系统管理员', passwordHash: pass },
   });
 
   // 2. 创建角色
-  const role = await prisma.role.create({
-      data: { name: 'SuperAdmin', permissions: ['ALL'] }
-  }).catch(async () => await prisma.role.findFirst());
+  const roles = new Map<string, { id: string }>();
+  for (const template of ROLE_TEMPLATES) {
+    const existing = await prisma.role.findFirst({
+      where: { name: template.name },
+    });
+    const role = existing
+      ? await prisma.role.update({
+          where: { id: existing.id },
+          data: { permissions: template.permissions },
+        })
+      : await prisma.role.create({
+          data: { name: template.name, permissions: template.permissions },
+        });
+    roles.set(role.name, role);
+  }
+  const role = roles.get('SuperAdmin');
 
   // 3. 创建您的两个主要公司
   const comp1 = await prisma.company.create({
@@ -27,7 +41,7 @@ async function main() {
       data: { name: '精密器件二厂(分部)' }
   }).catch(async () => (await prisma.company.findMany())[1]);
 
-  // 4. 将老板和两家公司绑定权限，展示同一账号多公司的热切换功能
+  // 4. 将管理员和两家公司绑定权限，展示同一账号多公司的热切换功能
   if (comp1 && role) {
     await prisma.userCompanyRole.upsert({
         where: { userId_companyId: { userId: admin.id, companyId: comp1.id } },
@@ -98,10 +112,12 @@ async function main() {
 
     const stateValues = [
       { value: 'DRAFT', label: '草稿', sort: 10, isInitial: true, isFinal: false },
-      { value: 'PENDING', label: '待处理', sort: 20, isInitial: false, isFinal: false },
-      { value: 'IN_PRODUCTION', label: '生产中', sort: 30, isInitial: false, isFinal: false },
-      { value: 'SHIPPED', label: '已发货', sort: 40, isInitial: false, isFinal: false },
-      { value: 'COMPLETED', label: '已完成', sort: 50, isInitial: false, isFinal: true },
+      { value: 'PENDING_APPROVAL', label: '待审批', sort: 20, isInitial: false, isFinal: false },
+      { value: 'PENDING', label: '待处理', sort: 30, isInitial: false, isFinal: false },
+      { value: 'IN_PRODUCTION', label: '生产中', sort: 40, isInitial: false, isFinal: false },
+      { value: 'PARTIAL_SHIPPED', label: '部分发货', sort: 50, isInitial: false, isFinal: false },
+      { value: 'SHIPPED', label: '已发货', sort: 60, isInitial: false, isFinal: false },
+      { value: 'COMPLETED', label: '已完成', sort: 70, isInitial: false, isFinal: true },
       { value: 'CANCELLED', label: '已取消', sort: 99, isInitial: false, isFinal: true },
     ] as const;
 
@@ -134,12 +150,17 @@ async function main() {
 
     const transitions = [
       { from: 'DRAFT', to: 'PENDING', action: 'submit', label: '提交订单' },
+      { from: 'DRAFT', to: 'PENDING_APPROVAL', action: 'submit_for_approval', label: '提交审批' },
+      { from: 'PENDING_APPROVAL', to: 'PENDING', action: 'approve', label: '审批通过' },
       { from: 'PENDING', to: 'IN_PRODUCTION', action: 'start_production', label: '开始生产' },
-      { from: 'IN_PRODUCTION', to: 'SHIPPED', action: 'ship', label: '发货' },
+      { from: 'IN_PRODUCTION', to: 'PARTIAL_SHIPPED', action: 'ship', label: '发货' },
+      { from: 'PARTIAL_SHIPPED', to: 'SHIPPED', action: 'ship', label: '完成发货' },
       { from: 'SHIPPED', to: 'COMPLETED', action: 'complete', label: '完成' },
       { from: 'DRAFT', to: 'CANCELLED', action: 'cancel', label: '取消' },
+      { from: 'PENDING_APPROVAL', to: 'CANCELLED', action: 'cancel', label: '取消' },
       { from: 'PENDING', to: 'CANCELLED', action: 'cancel', label: '取消' },
       { from: 'IN_PRODUCTION', to: 'CANCELLED', action: 'cancel', label: '取消' },
+      { from: 'PARTIAL_SHIPPED', to: 'CANCELLED', action: 'cancel', label: '取消' },
       { from: 'SHIPPED', to: 'CANCELLED', action: 'cancel', label: '取消' },
     ] as const;
 
@@ -182,7 +203,7 @@ async function main() {
 
     const product = await prisma.product.upsert({
       where: { companyId_sku: { companyId: comp1.id, sku: 'PROD-CAB-001' } },
-      update: { materialId: mat.id, categoryId: category.id },
+      update: { materialId: mat.id, categoryId: category.id, listPrice: 800 },
       create: {
         companyId: comp1.id,
         sku: 'PROD-CAB-001',
@@ -191,6 +212,7 @@ async function main() {
         uom: 'pcs',
         materialId: mat.id,
         categoryId: category.id,
+        listPrice: 800,
       },
     });
 

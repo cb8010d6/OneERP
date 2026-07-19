@@ -1,7 +1,13 @@
-'use client';
+"use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import api from '@/lib/api';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import api from "@/lib/api";
 import {
   Package,
   Warehouse,
@@ -13,8 +19,11 @@ import {
   Search,
   CheckCircle2,
   Loader2,
-} from 'lucide-react';
-import toast from 'react-hot-toast';
+  ShoppingCart,
+} from "lucide-react";
+import toast from "react-hot-toast";
+import { formatNumber } from "@/lib/format";
+import { ReturnsWorkbench } from "./ReturnsWorkbench";
 
 interface LedgerRow {
   locationId: string;
@@ -28,6 +37,8 @@ interface LedgerRow {
   minStock: number;
   netQty: number;
   batchCount: number;
+  averageCost: number;
+  inventoryValue: number;
   isLow: boolean;
 }
 
@@ -46,16 +57,40 @@ interface LocationGroup {
   lowCount: number;
 }
 
+interface ReplenishmentSuggestionRow {
+  materialId: string;
+  sku: string;
+  name: string;
+  category: string;
+  unit: string;
+  minStock: number;
+  onHandQty: number;
+  incomingQty: number;
+  projectedQty: number;
+  shortageQty: number;
+  suggestedPurchaseQty: number;
+  unitPrice: number;
+  estimatedAmount: number;
+  severity: "OUT_OF_STOCK" | "SHORTAGE";
+}
+
+interface ReplenishmentSuggestionData {
+  totalSuggestions: number;
+  totalShortageQty: number;
+  totalEstimatedAmount: number;
+  rows: ReplenishmentSuggestionRow[];
+}
+
 /** Build a two-level tree: Warehouse > Location > rows */
 function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
   const whMap = new Map<string, WarehouseGroup>();
 
   for (const row of rows) {
-    const whKey = row.warehouseId ?? '__NO_WH__';
+    const whKey = row.warehouseId ?? "__NO_WH__";
     if (!whMap.has(whKey)) {
       whMap.set(whKey, {
         warehouseId: row.warehouseId,
-        warehouseName: row.warehouseName ?? '(未分配仓库)',
+        warehouseName: row.warehouseName ?? "(未分配仓库)",
         locations: [],
         totalRows: 0,
         lowCount: 0,
@@ -65,7 +100,12 @@ function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
 
     let loc = wh.locations.find((l) => l.locationId === row.locationId);
     if (!loc) {
-      loc = { locationId: row.locationId, locationName: row.locationName, rows: [], lowCount: 0 };
+      loc = {
+        locationId: row.locationId,
+        locationName: row.locationName,
+        rows: [],
+        lowCount: 0,
+      };
       wh.locations.push(loc);
     }
     loc.rows.push(row);
@@ -77,7 +117,7 @@ function buildTree(rows: LedgerRow[]): WarehouseGroup[] {
   }
 
   return Array.from(whMap.values()).sort((a, b) =>
-    a.warehouseName.localeCompare(b.warehouseName, 'zh-CN'),
+    a.warehouseName.localeCompare(b.warehouseName, "zh-CN"),
   );
 }
 
@@ -86,13 +126,13 @@ function QtyCell({ row }: { row: LedgerRow }) {
     return (
       <span className="erp-badge erp-badge--danger flex items-center gap-1">
         <AlertTriangle className="h-3 w-3" />
-        {row.netQty.toLocaleString()} {row.materialUnit}
+        {formatNumber(row.netQty)} {row.materialUnit}
       </span>
     );
   }
   return (
     <span className="font-mono tabular-nums text-gray-800">
-      {row.netQty.toLocaleString()} {row.materialUnit}
+      {formatNumber(row.netQty)} {row.materialUnit}
     </span>
   );
 }
@@ -100,47 +140,72 @@ function QtyCell({ row }: { row: LedgerRow }) {
 export default function InventoryPage() {
   const [rows, setRows] = useState<LedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [suggestions, setSuggestions] =
+    useState<ReplenishmentSuggestionData | null>(null);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [search, setSearch] = useState("");
   const [expandedWh, setExpandedWh] = useState<Set<string>>(new Set());
   const [expandedLoc, setExpandedLoc] = useState<Set<string>>(new Set());
 
   // Barcode scan mode
   const [scanMode, setScanMode] = useState(false);
-  const [scanBuffer, setScanBuffer] = useState('');
+  const [scanBuffer, setScanBuffer] = useState("");
   const [scanning, setScanning] = useState(false);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
-  const fetchLedger = useCallback(async () => {
-    setLoading(true);
+  const fetchLedger = useCallback(
+    async (keyword = search) => {
+      setLoading(true);
+      try {
+        const params = new URLSearchParams({ page: "1", limit: "50" });
+        if (keyword.trim()) {
+          params.set("search", keyword.trim());
+        }
+
+        const res = await api.get<{ data: LedgerRow[] }>(
+          "/inventory/realtime-ledger?" + params.toString(),
+        );
+        setRows(res.data?.data ?? []);
+      } catch (error) {
+        console.error("Failed to fetch realtime ledger", error);
+        toast.error("加载库存台账失败");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [search],
+  );
+
+  const fetchReplenishmentSuggestions = useCallback(async () => {
+    setSuggestionsLoading(true);
     try {
-      const res = await api.get<LedgerRow[]>('/inventory/realtime-ledger');
-      setRows(res.data ?? []);
+      const res = await api.get<ReplenishmentSuggestionData>(
+        "/inventory/replenishment-suggestions",
+      );
+      setSuggestions(res.data);
     } catch (error) {
-      console.error('Failed to fetch realtime ledger', error);
-      toast.error('加载库存台账失败');
+      console.error("Failed to fetch replenishment suggestions", error);
+      toast.error("加载补货建议失败");
     } finally {
-      setLoading(false);
+      setSuggestionsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchLedger();
-  }, [fetchLedger]);
+    const timer = window.setTimeout(() => {
+      void fetchLedger(search);
+    }, 250);
 
-  // Filter rows by search
-  const filteredRows = useMemo(() => {
-    if (!search.trim()) return rows;
-    const kw = search.toLowerCase();
-    return rows.filter(
-      (r) =>
-        r.materialName.toLowerCase().includes(kw) ||
-        r.materialSku.toLowerCase().includes(kw) ||
-        r.locationName.toLowerCase().includes(kw) ||
-        (r.warehouseName ?? '').toLowerCase().includes(kw),
-    );
-  }, [rows, search]);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [fetchLedger, search]);
 
-  const tree = useMemo(() => buildTree(filteredRows), [filteredRows]);
+  useEffect(() => {
+    void fetchReplenishmentSuggestions();
+  }, [fetchReplenishmentSuggestions]);
+
+  const tree = useMemo(() => buildTree(rows), [rows]);
 
   // Auto-expand all warehouses and locations when data first arrives
   const hasData = rows.length > 0;
@@ -149,14 +214,14 @@ export default function InventoryPage() {
     const newWh = new Set<string>();
     const newLoc = new Set<string>();
     for (const wh of tree) {
-      newWh.add(wh.warehouseId ?? '__NO_WH__');
+      newWh.add(wh.warehouseId ?? "__NO_WH__");
       for (const loc of wh.locations) {
         newLoc.add(loc.locationId);
       }
     }
     setExpandedWh(newWh);
     setExpandedLoc(newLoc);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasData]);
 
   const toggleWh = (key: string) => {
@@ -184,9 +249,19 @@ export default function InventoryPage() {
   };
 
   // Summary stats
-  const totalMaterials = useMemo(() => new Set(rows.map((r) => r.materialId)).size, [rows]);
-  const totalLocations = useMemo(() => new Set(rows.map((r) => r.locationId)).size, [rows]);
+  const totalMaterials = useMemo(
+    () => new Set(rows.map((r) => r.materialId)).size,
+    [rows],
+  );
+  const totalLocations = useMemo(
+    () => new Set(rows.map((r) => r.locationId)).size,
+    [rows],
+  );
   const totalLow = useMemo(() => rows.filter((r) => r.isLow).length, [rows]);
+  const totalInventoryValue = useMemo(
+    () => rows.reduce((sum, row) => sum + Number(row.inventoryValue ?? 0), 0),
+    [rows],
+  );
 
   // Barcode scan handler
   const handleScanSubmit = useCallback(
@@ -194,18 +269,24 @@ export default function InventoryPage() {
       if (!sku.trim()) return;
       setScanning(true);
       try {
-        await api.post('/inventory/scan', { materialSku: sku.trim(), quantity: 1 });
+        await api.post("/inventory/scan", {
+          materialSku: sku.trim(),
+          quantity: 1,
+        });
         toast.success(`扫码出库成功：${sku.trim()}`);
         await fetchLedger();
       } catch (err: unknown) {
         const msg =
-          err && typeof err === 'object' && 'response' in err
-            ? String((err as { response: { data?: { message?: string } } }).response?.data?.message ?? '出库失败')
-            : '出库失败';
+          err && typeof err === "object" && "response" in err
+            ? String(
+                (err as { response: { data?: { message?: string } } }).response
+                  ?.data?.message ?? "出库失败",
+              )
+            : "出库失败";
         toast.error(msg);
       } finally {
         setScanning(false);
-        setScanBuffer('');
+        setScanBuffer("");
         scanInputRef.current?.focus();
       }
     },
@@ -237,8 +318,8 @@ export default function InventoryPage() {
             }}
             className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium transition ${
               scanMode
-                ? 'border-blue-300 bg-blue-50 text-blue-700'
-                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                ? "border-blue-300 bg-blue-50 text-blue-700"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
             <Scan className="h-4 w-4" />
@@ -246,11 +327,18 @@ export default function InventoryPage() {
           </button>
           <button
             type="button"
-            onClick={fetchLedger}
-            disabled={loading}
+            onClick={() => {
+              void fetchLedger(search);
+              void fetchReplenishmentSuggestions();
+            }}
+            disabled={loading || suggestionsLoading}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${
+                loading || suggestionsLoading ? "animate-spin" : ""
+              }`}
+            />
             刷新
           </button>
         </div>
@@ -270,7 +358,7 @@ export default function InventoryPage() {
               value={scanBuffer}
               onChange={(e) => setScanBuffer(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') {
+                if (e.key === "Enter") {
                   void handleScanSubmit(scanBuffer);
                 }
               }}
@@ -283,7 +371,11 @@ export default function InventoryPage() {
               onClick={() => void handleScanSubmit(scanBuffer)}
               className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {scanning ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4" />
+              )}
               确认
             </button>
           </div>
@@ -291,14 +383,24 @@ export default function InventoryPage() {
       )}
 
       {/* Stats Bar */}
-      <div className="grid grid-cols-3 gap-4">
+      <ReturnsWorkbench
+        onPosted={() => {
+          void fetchLedger(search);
+          void fetchReplenishmentSuggestions();
+        }}
+      />
+
+      {/* Stats Bar */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <div className="erp-card flex items-center gap-3 p-4">
           <div className="rounded-lg bg-blue-50 p-2 text-blue-600">
             <Package className="h-5 w-5" />
           </div>
           <div>
             <div className="text-xs font-medium text-slate-500">物料品种</div>
-            <div className="erp-stat-value text-xl font-bold text-slate-900">{totalMaterials}</div>
+            <div className="erp-stat-value text-xl font-bold text-slate-900">
+              {totalMaterials}
+            </div>
           </div>
         </div>
         <div className="erp-card flex items-center gap-3 p-4">
@@ -307,20 +409,148 @@ export default function InventoryPage() {
           </div>
           <div>
             <div className="text-xs font-medium text-slate-500">在库库位</div>
-            <div className="erp-stat-value text-xl font-bold text-slate-900">{totalLocations}</div>
+            <div className="erp-stat-value text-xl font-bold text-slate-900">
+              {totalLocations}
+            </div>
           </div>
         </div>
-        <div className={`erp-card flex items-center gap-3 p-4 ${totalLow > 0 ? 'border-amber-200 bg-amber-50/60' : ''}`}>
-          <div className={`rounded-lg p-2 ${totalLow > 0 ? 'bg-amber-100 text-amber-600' : 'bg-green-50 text-green-600'}`}>
+        <div
+          className={`erp-card flex items-center gap-3 p-4 ${totalLow > 0 ? "border-amber-200 bg-amber-50/60" : ""}`}
+        >
+          <div
+            className={`rounded-lg p-2 ${totalLow > 0 ? "bg-amber-100 text-amber-600" : "bg-green-50 text-green-600"}`}
+          >
             <AlertTriangle className="h-5 w-5" />
           </div>
           <div>
             <div className="text-xs font-medium text-slate-500">低库存预警</div>
-            <div className={`erp-stat-value text-xl font-bold ${totalLow > 0 ? 'text-amber-700' : 'text-green-700'}`}>
+            <div
+              className={`erp-stat-value text-xl font-bold ${totalLow > 0 ? "text-amber-700" : "text-green-700"}`}
+            >
               {totalLow}
             </div>
           </div>
         </div>
+        <div className="erp-card flex items-center gap-3 p-4">
+          <div className="rounded-lg bg-cyan-50 p-2 text-cyan-600">
+            <Package className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="text-xs font-medium text-slate-500">库存估值</div>
+            <div className="erp-stat-value text-xl font-bold text-slate-900">
+              ¥{formatNumber(totalInventoryValue)}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="erp-card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 bg-white px-4 py-3">
+          <div>
+            <h2 className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <ShoppingCart className="h-4 w-4 text-amber-600" />
+              库存补货建议
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              按最低库存、当前库存和未收采购数量计算建议采购量。
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-right text-xs text-slate-500">
+            <span>
+              建议项
+              <strong className="ml-1 text-slate-900">
+                {suggestions?.totalSuggestions ?? 0}
+              </strong>
+            </span>
+            <span>
+              缺口
+              <strong className="ml-1 text-slate-900">
+                {formatNumber(suggestions?.totalShortageQty ?? 0)}
+              </strong>
+            </span>
+            <span>
+              预估金额
+              <strong className="ml-1 text-slate-900">
+                ¥{formatNumber(suggestions?.totalEstimatedAmount ?? 0)}
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        {suggestionsLoading ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-sm text-slate-500">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在计算补货建议...
+          </div>
+        ) : !suggestions || suggestions.rows.length === 0 ? (
+          <div className="py-8 text-center text-sm text-slate-500">
+            暂无需要补货的物料
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-[920px] w-full text-sm">
+              <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">物料</th>
+                  <th className="px-3 py-2 text-left">分类</th>
+                  <th className="px-3 py-2 text-right">最低库存</th>
+                  <th className="px-3 py-2 text-right">当前库存</th>
+                  <th className="px-3 py-2 text-right">在途采购</th>
+                  <th className="px-3 py-2 text-right">预计库存</th>
+                  <th className="px-3 py-2 text-right">建议采购</th>
+                  <th className="px-3 py-2 text-right">预估金额</th>
+                  <th className="px-3 py-2 text-right">状态</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {suggestions.rows.map((row) => (
+                  <tr key={row.materialId} className="hover:bg-slate-50">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-900">
+                        {row.name}
+                      </div>
+                      <div className="font-mono text-xs text-slate-500">
+                        {row.sku}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2 text-slate-600">
+                      {row.category}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.minStock)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.onHandQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.incomingQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {formatNumber(row.projectedQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-semibold text-amber-700">
+                      {formatNumber(row.suggestedPurchaseQty)} {row.unit}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono font-semibold text-slate-900">
+                      ¥{formatNumber(row.estimatedAmount)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <span
+                        className={
+                          row.severity === "OUT_OF_STOCK"
+                            ? "erp-badge erp-badge--danger"
+                            : "erp-badge erp-badge--pending"
+                        }
+                      >
+                        {row.severity === "OUT_OF_STOCK" ? "缺货" : "低库存"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Search */}
@@ -338,11 +568,17 @@ export default function InventoryPage() {
       {/* Ledger Table */}
       <div className="erp-card overflow-hidden">
         {/* Table header */}
-        <div className="grid border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500"
-          style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}>
+        <div
+          className="grid border-b border-slate-100 bg-slate-50 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-500"
+          style={{
+            gridTemplateColumns: "2fr 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr",
+          }}
+        >
           <div className="pl-8">物料</div>
           <div>SKU</div>
           <div className="text-right">净库存量</div>
+          <div className="text-right">移动均价</div>
+          <div className="text-right">库存价值</div>
           <div className="text-right">最低库存</div>
           <div className="text-right">批次数</div>
           <div className="text-right">状态</div>
@@ -354,10 +590,12 @@ export default function InventoryPage() {
             正在加载台账数据...
           </div>
         ) : tree.length === 0 ? (
-          <div className="py-14 text-center text-sm text-slate-500">暂无库存数据</div>
+          <div className="py-14 text-center text-sm text-slate-500">
+            暂无库存数据
+          </div>
         ) : (
           tree.map((wh) => {
-            const whKey = wh.warehouseId ?? '__NO_WH__';
+            const whKey = wh.warehouseId ?? "__NO_WH__";
             const whOpen = expandedWh.has(whKey);
 
             return (
@@ -374,12 +612,17 @@ export default function InventoryPage() {
                     <ChevronRight className="h-4 w-4 flex-shrink-0 text-slate-400" />
                   )}
                   <Warehouse className="h-4 w-4 flex-shrink-0 text-slate-500" />
-                  <span className="text-sm font-semibold text-slate-800">{wh.warehouseName}</span>
+                  <span className="text-sm font-semibold text-slate-800">
+                    {wh.warehouseName}
+                  </span>
                   <span className="ml-1 text-xs text-slate-400">
                     ({wh.totalRows} 条明细
                     {wh.lowCount > 0 && (
-                      <span className="ml-1 text-amber-600">, {wh.lowCount} 低库存</span>
-                    )})
+                      <span className="ml-1 text-amber-600">
+                        , {wh.lowCount} 低库存
+                      </span>
+                    )}
+                    )
                   </span>
                 </button>
 
@@ -400,12 +643,17 @@ export default function InventoryPage() {
                             <ChevronRight className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                           )}
                           <Package className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
-                          <span className="text-xs font-semibold text-slate-600">{loc.locationName}</span>
+                          <span className="text-xs font-semibold text-slate-600">
+                            {loc.locationName}
+                          </span>
                           <span className="text-xs text-slate-400">
                             ({loc.rows.length} 种物料
                             {loc.lowCount > 0 && (
-                              <span className="ml-1 text-amber-600">, {loc.lowCount} 低库存</span>
-                            )})
+                              <span className="ml-1 text-amber-600">
+                                , {loc.lowCount} 低库存
+                              </span>
+                            )}
+                            )
                           </span>
                         </button>
 
@@ -415,24 +663,45 @@ export default function InventoryPage() {
                             <div
                               key={`${row.locationId}-${row.materialId}`}
                               className={`grid items-center border-b border-slate-100 px-3 py-1.5 pl-14 text-xs ${
-                                row.isLow ? 'bg-amber-50/40 hover:bg-amber-50' : 'hover:bg-slate-50/60'
+                                row.isLow
+                                  ? "bg-amber-50/40 hover:bg-amber-50"
+                                  : "hover:bg-slate-50/60"
                               }`}
-                              style={{ gridTemplateColumns: '2fr 2fr 1fr 1fr 1fr 1fr' }}
+                              style={{
+                                gridTemplateColumns:
+                                  "2fr 1.5fr 1fr 1fr 1fr 1fr 1fr 1fr",
+                              }}
                             >
-                              <div className="truncate font-medium text-slate-800">{row.materialName}</div>
-                              <div className="font-mono text-slate-500">{row.materialSku}</div>
+                              <div className="truncate font-medium text-slate-800">
+                                {row.materialName}
+                              </div>
+                              <div className="font-mono text-slate-500">
+                                {row.materialSku}
+                              </div>
                               <div className="text-right">
                                 <QtyCell row={row} />
                               </div>
-                              <div className="text-right font-mono text-slate-500">
-                                {row.minStock.toLocaleString()} {row.materialUnit}
+                              <div className="text-right font-mono text-slate-600">
+                                ¥{formatNumber(row.averageCost)}
                               </div>
-                              <div className="text-right text-slate-500">{row.batchCount}</div>
+                              <div className="text-right font-mono font-semibold text-slate-800">
+                                ¥{formatNumber(row.inventoryValue)}
+                              </div>
+                              <div className="text-right font-mono text-slate-500">
+                                {formatNumber(row.minStock)} {row.materialUnit}
+                              </div>
+                              <div className="text-right text-slate-500">
+                                {row.batchCount}
+                              </div>
                               <div className="text-right">
                                 {row.isLow ? (
-                                  <span className="erp-badge erp-badge--pending">低库存</span>
+                                  <span className="erp-badge erp-badge--pending">
+                                    低库存
+                                  </span>
                                 ) : (
-                                  <span className="erp-badge erp-badge--success">正常</span>
+                                  <span className="erp-badge erp-badge--success">
+                                    正常
+                                  </span>
                                 )}
                               </div>
                             </div>
@@ -447,7 +716,7 @@ export default function InventoryPage() {
       </div>
 
       <div className="text-right text-xs text-slate-400">
-        共 {filteredRows.length} 条库存明细 · 单击仓库/库位行展开/折叠
+        当前页 {rows.length} 条库存明细 · 单击仓库/库位行展开/折叠
       </div>
     </div>
   );

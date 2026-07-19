@@ -4,11 +4,15 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Prisma } from '@prisma/client';
+import Decimal from 'decimal.js';
 import { PrismaService } from '../prisma/prisma.service';
 import { KyselyService } from '../core/prisma/kysely.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
+import { EventQueueService } from '../core/events/event-queue.service';
+import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
+import { roundDecimal } from '../core/utils/decimal';
+import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
 import {
   CreateStockMoveDto,
   PurchaseInboundPostingDto,
@@ -16,36 +20,7 @@ import {
   ReverseSaleOrderShipmentDto,
   SaleOrderShipmentDto,
 } from './dto/inventory.dto';
-
-// ---- Realtime Ledger Types ----
-export interface StockLedgerRow {
-  locationId: string;
-  locationName: string;
-  warehouseId: string | null;
-  warehouseName: string | null;
-  materialId: string;
-  materialSku: string;
-  materialName: string;
-  materialUnit: string;
-  minStock: number;
-  netQty: number;
-  batchCount: number;
-  isLow: boolean;
-}
-
-interface StockLedgerQueryRow {
-  locationId: string;
-  locationName: string;
-  warehouseId: string | null;
-  warehouseName: string | null;
-  materialId: string;
-  materialSku: string;
-  materialName: string;
-  materialUnit: string;
-  minStock: number | string | null;
-  netQty: number | string | null;
-  batchCount: number | string | null;
-}
+import { StockQueryService } from './stock-query.service';
 
 export interface InventoryTransactionRecord {
   id: string;
@@ -59,6 +34,26 @@ export interface InventoryTransactionRecord {
   companyId?: string;
   operatorId?: string;
   note?: string | null;
+  unitCost?: number;
+}
+
+export interface InventoryReturnDocumentRow {
+  id: string;
+  returnNo: string;
+  returnType: string;
+  sourceDocumentNo: string;
+  referenceNo: string;
+  status: string;
+  note?: string | null;
+  postedAt: Date;
+  lines: Array<{
+    id: string;
+    materialId: string;
+    quantity: Prisma.Decimal | number | string;
+    locationId?: string | null;
+    inventoryMoveId?: string | null;
+    batchNo?: string | null;
+  }>;
 }
 
 @Injectable()
@@ -66,128 +61,555 @@ export class InventoryService {
   constructor(
     private prisma: PrismaService,
     private readonly kyselyService: KyselyService,
-    private readonly eventEmitter: EventEmitter2,
+    private readonly eventQueueService: EventQueueService,
+    private readonly stockQueryService: StockQueryService,
   ) {}
 
   async getCompanyStocks(companyId: string, pagination: PaginationDto) {
-    const { page = 1, limit = 20 } = pagination;
-    const where = { location: { companyId } };
-
-    const [data, total] = await Promise.all([
-      this.prisma.stockQuant.findMany({
-        where,
-        include: {
-          material: true,
-          location: { include: { warehouse: true } },
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: [{ updatedAt: 'desc' }],
-      }),
-      this.prisma.stockQuant.count({ where }),
-    ]);
-
-    return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return this.stockQueryService.getCompanyStocks(companyId, pagination);
   }
 
   async getWarehouses(companyId: string) {
-    return this.prisma.warehouse.findMany({ where: { companyId } });
+    return this.stockQueryService.getWarehouses(companyId);
   }
 
   async getLocations(companyId: string, warehouseId?: string) {
-    return this.prisma.stockLocation.findMany({
-      where: {
-        companyId,
-        ...(warehouseId ? { warehouseId } : {}),
-      },
-      orderBy: [{ usage: 'asc' }, { name: 'asc' }],
-    });
+    return this.stockQueryService.getLocations(companyId, warehouseId);
   }
 
   async getMaterials(companyId: string) {
-    return this.prisma.material.findMany({
-      where: { OR: [{ companyId }, { companyId: null }] },
-    });
+    return this.stockQueryService.getMaterials(companyId);
+  }
+
+  async getReplenishmentSuggestions(companyId: string) {
+    return this.stockQueryService.getReplenishmentSuggestions(companyId);
   }
 
   async getTransactions(companyId: string) {
-    return this.prisma.inventoryTransaction.findMany({
-      where: { companyId },
-      include: {
-        material: true,
-        sourceLocation: { include: { warehouse: true } },
-        destLocation: { include: { warehouse: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    });
+    return this.stockQueryService.getTransactions(companyId);
   }
 
-  /**
-   * 实时库存台账 – 使用 Kysely 聚合查询，按 location + material 汇总净库存量。
-   * 支持低库存预警标记。
-   */
-  async getRealtimeLedger(companyId: string): Promise<StockLedgerRow[]> {
-    const rows = await this.kyselyService.withTenant<StockLedgerQueryRow[]>(
-      async (trx) => {
-        const queryRows = await trx
-          .selectFrom('StockQuant as sq')
-          .innerJoin('StockLocation as loc', 'loc.id', 'sq.locationId')
-          .innerJoin('Material as mat', 'mat.id', 'sq.materialId')
-          .leftJoin('Warehouse as wh', 'wh.id', 'loc.warehouseId')
-          .select([
-            'loc.id as locationId',
-            'loc.name as locationName',
-            'loc.warehouseId as warehouseId',
-            'wh.name as warehouseName',
-            'mat.id as materialId',
-            'mat.sku as materialSku',
-            'mat.name as materialName',
-            'mat.unit as materialUnit',
-            'mat.minStock as minStock',
-          ])
-          .select((eb) => [
-            eb.fn.sum<number>('sq.quantity').as('netQty'),
-            eb.fn.count<number>('sq.id').as('batchCount'),
-          ])
-          .where('loc.companyId', '=', companyId)
-          .groupBy([
-            'loc.id',
-            'loc.name',
-            'loc.warehouseId',
-            'wh.name',
-            'mat.id',
-            'mat.sku',
-            'mat.name',
-            'mat.unit',
-            'mat.minStock',
-          ])
-          .orderBy('wh.name', 'asc')
-          .orderBy('loc.name', 'asc')
-          .orderBy('mat.name', 'asc')
-          .execute();
-        return queryRows as unknown as StockLedgerQueryRow[];
+  async getReturnDocuments(companyId: string) {
+    return this.stockQueryService.getReturnDocuments(companyId);
+  }
+
+  async getRealtimeLedger(
+    companyId: string,
+    pagination: PaginationDto & {
+      search?: string;
+      warehouseId?: string;
+      lowOnly?: string | boolean;
+    } = {},
+  ) {
+    return this.stockQueryService.getRealtimeLedger(companyId, pagination);
+  }
+
+  async postSaleOrderShipment(
+    companyId: string,
+    orderId: string,
+    payload: SaleOrderShipmentDto,
+    operatorId?: string,
+  ) {
+    const order = await this.prisma.order.findFirst({
+      where: { id: orderId, companyId },
+      include: {
+        items: {
+          select: { productId: true, quantity: true },
+        },
       },
+    });
+
+    if (!order) {
+      throw new NotFoundException('销售订单不存在或无权限访问');
+    }
+
+    if (!order.items.length) {
+      throw new BadRequestException('销售订单无明细，无法自动过账');
+    }
+
+    if (!payload.items?.length) {
+      throw new BadRequestException('销售订单发货明细不能为空');
+    }
+
+    const orderProductIds = [
+      ...new Set(order.items.map((item) => item.productId)),
+    ];
+    const products = await this.prisma.product.findMany({
+      where: { companyId, id: { in: orderProductIds } },
+      select: { id: true, materialId: true, name: true, sku: true },
+    });
+    const productById = new Map(
+      products.map((product) => [product.id, product]),
+    );
+    const productByMaterialId = new Map(
+      products
+        .filter((product) => product.materialId)
+        .map((product) => [product.materialId as string, product.id]),
     );
 
-    return rows.map((row): StockLedgerRow => {
-      const netQty = Number(row.netQty ?? 0);
-      const minStock = Number(row.minStock ?? 0);
-      return {
-        locationId: String(row.locationId),
-        locationName: String(row.locationName),
-        warehouseId: row.warehouseId ? String(row.warehouseId) : null,
-        warehouseName: row.warehouseName ? String(row.warehouseName) : null,
-        materialId: String(row.materialId),
-        materialSku: String(row.materialSku),
-        materialName: String(row.materialName),
-        materialUnit: String(row.materialUnit),
-        minStock,
-        netQty,
-        batchCount: Number(row.batchCount ?? 0),
-        isLow: minStock > 0 && netQty <= minStock,
-      };
+    const orderedQuantityByProductId = new Map<string, number>();
+    for (const item of order.items) {
+      const current = orderedQuantityByProductId.get(item.productId) ?? 0;
+      orderedQuantityByProductId.set(
+        item.productId,
+        current + Number(item.quantity ?? 0),
+      );
+    }
+
+    const referenceNo = `SALE-SHIP-${order.orderNo}`;
+    const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
+    const shipmentMoves = await this.prisma.inventoryTransaction.findMany({
+      where: {
+        companyId,
+        OR: [
+          { referenceNo, type: 'OUTBOUND' },
+          { referenceNo: reverseReferencePrefix, type: 'INBOUND' },
+          {
+            referenceNo: { startsWith: `${reverseReferencePrefix}-` },
+            type: 'INBOUND',
+          },
+        ],
+      },
+      select: {
+        materialId: true,
+        quantity: true,
+        type: true,
+        referenceNo: true,
+      },
     });
+
+    const shippedQuantityByProductId = new Map<string, number>();
+    for (const move of shipmentMoves) {
+      const productId = productByMaterialId.get(move.materialId);
+      if (!productId) continue;
+
+      const current = shippedQuantityByProductId.get(productId) ?? 0;
+      const isReversal =
+        move.type === 'INBOUND' ||
+        move.referenceNo === reverseReferencePrefix ||
+        move.referenceNo?.startsWith(`${reverseReferencePrefix}-`);
+      shippedQuantityByProductId.set(
+        productId,
+        roundDecimal(
+          current + (isReversal ? -1 : 1) * Number(move.quantity ?? 0),
+        ),
+      );
+    }
+    for (const [productId, quantity] of shippedQuantityByProductId) {
+      shippedQuantityByProductId.set(
+        productId,
+        roundDecimal(Math.max(0, quantity)),
+      );
+    }
+
+    const totalOrdered = roundDecimal(
+      order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
+    );
+
+    const postedLines: Array<{
+      productId: string;
+      materialId: string;
+      requestedQuantity: number;
+      quantity: number;
+      remainingQuantity: number;
+      sourceLocationId: string;
+      batchNo: string;
+      transactionId: string;
+      allocations: Array<{
+        sourceLocationId: string;
+        batchNo: string;
+        quantity: number;
+        transactionId: string;
+      }>;
+    }> = [];
+    const skippedLines: Array<{
+      productId: string;
+      requestedQuantity: number;
+      reason: string;
+    }> = [];
+    const atomicPlans: Array<{
+      product: { id: string; materialId: string; name: string };
+      requestedQuantity: number;
+      quantityRequestedThisRound: number;
+      allocations: Array<{
+        sourceLocationId: string;
+        batchNo: string;
+        quantity: number;
+      }>;
+    }> = [];
+
+    if (!payload.allowPartial) {
+      for (const requestItem of payload.items) {
+        const requestedQuantity = Number(requestItem.shipQuantity ?? 0);
+        if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+          throw new BadRequestException('发货数量必须大于0');
+        }
+
+        const product = productById.get(requestItem.productId);
+        if (!product) {
+          throw new BadRequestException('销售订单中不存在该产品');
+        }
+        if (!product.materialId) {
+          throw new BadRequestException(
+            `产品 ${product.name} 未绑定主物料，无法发货`,
+          );
+        }
+
+        const orderedQuantity = orderedQuantityByProductId.get(product.id) ?? 0;
+        const alreadyShippedQuantity =
+          shippedQuantityByProductId.get(product.id) ?? 0;
+        const remainingQuantity = roundDecimal(
+          Math.max(0, orderedQuantity - alreadyShippedQuantity),
+        );
+        if (remainingQuantity <= 0) {
+          throw new BadRequestException(`产品 ${product.name} 已全部发货`);
+        }
+        if (requestedQuantity > remainingQuantity) {
+          throw new BadRequestException(
+            `产品 ${product.name} 请求发货 ${requestedQuantity}，订单剩余可发 ${remainingQuantity}`,
+          );
+        }
+
+        const stockPlan = await this.resolveShipmentAllocations(
+          companyId,
+          product.materialId,
+          requestedQuantity,
+          payload.sourceLocationId,
+          payload.batchNo,
+        );
+        if (stockPlan.allocatedQuantity < requestedQuantity) {
+          throw new BadRequestException(
+            `库存不足：产品 ${product.name} 请求发货 ${requestedQuantity}，当前可发 ${stockPlan.allocatedQuantity}；如需部分发货请显式设置 allowPartial=true`,
+          );
+        }
+
+        atomicPlans.push({
+          product: {
+            id: product.id,
+            materialId: product.materialId,
+            name: product.name,
+          },
+          requestedQuantity,
+          quantityRequestedThisRound: requestedQuantity,
+          allocations: stockPlan.allocations,
+        });
+      }
+
+      const atomicResult = await this.prisma.$transaction(
+        async (tx) => {
+          const atomicPostedLines: typeof postedLines = [];
+          const queuedEventIds: string[] = [];
+          const nextShippedQuantityByProductId = new Map(
+            shippedQuantityByProductId,
+          );
+
+          for (const plan of atomicPlans) {
+            const lineTransactions: (typeof postedLines)[number]['allocations'] =
+              [];
+
+            for (const allocation of plan.allocations) {
+              const transaction = await this.executeStockMove(tx, {
+                companyId,
+                sourceLocationId: allocation.sourceLocationId,
+                materialId: plan.product.materialId,
+                quantity: allocation.quantity,
+                batchNo: allocation.batchNo,
+                referenceNo,
+                note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
+                operatorId: operatorId || 'SYSTEM',
+              });
+              const queuedEvent = await this.queueStockDepletedInTransaction(
+                tx,
+                companyId,
+                transaction,
+                operatorId,
+              );
+              if (queuedEvent?.id) queuedEventIds.push(queuedEvent.id);
+
+              lineTransactions.push({
+                sourceLocationId: allocation.sourceLocationId,
+                batchNo: transaction.batchNo ?? allocation.batchNo,
+                quantity: allocation.quantity,
+                transactionId: transaction.id,
+              });
+            }
+
+            const quantityToShip = roundDecimal(
+              lineTransactions.reduce(
+                (sum, allocation) => sum + Number(allocation.quantity ?? 0),
+                0,
+              ),
+            );
+            const currentShipped =
+              nextShippedQuantityByProductId.get(plan.product.id) ?? 0;
+            nextShippedQuantityByProductId.set(
+              plan.product.id,
+              roundDecimal(currentShipped + quantityToShip),
+            );
+            atomicPostedLines.push({
+              productId: plan.product.id,
+              materialId: plan.product.materialId,
+              requestedQuantity: plan.requestedQuantity,
+              quantity: quantityToShip,
+              remainingQuantity: roundDecimal(
+                Math.max(0, plan.quantityRequestedThisRound - quantityToShip),
+              ),
+              sourceLocationId:
+                lineTransactions[0]?.sourceLocationId ??
+                payload.sourceLocationId ??
+                '',
+              batchNo: lineTransactions[0]?.batchNo ?? payload.batchNo ?? '',
+              transactionId: lineTransactions[0]?.transactionId ?? '',
+              allocations: lineTransactions,
+            });
+          }
+
+          const totalShippedAfterPosting = roundDecimal(
+            [...nextShippedQuantityByProductId.values()].reduce(
+              (sum, quantity) => sum + Number(quantity ?? 0),
+              0,
+            ),
+          );
+          const nextStatus =
+            totalShippedAfterPosting >= totalOrdered
+              ? 'SHIPPED'
+              : 'PARTIAL_SHIPPED';
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: nextStatus },
+          });
+
+          return {
+            postedLines: atomicPostedLines,
+            queuedEventIds,
+            totalShipped: totalShippedAfterPosting,
+            nextStatus,
+          };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+
+      await this.dispatchQueuedEvents(atomicResult.queuedEventIds);
+
+      return {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        totalOrdered,
+        totalShipped: atomicResult.totalShipped,
+        status: atomicResult.nextStatus,
+        postingStatus: 'POSTED',
+        postedLines: atomicResult.postedLines,
+        skippedLines,
+        message:
+          atomicResult.nextStatus === 'SHIPPED'
+            ? '销售订单自动过账完成，订单状态已更新为 SHIPPED'
+            : '销售订单部分发货完成，订单状态已更新为 PARTIAL_SHIPPED',
+      };
+    }
+
+    for (const requestItem of payload.items) {
+      const requestedQuantity = Number(requestItem.shipQuantity ?? 0);
+      if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
+        skippedLines.push({
+          productId: requestItem.productId,
+          requestedQuantity: 0,
+          reason: '发货数量必须大于0',
+        });
+        continue;
+      }
+
+      const product = productById.get(requestItem.productId);
+      if (!product) {
+        skippedLines.push({
+          productId: requestItem.productId,
+          requestedQuantity,
+          reason: '销售订单中不存在该产品',
+        });
+        continue;
+      }
+
+      if (!product.materialId) {
+        skippedLines.push({
+          productId: requestItem.productId,
+          requestedQuantity,
+          reason: `产品 ${product.name} 未绑定主物料，无法发货`,
+        });
+        continue;
+      }
+
+      const orderedQuantity = orderedQuantityByProductId.get(product.id) ?? 0;
+      const alreadyShippedQuantity =
+        shippedQuantityByProductId.get(product.id) ?? 0;
+      const remainingQuantity = Math.max(
+        0,
+        roundDecimal(orderedQuantity - alreadyShippedQuantity),
+      );
+
+      if (remainingQuantity <= 0) {
+        skippedLines.push({
+          productId: product.id,
+          requestedQuantity,
+          reason: '该订单项已全部发货',
+        });
+        continue;
+      }
+
+      const quantityRequestedThisRound = roundDecimal(
+        Math.min(requestedQuantity, remainingQuantity),
+      );
+
+      const stockPlan = await this.resolveShipmentAllocations(
+        companyId,
+        product.materialId,
+        quantityRequestedThisRound,
+        payload.sourceLocationId,
+        payload.batchNo,
+      );
+
+      if (!stockPlan.allocations.length || stockPlan.allocatedQuantity <= 0) {
+        skippedLines.push({
+          productId: product.id,
+          requestedQuantity,
+          reason: '当前库存不足，最大可发货量为 0',
+        });
+        continue;
+      }
+
+      try {
+        const lineTransactions = await this.prisma.$transaction(async (tx) => {
+          const nextTransactions: Array<{
+            sourceLocationId: string;
+            batchNo: string;
+            quantity: number;
+            transactionId: string;
+            referenceNo: string;
+          }> = [];
+
+          for (const allocation of stockPlan.allocations) {
+            const transaction = await this.executeStockMove(tx, {
+              companyId,
+              sourceLocationId: allocation.sourceLocationId,
+              materialId: product.materialId as string,
+              quantity: allocation.quantity,
+              batchNo: allocation.batchNo,
+              referenceNo,
+              note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
+              operatorId: operatorId || 'SYSTEM',
+            });
+
+            nextTransactions.push({
+              sourceLocationId: allocation.sourceLocationId,
+              batchNo: transaction.batchNo ?? allocation.batchNo,
+              quantity: allocation.quantity,
+              transactionId: transaction.id,
+              referenceNo: transaction.referenceNo ?? referenceNo,
+            });
+          }
+
+          return nextTransactions;
+        });
+
+        const quantityToShip = roundDecimal(
+          lineTransactions.reduce(
+            (sum, allocation) => sum + Number(allocation.quantity ?? 0),
+            0,
+          ),
+        );
+
+        for (const allocation of lineTransactions) {
+          await this.eventQueueService.publish({
+            eventName: 'inventory.stock_depleted',
+            idempotencyKey: `stock_depleted:${allocation.transactionId}`,
+            companyId,
+            payload: {
+              companyId,
+              idempotencyKey: `stock_depleted:${allocation.transactionId}`,
+              transactionId: allocation.transactionId,
+              referenceNo: allocation.referenceNo,
+              materialId: product.materialId,
+              quantity: allocation.quantity,
+              operatorId: operatorId || 'SYSTEM',
+            },
+          });
+        }
+
+        postedLines.push({
+          productId: product.id,
+          materialId: product.materialId,
+          requestedQuantity,
+          quantity: quantityToShip,
+          remainingQuantity: roundDecimal(
+            Math.max(0, quantityRequestedThisRound - quantityToShip),
+          ),
+          sourceLocationId:
+            lineTransactions[0]?.sourceLocationId ??
+            payload.sourceLocationId ??
+            '',
+          batchNo: lineTransactions[0]?.batchNo ?? payload.batchNo ?? '',
+          transactionId: lineTransactions[0]?.transactionId ?? '',
+          allocations: lineTransactions,
+        });
+
+        const currentShipped = shippedQuantityByProductId.get(product.id) ?? 0;
+        shippedQuantityByProductId.set(
+          product.id,
+          roundDecimal(currentShipped + quantityToShip),
+        );
+      } catch (error) {
+        if (!payload.allowPartial) {
+          throw error;
+        }
+        skippedLines.push({
+          productId: product.id,
+          requestedQuantity,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const totalShipped = roundDecimal(
+      [...shippedQuantityByProductId.values()].reduce(
+        (sum, quantity) => sum + Number(quantity ?? 0),
+        0,
+      ),
+    );
+
+    if (!postedLines.length) {
+      return {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        totalOrdered,
+        totalShipped,
+        status: order.status,
+        postingStatus: 'NO_STOCK_POSTED',
+        postedLines,
+        skippedLines,
+        message: '本次未找到可发货库存，订单状态保持不变',
+      };
+    }
+
+    const nextStatus =
+      totalShipped >= totalOrdered ? 'SHIPPED' : 'PARTIAL_SHIPPED';
+
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: nextStatus },
+    });
+
+    return {
+      orderId: order.id,
+      orderNo: order.orderNo,
+      totalOrdered,
+      totalShipped,
+      status: nextStatus,
+      postingStatus: 'POSTED',
+      postedLines,
+      skippedLines,
+      message:
+        nextStatus === 'SHIPPED'
+          ? '销售订单自动过账完成，订单状态已更新为 SHIPPED'
+          : '销售订单部分发货完成，订单状态已更新为 PARTIAL_SHIPPED',
+    };
   }
 
   async createStockMove(
@@ -196,11 +618,13 @@ export class InventoryService {
     operatorId?: string,
   ): Promise<InventoryTransactionRecord> {
     const sourceLocation = await this.resolveLocationOwnership(
+      this.prisma,
       companyId,
       data.sourceLocationId,
       '来源库位',
     );
     const destLocation = await this.resolveLocationOwnership(
+      this.prisma,
       companyId,
       data.destLocationId,
       '目标库位',
@@ -231,8 +655,8 @@ export class InventoryService {
       select: { id: true, unitPrice: true },
     });
 
-    const transaction = await this.prisma.$transaction((tx) =>
-      this.executeStockMove(tx, {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const transaction = await this.executeStockMove(tx, {
         companyId,
         materialId: data.materialId,
         quantity: data.quantity,
@@ -242,23 +666,103 @@ export class InventoryService {
         operatorId: operatorId || 'SYSTEM',
         referenceNo,
         note: finalNote,
-      }),
+        unitCost: data.unitCost,
+      });
+      const queuedEvent = await this.queueStockDepletedInTransaction(
+        tx,
+        companyId,
+        transaction,
+        operatorId,
+        Number(material?.unitPrice ?? 0),
+      );
+      return { transaction, queuedEventId: queuedEvent?.id ?? null };
+    });
+
+    if (result.queuedEventId) {
+      await this.eventQueueService.dispatchById(result.queuedEventId);
+    }
+
+    return result.transaction;
+  }
+
+  async createStockMoveInTransaction(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    data: CreateStockMoveDto,
+    operatorId?: string,
+  ): Promise<InventoryTransactionRecord> {
+    const sourceLocation = await this.resolveLocationOwnership(
+      tx,
+      companyId,
+      data.sourceLocationId,
+      '来源库位',
+    );
+    const destLocation = await this.resolveLocationOwnership(
+      tx,
+      companyId,
+      data.destLocationId,
+      '目标库位',
     );
 
-    if (transaction.type === 'OUTBOUND') {
-      this.eventEmitter.emit('inventory.stock_depleted', {
+    if (!sourceLocation?.id && !destLocation?.id) {
+      throw new BadRequestException('来源库位和目标库位不能同时为空');
+    }
+
+    if (
+      sourceLocation?.id &&
+      destLocation?.id &&
+      sourceLocation.id === destLocation.id
+    ) {
+      throw new BadRequestException('来源库位和目标库位不能相同');
+    }
+
+    return this.executeStockMove(tx, {
+      companyId,
+      materialId: data.materialId,
+      quantity: data.quantity,
+      sourceLocationId: sourceLocation?.id,
+      destLocationId: destLocation?.id,
+      batchNo: data.batchNo,
+      operatorId: operatorId || 'SYSTEM',
+      referenceNo: this.buildReferenceNo(
+        data.referenceNo,
+        data.documentType,
+        data.documentId,
+      ),
+      note: data.note ?? this.buildMoveNote(data.documentType, data.documentId),
+      unitCost: data.unitCost,
+    });
+  }
+
+  async queueStockDepletedInTransaction(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    transaction: InventoryTransactionRecord,
+    operatorId?: string,
+    fallbackUnitCost = 0,
+  ) {
+    if (transaction.type !== 'OUTBOUND') return null;
+    return this.eventQueueService.enqueueInTransaction(tx, {
+      eventName: 'inventory.stock_depleted',
+      idempotencyKey: `stock_depleted:${transaction.id}`,
+      companyId,
+      payload: {
         companyId,
         idempotencyKey: `stock_depleted:${transaction.id}`,
         transactionId: transaction.id,
         referenceNo: transaction.referenceNo,
         materialId: transaction.materialId,
         quantity: transaction.quantity,
-        unitCost: Number(material?.unitPrice ?? 0),
+        unitCost: transaction.unitCost ?? fallbackUnitCost,
         operatorId: operatorId || 'SYSTEM',
-      });
-    }
+      },
+    });
+  }
 
-    return transaction;
+  async dispatchQueuedEvents(eventIds: string[]) {
+    for (const eventId of eventIds) {
+      await this.eventQueueService.dispatchById(eventId);
+    }
   }
 
   async createInbound(
@@ -268,6 +772,7 @@ export class InventoryService {
       materialId: string;
       quantity: number;
       batchNo?: string;
+      unitCost?: number;
     },
     operatorId?: string,
   ) {
@@ -278,6 +783,7 @@ export class InventoryService {
         destLocationId: data.destLocationId,
         quantity: data.quantity,
         batchNo: data.batchNo,
+        unitCost: data.unitCost,
       },
       operatorId,
     );
@@ -303,11 +809,12 @@ export class InventoryService {
       include: { location: true },
     });
     if (!quant) throw new BadRequestException('该公司无此物料库存');
-    if (quant.quantity < data.quantity) {
-      throw new BadRequestException(`库存不足，当前余量：${quant.quantity}`);
+    const availableQuantity = Number(quant.quantity ?? 0);
+    if (availableQuantity < data.quantity) {
+      throw new BadRequestException(`库存不足，当前余量：${availableQuantity}`);
     }
 
-    const referenceNo = `SCAN-${Date.now()}`;
+    const referenceNo = `SCAN-${nextDocumentTimestamp()}`;
     const transaction = await this.createStockMove(
       companyId,
       {
@@ -331,6 +838,9 @@ export class InventoryService {
     };
   }
 
+  /**
+   * @deprecated 当前版本已改为过账即生效，无需审批。保留端点以兼容旧客户端，后续版本将移除。
+   */
   async approveAndDeductStock(companyId: string, transactionId: string) {
     const transaction = await this.prisma.inventoryTransaction.findFirst({
       where: { id: transactionId, companyId, type: 'OUTBOUND' },
@@ -340,114 +850,6 @@ export class InventoryService {
     return {
       success: true,
       message: '当前版本已改为过账即生效，无需审批。',
-    };
-  }
-
-  async postSaleOrderShipment(
-    companyId: string,
-    orderId: string,
-    payload: SaleOrderShipmentDto,
-    operatorId?: string,
-  ) {
-    const order = await this.prisma.order.findFirst({
-      where: { id: orderId, companyId },
-      include: { items: true },
-    });
-
-    if (!order) {
-      throw new NotFoundException('销售订单不存在或无权限访问');
-    }
-
-    if (!order.items.length) {
-      throw new BadRequestException('销售订单无明细，无法自动过账');
-    }
-
-    const materialQuantityMap = new Map<string, number>();
-
-    for (const item of order.items) {
-      const product = await this.prisma.product.findFirst({
-        where: { id: item.productId, companyId },
-        select: { id: true, materialId: true, name: true },
-      });
-
-      if (!product) {
-        throw new BadRequestException(`订单项产品不存在：${item.productId}`);
-      }
-
-      if (!product.materialId) {
-        throw new BadRequestException(
-          `产品 ${product.name} 未绑定主物料，无法自动过账`,
-        );
-      }
-
-      const current = materialQuantityMap.get(product.materialId) ?? 0;
-      materialQuantityMap.set(product.materialId, current + item.quantity);
-    }
-
-    const referenceNo = `SALE-SHIP-${order.orderNo}`;
-    const existedMoves = await this.prisma.inventoryTransaction.count({
-      where: { companyId, referenceNo },
-    });
-
-    if (existedMoves > 0) {
-      return {
-        orderId: order.id,
-        orderNo: order.orderNo,
-        postedLines: [],
-        message: '销售订单已完成过账，已跳过重复处理',
-      };
-    }
-
-    const moveNote = payload.note ?? `销售订单自动出库：${order.orderNo}`;
-    const results = await this.prisma.$transaction(async (tx) => {
-      const postedLines: Array<{
-        materialId: string;
-        quantity: number;
-        transactionId: string;
-      }> = [];
-
-      for (const [materialId, quantity] of materialQuantityMap.entries()) {
-        const transaction = await this.executeStockMove(tx, {
-          companyId,
-          sourceLocationId: payload.sourceLocationId,
-          materialId,
-          quantity,
-          batchNo: payload.batchNo,
-          referenceNo,
-          note: moveNote,
-          operatorId: operatorId || 'SYSTEM',
-        });
-
-        postedLines.push({
-          materialId,
-          quantity,
-          transactionId: transaction.id,
-        });
-      }
-
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: 'SHIPPED' },
-      });
-
-      return postedLines;
-    });
-
-    for (const line of results) {
-      this.eventEmitter.emit('inventory.stock_depleted', {
-        companyId,
-        referenceNo,
-        materialId: line.materialId,
-        quantity: line.quantity,
-        operatorId: operatorId || 'SYSTEM',
-      });
-    }
-
-    return {
-      orderId: order.id,
-      orderNo: order.orderNo,
-      postedLines: results,
-      message: '销售订单自动过账完成，订单状态已更新为 SHIPPED',
     };
   }
 
@@ -514,79 +916,143 @@ export class InventoryService {
     }
 
     const shipmentReferenceNo = `SALE-SHIP-${order.orderNo}`;
-    const reverseReferenceNo = `SALE-SHIP-REV-${order.orderNo}`;
+    const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
 
-    const existedReverse = await this.prisma.inventoryTransaction.count({
-      where: { companyId, referenceNo: reverseReferenceNo },
-    });
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const latestReturn = await tx.inventoryReturnDocument.findFirst({
+          where: {
+            companyId,
+            returnType: 'SALES',
+            sourceDocumentId: order.id,
+          },
+          select: { referenceNo: true, postedAt: true },
+          orderBy: { postedAt: 'desc' },
+        });
 
-    if (existedReverse > 0) {
+        const shippedMoves = await tx.inventoryTransaction.findMany({
+          where: {
+            companyId,
+            referenceNo: shipmentReferenceNo,
+            type: 'OUTBOUND',
+            ...(latestReturn
+              ? { createdAt: { gt: latestReturn.postedAt } }
+              : {}),
+          },
+          select: {
+            materialId: true,
+            quantity: true,
+            sourceLocationId: true,
+            batchNo: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        if (!shippedMoves.length && latestReturn) {
+          const returnDocument = await this.findReturnDocumentByReference(
+            companyId,
+            latestReturn.referenceNo,
+            tx,
+          );
+          return { alreadyReversed: true as const, returnDocument };
+        }
+
+        if (!shippedMoves.length) {
+          throw new BadRequestException('未找到可冲销的销售出库流水');
+        }
+
+        const reversalCount = await tx.inventoryReturnDocument.count({
+          where: {
+            companyId,
+            returnType: 'SALES',
+            sourceDocumentId: order.id,
+          },
+        });
+        const reverseReferenceNo =
+          reversalCount === 0
+            ? reverseReferencePrefix
+            : `${reverseReferencePrefix}-${reversalCount + 1}`;
+
+        const reversedLines: Array<{
+          materialId: string;
+          quantity: number;
+          transactionId: string;
+          locationId?: string | null;
+          batchNo?: string | null;
+        }> = [];
+
+        for (const move of shippedMoves) {
+          const transaction = await this.createStockMoveInTransaction(
+            tx,
+            companyId,
+            {
+              materialId: move.materialId,
+              quantity: Number(move.quantity),
+              destLocationId:
+                payload.destLocationId ?? move.sourceLocationId ?? undefined,
+              batchNo: payload.batchNo ?? move.batchNo ?? undefined,
+              referenceNo: reverseReferenceNo,
+              documentType: 'SALE_ORDER_REVERSE',
+              documentId: order.id,
+              note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+            },
+            operatorId,
+          );
+
+          reversedLines.push({
+            materialId: move.materialId,
+            quantity: Number(move.quantity),
+            transactionId: transaction.id,
+            locationId: transaction.destLocationId ?? null,
+            batchNo: transaction.batchNo ?? null,
+          });
+        }
+
+        if (options?.rollbackStatus !== false) {
+          await tx.order.update({
+            where: { id: order.id },
+            data: { status: 'IN_PRODUCTION' },
+          });
+        }
+
+        const returnDocument = await this.createReturnDocument(
+          {
+            companyId,
+            returnType: 'SALES',
+            sourceDocumentId: order.id,
+            sourceDocumentNo: order.orderNo,
+            referenceNo: reverseReferenceNo,
+            note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+            operatorId,
+            lines: reversedLines,
+          },
+          tx,
+        );
+
+        return {
+          alreadyReversed: false as const,
+          reversedLines,
+          returnDocument,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if (result.alreadyReversed) {
       return {
         orderId: order.id,
         orderNo: order.orderNo,
         reversedLines: [],
+        returnDocument: result.returnDocument,
         message: '销售订单冲销已存在，已跳过重复处理',
       };
-    }
-
-    const shippedMoves = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        companyId,
-        referenceNo: shipmentReferenceNo,
-        type: 'OUTBOUND',
-      },
-      select: {
-        materialId: true,
-        quantity: true,
-        sourceLocationId: true,
-      },
-    });
-
-    if (!shippedMoves.length) {
-      throw new BadRequestException('未找到可冲销的销售出库流水');
-    }
-
-    const reversedLines: Array<{
-      materialId: string;
-      quantity: number;
-      transactionId: string;
-    }> = [];
-
-    for (const move of shippedMoves) {
-      const transaction = await this.createStockMove(
-        companyId,
-        {
-          materialId: move.materialId,
-          quantity: move.quantity,
-          destLocationId:
-            payload.destLocationId ?? move.sourceLocationId ?? undefined,
-          batchNo: payload.batchNo,
-          referenceNo: reverseReferenceNo,
-          documentType: 'SALE_ORDER_REVERSE',
-          documentId: order.id,
-          note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
-        },
-        operatorId,
-      );
-
-      reversedLines.push({
-        materialId: move.materialId,
-        quantity: move.quantity,
-        transactionId: transaction.id,
-      });
-    }
-
-    if (options?.rollbackStatus !== false) {
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: { status: 'IN_PRODUCTION' },
-      });
     }
 
     return {
       orderId: order.id,
       orderNo: order.orderNo,
-      reversedLines,
+      reversedLines: result.reversedLines,
+      returnDocument: result.returnDocument,
       message:
         options?.rollbackStatus === false
           ? '销售订单冲销完成'
@@ -603,80 +1069,259 @@ export class InventoryService {
     const purchaseReferenceNo = `PURCHASE-IN-${purchaseNo}`;
     const reverseReferenceNo = `PURCHASE-IN-REV-${purchaseNo}`;
 
-    const existedReverse = await this.prisma.inventoryTransaction.count({
-      where: { companyId, referenceNo: reverseReferenceNo },
-    });
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const existedReverse = await tx.inventoryTransaction.count({
+          where: { companyId, referenceNo: reverseReferenceNo },
+        });
 
-    if (existedReverse > 0) {
+        if (existedReverse > 0) {
+          const returnDocument = await this.findReturnDocumentByReference(
+            companyId,
+            reverseReferenceNo,
+            tx,
+          );
+          return {
+            alreadyReversed: true as const,
+            returnDocument,
+            queuedEventIds: [] as string[],
+          };
+        }
+
+        const inboundMoves = await tx.inventoryTransaction.findMany({
+          where: {
+            companyId,
+            OR: [
+              { referenceNo: purchaseReferenceNo },
+              { referenceNo: { startsWith: `${purchaseReferenceNo}-` } },
+            ],
+            type: 'INBOUND',
+          },
+          select: {
+            materialId: true,
+            quantity: true,
+            destLocationId: true,
+          },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        if (!inboundMoves.length) {
+          throw new BadRequestException('未找到可冲销的采购入库流水');
+        }
+
+        const reversedLines: Array<{
+          materialId: string;
+          quantity: number;
+          transactionId: string;
+          locationId?: string | null;
+          batchNo?: string | null;
+        }> = [];
+        const queuedEventIds: string[] = [];
+
+        for (const move of inboundMoves) {
+          const transaction = await this.createStockMoveInTransaction(
+            tx,
+            companyId,
+            {
+              materialId: move.materialId,
+              quantity: Number(move.quantity),
+              sourceLocationId:
+                payload.sourceLocationId ?? move.destLocationId ?? undefined,
+              batchNo: payload.batchNo,
+              referenceNo: reverseReferenceNo,
+              documentType: 'PURCHASE_ORDER_REVERSE',
+              documentId: purchaseNo,
+              note: payload.note ?? `采购入库冲销：${purchaseNo}`,
+            },
+            operatorId,
+          );
+          const material = await tx.material.findFirst({
+            where: { id: move.materialId },
+            select: { unitPrice: true },
+          });
+          const queuedEvent = await this.queueStockDepletedInTransaction(
+            tx,
+            companyId,
+            transaction,
+            operatorId,
+            Number(material?.unitPrice ?? 0),
+          );
+          if (queuedEvent?.id) queuedEventIds.push(queuedEvent.id);
+
+          reversedLines.push({
+            materialId: move.materialId,
+            quantity: Number(move.quantity),
+            transactionId: transaction.id,
+            locationId: transaction.sourceLocationId ?? null,
+            batchNo: transaction.batchNo ?? null,
+          });
+        }
+
+        const returnDocument = await this.createReturnDocument(
+          {
+            companyId,
+            returnType: 'PURCHASE',
+            sourceDocumentNo: purchaseNo,
+            referenceNo: reverseReferenceNo,
+            note: payload.note ?? `采购入库冲销：${purchaseNo}`,
+            operatorId,
+            lines: reversedLines,
+          },
+          tx,
+        );
+
+        return {
+          alreadyReversed: false as const,
+          reversedLines,
+          returnDocument,
+          queuedEventIds,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    for (const eventId of result.queuedEventIds) {
+      await this.eventQueueService.dispatchById(eventId);
+    }
+
+    if (result.alreadyReversed) {
       return {
         purchaseNo,
         reversedLines: [],
+        returnDocument: result.returnDocument,
         message: '采购入库冲销已存在，已跳过重复处理',
       };
     }
 
-    const inboundMoves = await this.prisma.inventoryTransaction.findMany({
-      where: {
-        companyId,
-        referenceNo: purchaseReferenceNo,
-        type: 'INBOUND',
-      },
-      select: {
-        materialId: true,
-        quantity: true,
-        destLocationId: true,
-      },
-    });
-
-    if (!inboundMoves.length) {
-      throw new BadRequestException('未找到可冲销的采购入库流水');
-    }
-
-    const reversedLines: Array<{
-      materialId: string;
-      quantity: number;
-      transactionId: string;
-    }> = [];
-
-    for (const move of inboundMoves) {
-      const transaction = await this.createStockMove(
-        companyId,
-        {
-          materialId: move.materialId,
-          quantity: move.quantity,
-          sourceLocationId:
-            payload.sourceLocationId ?? move.destLocationId ?? undefined,
-          batchNo: payload.batchNo,
-          referenceNo: reverseReferenceNo,
-          documentType: 'PURCHASE_ORDER_REVERSE',
-          documentId: purchaseNo,
-          note: payload.note ?? `采购入库冲销：${purchaseNo}`,
-        },
-        operatorId,
-      );
-
-      reversedLines.push({
-        materialId: move.materialId,
-        quantity: move.quantity,
-        transactionId: transaction.id,
-      });
-    }
-
     return {
       purchaseNo,
-      reversedLines,
+      reversedLines: result.reversedLines,
+      returnDocument: result.returnDocument,
       message: '采购入库冲销完成',
     };
   }
 
+  private async findReturnDocumentByReference(
+    companyId: string,
+    referenceNo: string,
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ) {
+    return client.inventoryReturnDocument.findUnique({
+      where: { companyId_referenceNo: { companyId, referenceNo } },
+      include: { lines: { orderBy: { createdAt: 'asc' } } },
+    });
+  }
+
+  private async createReturnDocument(
+    input: {
+      companyId: string;
+      returnType: 'SALES' | 'PURCHASE';
+      sourceDocumentId?: string;
+      sourceDocumentNo: string;
+      referenceNo: string;
+      note?: string;
+      operatorId?: string;
+      lines: Array<{
+        materialId: string;
+        quantity: number;
+        transactionId: string;
+        locationId?: string | null;
+        batchNo?: string | null;
+      }>;
+    },
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ) {
+    if (client !== this.prisma) {
+      return client.inventoryReturnDocument.upsert({
+        where: {
+          companyId_referenceNo: {
+            companyId: input.companyId,
+            referenceNo: input.referenceNo,
+          },
+        },
+        update: { note: input.note, status: 'POSTED' },
+        create: {
+          returnNo: this.generateReturnNo(input.returnType),
+          returnType: input.returnType,
+          sourceDocumentId: input.sourceDocumentId,
+          sourceDocumentNo: input.sourceDocumentNo,
+          referenceNo: input.referenceNo,
+          status: 'POSTED',
+          note: input.note,
+          operatorId: input.operatorId,
+          companyId: input.companyId,
+          lines: {
+            create: input.lines.map((line) => ({
+              materialId: line.materialId,
+              quantity: line.quantity,
+              locationId: line.locationId,
+              inventoryMoveId: line.transactionId,
+              batchNo: line.batchNo,
+            })),
+          },
+        },
+        include: { lines: { orderBy: { createdAt: 'asc' } } },
+      });
+    }
+
+    return withUniqueConstraintRetry(
+      (attempt) =>
+        client.inventoryReturnDocument.upsert({
+          where: {
+            companyId_referenceNo: {
+              companyId: input.companyId,
+              referenceNo: input.referenceNo,
+            },
+          },
+          update: {
+            note: input.note,
+            status: 'POSTED',
+          },
+          create: {
+            returnNo: this.generateReturnNo(input.returnType, attempt),
+            returnType: input.returnType,
+            sourceDocumentId: input.sourceDocumentId,
+            sourceDocumentNo: input.sourceDocumentNo,
+            referenceNo: input.referenceNo,
+            status: 'POSTED',
+            note: input.note,
+            operatorId: input.operatorId,
+            companyId: input.companyId,
+            lines: {
+              create: input.lines.map((line) => ({
+                materialId: line.materialId,
+                quantity: line.quantity,
+                locationId: line.locationId,
+                inventoryMoveId: line.transactionId,
+                batchNo: line.batchNo,
+              })),
+            },
+          },
+          include: { lines: { orderBy: { createdAt: 'asc' } } },
+        }),
+      { targetFields: ['returnNo'] },
+    );
+  }
+
+  private generateReturnNo(returnType: 'SALES' | 'PURCHASE', attempt = 0) {
+    const prefix = returnType === 'SALES' ? 'SR' : 'PR';
+    const timestamp = nextDocumentTimestamp(attempt);
+    const now = new Date(timestamp);
+    const date = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+      now.getDate(),
+    ).padStart(2, '0')}`;
+    return `${prefix}-${date}-${String(timestamp).slice(-6)}`;
+  }
+
   private async resolveLocationOwnership(
+    client: PrismaService | Prisma.TransactionClient,
     companyId: string,
     locationId: string | undefined,
     label: string,
   ) {
     if (!locationId) return undefined;
 
-    const location = await this.prisma.stockLocation.findFirst({
+    const location = await client.stockLocation.findFirst({
       where: { id: locationId, companyId },
       select: { id: true, name: true, warehouseId: true },
     });
@@ -695,7 +1340,7 @@ export class InventoryService {
   ) {
     if (referenceNo) return referenceNo;
     if (documentType && documentId) {
-      return `${documentType}-${documentId}-${Date.now()}`;
+      return `${documentType}-${documentId}-${nextDocumentTimestamp()}`;
     }
     return undefined;
   }
@@ -705,8 +1350,86 @@ export class InventoryService {
     return `自动过账：${documentType}#${documentId}`;
   }
 
+  private async resolveShipmentAllocations(
+    companyId: string,
+    materialId: string,
+    requestedQuantity: number,
+    sourceLocationId?: string,
+    batchNo?: string,
+  ) {
+    const candidates = await this.prisma.stockQuant.findMany({
+      where: {
+        materialId,
+        quantity: { gt: 0 },
+        location: { companyId },
+        ...(sourceLocationId ? { locationId: sourceLocationId } : {}),
+        ...(batchNo ? { batchNo } : {}),
+      },
+      orderBy: [
+        { updatedAt: 'asc' },
+        { batchNo: 'asc' },
+        { locationId: 'asc' },
+      ],
+      select: {
+        locationId: true,
+        batchNo: true,
+        quantity: true,
+        location: { select: { name: true } },
+      },
+    });
+
+    const allocations: Array<{
+      sourceLocationId: string;
+      batchNo: string;
+      quantity: number;
+      locationName: string | null;
+    }> = [];
+
+    let remaining = roundDecimal(requestedQuantity);
+    for (const candidate of candidates) {
+      if (remaining <= 0) {
+        break;
+      }
+
+      const availableQuantity = roundDecimal(Number(candidate.quantity ?? 0));
+      if (availableQuantity <= 0) {
+        continue;
+      }
+
+      const quantity = roundDecimal(Math.min(remaining, availableQuantity));
+      if (quantity <= 0) {
+        continue;
+      }
+
+      allocations.push({
+        sourceLocationId: candidate.locationId,
+        batchNo: candidate.batchNo,
+        quantity,
+        locationName: candidate.location?.name ?? null,
+      });
+      remaining = roundDecimal(remaining - quantity);
+    }
+
+    const allocatedQuantity = roundDecimal(
+      allocations.reduce((sum, item) => sum + item.quantity, 0),
+    );
+
+    return {
+      allocations,
+      requestedQuantity: roundDecimal(requestedQuantity),
+      allocatedQuantity,
+      remainingQuantity: roundDecimal(
+        Math.max(0, requestedQuantity - allocatedQuantity),
+      ),
+    };
+  }
+
+  private round4(value: Decimal.Value) {
+    return roundDecimal(value, 4);
+  }
+
   private generateBatchNo() {
-    return `BATCH${Date.now()}`;
+    return `BATCH${nextDocumentTimestamp()}`;
   }
 
   private async executeStockMove(
@@ -721,6 +1444,7 @@ export class InventoryService {
       operatorId: string;
       referenceNo?: string;
       note?: string;
+      unitCost?: number;
     },
   ): Promise<InventoryTransactionRecord> {
     let finalBatchNo = input.batchNo;
@@ -760,14 +1484,37 @@ export class InventoryService {
       finalBatchNo = destinationBatch;
     }
 
+    if (input.sourceLocationId) {
+      await this.refreshLedgerSnapshot(tx, {
+        companyId: input.companyId,
+        locationId: input.sourceLocationId,
+        materialId: input.materialId,
+      });
+    }
+
+    if (input.destLocationId) {
+      await this.refreshLedgerSnapshot(tx, {
+        companyId: input.companyId,
+        locationId: input.destLocationId,
+        materialId: input.materialId,
+      });
+    }
+
     const moveType =
       input.sourceLocationId && input.destLocationId
         ? 'TRANSFER'
         : input.sourceLocationId
           ? 'OUTBOUND'
           : 'INBOUND';
+    const unitCost = await this.updateMaterialCost(tx, {
+      companyId: input.companyId,
+      materialId: input.materialId,
+      quantity: input.quantity,
+      moveType,
+      unitCost: input.unitCost,
+    });
 
-    return tx.inventoryTransaction.create({
+    const transaction = await tx.inventoryTransaction.create({
       data: {
         type: moveType,
         materialId: input.materialId,
@@ -779,6 +1526,201 @@ export class InventoryService {
         companyId: input.companyId,
         referenceNo: input.referenceNo,
         note: input.note,
+      },
+    });
+
+    return {
+      ...transaction,
+      quantity: Number(transaction.quantity),
+      unitCost,
+    };
+  }
+
+  private async updateMaterialCost(
+    tx: Prisma.TransactionClient,
+    input: {
+      companyId: string;
+      materialId: string;
+      quantity: number;
+      moveType: 'INBOUND' | 'OUTBOUND' | 'TRANSFER';
+      unitCost?: number;
+    },
+  ) {
+    if (input.moveType === 'TRANSFER') {
+      return this.resolveMovingAverageCost(
+        tx,
+        input.companyId,
+        input.materialId,
+      );
+    }
+
+    const existing = await tx.materialCost.findUnique({
+      where: {
+        companyId_materialId: {
+          companyId: input.companyId,
+          materialId: input.materialId,
+        },
+      },
+    });
+    const fallbackUnitCost = await this.resolveMaterialFallbackCost(
+      tx,
+      input.materialId,
+    );
+    const currentQty = new Decimal(existing?.quantityOnHand ?? 0);
+    const currentValue = new Decimal(
+      existing?.inventoryValue ??
+        currentQty.times(existing?.averageCost ?? fallbackUnitCost),
+    );
+    const currentAverageCost = currentQty.gt(0)
+      ? currentValue.div(currentQty)
+      : new Decimal(existing?.averageCost ?? fallbackUnitCost);
+    const moveQty = new Decimal(input.quantity);
+
+    if (input.moveType === 'INBOUND') {
+      const incomingUnitCost = new Decimal(input.unitCost ?? fallbackUnitCost);
+      const nextQty = currentQty.plus(moveQty);
+      const nextValue = currentValue.plus(moveQty.times(incomingUnitCost));
+      const nextAverageCost = nextQty.gt(0)
+        ? nextValue.div(nextQty)
+        : incomingUnitCost;
+      await tx.materialCost.upsert({
+        where: {
+          companyId_materialId: {
+            companyId: input.companyId,
+            materialId: input.materialId,
+          },
+        },
+        create: {
+          companyId: input.companyId,
+          materialId: input.materialId,
+          quantityOnHand: this.round4(nextQty),
+          averageCost: this.round4(nextAverageCost),
+          inventoryValue: this.round4(nextValue),
+        },
+        update: {
+          quantityOnHand: this.round4(nextQty),
+          averageCost: this.round4(nextAverageCost),
+          inventoryValue: this.round4(nextValue),
+        },
+      });
+      return this.round4(incomingUnitCost);
+    }
+
+    const issuedUnitCost = currentAverageCost;
+    const nextQty = Decimal.max(0, currentQty.minus(moveQty));
+    const nextValue = nextQty.eq(0)
+      ? new Decimal(0)
+      : Decimal.max(0, currentValue.minus(moveQty.times(issuedUnitCost)));
+    const nextAverageCost = nextQty.gt(0)
+      ? nextValue.div(nextQty)
+      : issuedUnitCost;
+
+    await tx.materialCost.upsert({
+      where: {
+        companyId_materialId: {
+          companyId: input.companyId,
+          materialId: input.materialId,
+        },
+      },
+      create: {
+        companyId: input.companyId,
+        materialId: input.materialId,
+        quantityOnHand: this.round4(nextQty),
+        averageCost: this.round4(nextAverageCost),
+        inventoryValue: this.round4(nextValue),
+      },
+      update: {
+        quantityOnHand: this.round4(nextQty),
+        averageCost: this.round4(nextAverageCost),
+        inventoryValue: this.round4(nextValue),
+      },
+    });
+
+    return this.round4(issuedUnitCost);
+  }
+
+  private async resolveMovingAverageCost(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    materialId: string,
+  ) {
+    const cost = await tx.materialCost.findUnique({
+      where: { companyId_materialId: { companyId, materialId } },
+      select: { averageCost: true },
+    });
+    if (cost) return Number(cost.averageCost);
+    return this.resolveMaterialFallbackCost(tx, materialId);
+  }
+
+  private async resolveMaterialFallbackCost(
+    tx: Prisma.TransactionClient,
+    materialId: string,
+  ) {
+    const material = await tx.material.findFirst({
+      where: { id: materialId },
+      select: { unitPrice: true },
+    });
+    return Number(material?.unitPrice ?? 0);
+  }
+
+  private async refreshLedgerSnapshot(
+    tx: Prisma.TransactionClient,
+    input: {
+      companyId: string;
+      locationId: string;
+      materialId: string;
+    },
+  ) {
+    const [quantityAgg, batchCount] = await Promise.all([
+      tx.stockQuant.aggregate({
+        where: {
+          locationId: input.locationId,
+          materialId: input.materialId,
+        },
+        _sum: { quantity: true },
+      }),
+      tx.stockQuant.count({
+        where: {
+          locationId: input.locationId,
+          materialId: input.materialId,
+          quantity: { not: 0 },
+        },
+      }),
+    ]);
+
+    const netQty = quantityAgg._sum.quantity ?? 0;
+
+    if (batchCount === 0 && Number(netQty) === 0) {
+      await tx.inventoryLedgerSnapshot.deleteMany({
+        where: {
+          companyId: input.companyId,
+          locationId: input.locationId,
+          materialId: input.materialId,
+        },
+      });
+      return;
+    }
+
+    await tx.inventoryLedgerSnapshot.upsert({
+      where: {
+        companyId_locationId_materialId: {
+          companyId: input.companyId,
+          locationId: input.locationId,
+          materialId: input.materialId,
+        },
+      },
+      create: {
+        companyId: input.companyId,
+        locationId: input.locationId,
+        materialId: input.materialId,
+        netQty,
+        batchCount,
+        refreshedAt: new Date(),
+      },
+      update: {
+        netQty,
+        batchCount,
+        refreshedAt: new Date(),
       },
     });
   }

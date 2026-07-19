@@ -1,9 +1,12 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CrudService } from '../crud/crud.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { LlmAdapterService } from './llm-adapter.service';
+import { OrdersService } from '../../orders/orders.service';
 
 export interface AIToolSchema {
   name: string;
@@ -16,6 +19,9 @@ interface AICommandOptions {
   overrideTool?: {
     toolName: string;
     args: Record<string, unknown>;
+  };
+  confirmation?: {
+    token: string;
   };
 }
 
@@ -31,14 +37,28 @@ interface ReceivableInvoiceRow {
   } | null;
 }
 
+interface CommandPreviewPayload {
+  input: string;
+  companyId: string;
+  userId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  expiresAt: number;
+}
+
 @Injectable()
 export class AIService {
+  private readonly logger = new Logger(AIService.name);
+
+  private static readonly CHAT2SQL_ROW_LIMIT = 500;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly crudService: CrudService,
     private readonly metadataService: MetadataService,
     private readonly workflowService: WorkflowService,
     private readonly llmAdapterService: LlmAdapterService,
+    private readonly ordersService: OrdersService,
   ) {}
 
   private toSafeText(value: unknown): string {
@@ -85,12 +105,17 @@ export class AIService {
     return [
       {
         name: 'create_resource',
-        description: '用来对任意模型创建记录 create_resource(modelName, data)',
+        description:
+          '用来对任意模型创建记录。例如: "创建一个名为阿里科技的客户", "新建一个产品，SKU为XYZ"。支持模型: partner (客户/供应商), product (产品), material (原材料), order (销售订单)。',
         parameters: {
           type: 'object',
           properties: {
             modelName: { type: 'string', enum: models },
-            data: { type: 'object' },
+            data: {
+              type: 'object',
+              description:
+                '模型字段。partner: {name, type: "CUSTOMER"|"SUPPLIER"}, product: {sku, name, type: "STOCKABLE"|"SERVICE"}, order: {partnerId, status: "DRAFT"}',
+            },
           },
           required: ['modelName', 'data'],
         },
@@ -98,16 +123,22 @@ export class AIService {
       {
         name: 'transition_workflow',
         description:
-          '执行工作流流转 transition_workflow(modelName, recordId, action, note)',
+          '仅执行安全白名单中的销售订单流转：提交、开始生产、完成。销售发货必须使用销售发货工作台；生产报工、财务过账和取消必须在对应业务工作台执行。',
         parameters: {
           type: 'object',
           properties: {
             modelName: {
               type: 'string',
-              enum: ['order', 'workOrder', 'invoice'],
+              enum: ['order'],
             },
-            recordId: { type: 'string' },
-            action: { type: 'string' },
+            recordId: {
+              type: 'string',
+              description: '记录 UUID。业务编号需要先由只读查询找到对应 id。',
+            },
+            action: {
+              type: 'string',
+              enum: ['submit', 'start_production', 'complete'],
+            },
             note: { type: 'string' },
           },
           required: ['modelName', 'recordId', 'action'],
@@ -160,13 +191,39 @@ export class AIService {
       throw new BadRequestException('指令不能为空');
     }
 
-    const dryRun = Boolean(options?.dryRun);
+    const dryRun = options?.dryRun !== false;
+    if (options?.confirmation?.token) {
+      if (dryRun) {
+        throw new BadRequestException('确认执行必须使用 dryRun=false');
+      }
+      const confirmed = this.verifyPreviewToken(options.confirmation.token);
+      if (
+        confirmed.input !== text ||
+        confirmed.companyId !== companyId ||
+        confirmed.userId !== userId
+      ) {
+        throw new BadRequestException('AI 草稿确认信息与当前上下文不一致');
+      }
+
+      const executed = await this.executeToolCall(
+        confirmed.toolName,
+        confirmed.args,
+        companyId,
+        userId,
+      );
+      if (executed) {
+        return executed;
+      }
+    }
+
     if (options?.overrideTool?.toolName) {
-      if (dryRun && this.isWriteTool(options.overrideTool.toolName)) {
+      if (this.isWriteTool(options.overrideTool.toolName)) {
         return this.buildDraftResponse(
           text,
           options.overrideTool.toolName,
           options.overrideTool.args,
+          companyId,
+          userId,
         );
       }
 
@@ -185,10 +242,17 @@ export class AIService {
     const llmCall = await this.llmAdapterService.resolveToolCall(
       text,
       toolSchemas,
+      companyId,
     );
     if (llmCall) {
       if (dryRun && this.isWriteTool(llmCall.toolName)) {
-        return this.buildDraftResponse(text, llmCall.toolName, llmCall.args);
+        return this.buildDraftResponse(
+          text,
+          llmCall.toolName,
+          llmCall.args,
+          companyId,
+          userId,
+        );
       }
 
       const executed = await this.executeToolCall(
@@ -215,20 +279,35 @@ export class AIService {
       (text.includes('客户') || text.includes('伙伴'))
     ) {
       if (dryRun) {
-        return this.buildDraftResponse(text, 'create_resource', {
-          modelName: 'partner',
-          data: { name: this.extractName(text) ?? 'AI客户', type: 'CUSTOMER' },
-        });
+        return this.buildDraftResponse(
+          text,
+          'create_resource',
+          {
+            modelName: 'partner',
+            data: {
+              name: this.extractName(text) ?? 'AI客户',
+              type: 'CUSTOMER',
+            },
+          },
+          companyId,
+          userId,
+        );
       }
       return this.createPartnerByPrompt(text, companyId);
     }
 
     if (text.includes('创建') && text.includes('订单')) {
       if (dryRun) {
-        return this.buildDraftResponse(text, 'create_resource', {
-          modelName: 'order',
-          data: { status: 'DRAFT' },
-        });
+        return this.buildDraftResponse(
+          text,
+          'create_resource',
+          {
+            modelName: 'order',
+            data: { status: 'DRAFT' },
+          },
+          companyId,
+          userId,
+        );
       }
       return this.createOrderByPrompt(text, companyId, userId);
     }
@@ -242,11 +321,17 @@ export class AIService {
         text.includes('生产'))
     ) {
       if (dryRun) {
-        return this.buildDraftResponse(text, 'transition_workflow', {
-          modelName: 'order',
-          action: this.extractOrderAction(text),
-          recordId: this.extractOrderNo(text),
-        });
+        return this.buildDraftResponse(
+          text,
+          'transition_workflow',
+          {
+            modelName: 'order',
+            action: this.extractOrderAction(text),
+            recordId: this.extractOrderNo(text),
+          },
+          companyId,
+          userId,
+        );
       }
       return this.transitionOrderByPrompt(text, companyId, userId);
     }
@@ -296,6 +381,7 @@ export class AIService {
     const sql = await this.llmAdapterService.resolveReadSql(
       input,
       schemaContext,
+      companyId,
     );
 
     if (!sql) {
@@ -303,17 +389,36 @@ export class AIService {
     }
 
     const checkedSql = this.validateReadOnlySql(sql);
+    const enforcedSql = this.enforceRowLimit(
+      checkedSql,
+      AIService.CHAT2SQL_ROW_LIMIT,
+    );
+
+    const startedAt = Date.now();
     const rows: Array<Record<string, unknown>> =
-      await this.prisma.$queryRawUnsafe(checkedSql, companyId);
+      await this.prisma.$queryRawUnsafe(enforcedSql, companyId);
+    const elapsedMs = Date.now() - startedAt;
+
+    this.logger.log(
+      `Chat2SQL companyId=${companyId} rows=${rows.length} ms=${elapsedMs} input=${input.slice(0, 80)}`,
+    );
 
     const chartSuggestion = this.suggestChart(rows);
+    const explanation = this.explainReadSql(checkedSql, rows.length);
     return {
       type: 'table',
       title: 'Chat2SQL 查询结果',
       sql: checkedSql,
+      explanation,
       rows,
       chartSuggestion,
       rowCount: rows.length,
+      elapsedMs,
+      export: {
+        format: 'csv',
+        fileName: `chat2sql-${Date.now()}.csv`,
+        content: this.toCsv(rows),
+      },
     };
   }
 
@@ -338,7 +443,10 @@ export class AIService {
       sourceSize: file.size,
     };
 
-    const llmDraft = await this.llmAdapterService.resolveDocumentDraft(name);
+    const llmDraft = await this.llmAdapterService.resolveDocumentDraft(
+      name,
+      companyId,
+    );
     return {
       type: 'draft',
       message: '单据解析完成，请确认草稿后再落库。',
@@ -463,27 +571,16 @@ export class AIService {
       throw new BadRequestException('没有可用产品，请先维护产品主数据。');
     }
 
-    const created = await this.crudService.create(
-      'order',
-      {
-        partnerId: partner.id,
-        salesId: userId,
-        status: 'DRAFT',
-        totalAmount: 0,
-        aiSummary: { source: 'v1_ai_command', prompt: text },
-        items: {
-          create: [
-            {
-              productId: product.id,
-              quantity,
-              unitPrice: 0,
-              totalPrice: 0,
-            },
-          ],
+    const created = await this.ordersService.createOrder(companyId, userId, {
+      partnerId: partner.id,
+      aiSummary: { source: 'v1_ai_command', prompt: text },
+      items: [
+        {
+          productId: product.id,
+          quantity,
         },
-      },
-      companyId,
-    );
+      ],
+    });
 
     const record = created as Record<string, unknown>;
 
@@ -508,9 +605,14 @@ export class AIService {
     const orderNo = this.extractOrderNo(text);
     const action = this.extractOrderAction(text);
 
+    this.assertToolCallAllowed('transition_workflow', {
+      modelName: 'order',
+      action,
+    });
+
     if (!orderNo || !action) {
       throw new BadRequestException(
-        '请给出订单号和动作，例如：把订单 ORD-202603-1234 标记为发货',
+        '请给出订单号和动作，例如：提交订单 ORD-202603-1234',
       );
     }
 
@@ -608,11 +710,32 @@ export class AIService {
     companyId: string,
     userId: string,
   ) {
+    this.assertToolCallAllowed(toolName, args);
+
     if (toolName === 'create_resource') {
       const modelName = this.readStringArg(args, 'modelName');
       const data = this.readRecordArg(args, 'data');
       if (!modelName) {
         return null;
+      }
+
+      if (modelName === 'order') {
+        const order = await this.createOrderFromToolData(
+          data,
+          companyId,
+          userId,
+        );
+        const record = order as Record<string, unknown>;
+        return {
+          type: 'tool_result',
+          tool: toolName,
+          message: `已创建订单 ${this.toSafeText(record.orderNo)}`,
+          card: {
+            modelName,
+            id: record.id,
+            ...record,
+          },
+        };
       }
 
       const created = await this.crudService.create(modelName, data, companyId);
@@ -680,6 +803,51 @@ export class AIService {
     return null;
   }
 
+  private async createOrderFromToolData(
+    data: JsonRecord,
+    companyId: string,
+    userId: string,
+  ) {
+    const partnerId = this.toSafeText(data.partnerId).trim();
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!partnerId || items.length === 0) {
+      throw new BadRequestException(
+        'AI 创建订单需要 partnerId 和至少一条 items 明细',
+      );
+    }
+
+    return this.ordersService.createOrder(companyId, userId, {
+      partnerId,
+      taxCodeId: this.readOptionalStringArg(data, 'taxCodeId'),
+      expectedDate: this.readOptionalStringArg(data, 'expectedDate'),
+      notes: this.readOptionalStringArg(data, 'notes'),
+      aiSummary: {
+        source: 'v1_ai_tool_call',
+        originalData: data,
+      } as Prisma.InputJsonValue,
+      items: items.map((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          throw new BadRequestException('订单明细格式不正确');
+        }
+        const record = item as JsonRecord;
+        const productId = this.toSafeText(record.productId).trim();
+        const quantity = Number(record.quantity);
+        if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+          throw new BadRequestException('订单明细缺少 productId 或 quantity');
+        }
+        return {
+          productId,
+          quantity,
+          requestedDiscount:
+            record.requestedDiscount === undefined
+              ? undefined
+              : Number(record.requestedDiscount),
+          taxCodeId: this.readOptionalStringArg(record, 'taxCodeId'),
+        };
+      }),
+    });
+  }
+
   private isWriteTool(toolName: string) {
     return ['create_resource', 'transition_workflow'].includes(toolName);
   }
@@ -688,34 +856,146 @@ export class AIService {
     originalInput: string,
     toolName: string,
     args: Record<string, unknown>,
+    companyId: string,
+    userId: string,
   ) {
+    this.assertToolCallAllowed(toolName, args);
+    const expiresAt = Date.now() + 5 * 60 * 1000;
+    const token = this.signPreviewToken({
+      input: originalInput,
+      companyId,
+      userId,
+      toolName,
+      args,
+      expiresAt,
+    });
+
     return {
       type: 'draft',
-      message: '已生成执行草稿，请确认后执行。',
+      message: '已生成沙盒预览，请核对参数后确认执行。',
       draft: {
         originalInput,
         toolName,
         args,
+        previewToken: token,
+        expiresAt,
+        writeEnabled: process.env.AI_WRITE_ENABLED === 'true',
       },
     };
   }
 
+  private assertToolCallAllowed(
+    toolName: string,
+    args: Record<string, unknown>,
+  ) {
+    if (toolName !== 'transition_workflow') {
+      return;
+    }
+
+    const modelName = this.readStringArg(args, 'modelName').toLowerCase();
+    const action = this.readStringArg(args, 'action').toLowerCase();
+    if (
+      (modelName === 'order' || modelName === 'sale_order') &&
+      action === 'ship'
+    ) {
+      throw new BadRequestException(
+        '销售发货必须在订单详情的销售发货工作台执行，以确保库存原子过账和审计完整。',
+      );
+    }
+
+    const allowedOrderActions = new Set([
+      'submit',
+      'start_production',
+      'complete',
+    ]);
+    if (modelName === 'order' && allowedOrderActions.has(action)) {
+      return;
+    }
+
+    if (modelName === 'workorder' || modelName === 'work_order') {
+      throw new BadRequestException(
+        '生产工单状态必须通过生产报工工作台更新，以确保原料出库、成品入库和工单进度原子一致。',
+      );
+    }
+
+    if (modelName === 'invoice') {
+      throw new BadRequestException(
+        '发票过账必须通过财务工作台执行，以确保会计分录、应收状态和审计完整。',
+      );
+    }
+
+    throw new BadRequestException(
+      '该工作流动作不在 AI 安全白名单中，请使用对应业务工作台执行。',
+    );
+  }
+
+  private signPreviewToken(payload: CommandPreviewPayload) {
+    const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = this.sign(body);
+    return `${body}.${signature}`;
+  }
+
+  private verifyPreviewToken(token: string): CommandPreviewPayload {
+    const [body, signature] = token.split('.');
+    if (!body || !signature) {
+      throw new BadRequestException('AI 草稿确认 token 无效');
+    }
+
+    const expected = this.sign(body);
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expected);
+    if (
+      signatureBuffer.length !== expectedBuffer.length ||
+      !timingSafeEqual(signatureBuffer, expectedBuffer)
+    ) {
+      throw new BadRequestException('AI 草稿确认 token 无效');
+    }
+
+    const decoded = JSON.parse(
+      Buffer.from(body, 'base64url').toString('utf8'),
+    ) as CommandPreviewPayload;
+    if (!decoded.expiresAt || decoded.expiresAt < Date.now()) {
+      throw new BadRequestException('AI 草稿已过期，请重新生成预览');
+    }
+    return decoded;
+  }
+
+  private sign(body: string) {
+    const secret = process.env.AI_PREVIEW_SECRET || process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('AI_PREVIEW_SECRET or JWT_SECRET must be configured');
+    }
+    return createHmac('sha256', secret).update(body).digest('base64url');
+  }
+
   private buildReadSchemaContext() {
     return `
-Tables:
-- "Order"(id, orderNo, status, totalAmount, companyId, createdAt)
-- "Invoice"(id, invoiceNo, amount, status, postingStatus, companyId, issuedDate)
-- "Payment"(id, invoiceId, amount, method, paymentDate)
-- "Partner"(id, name, type, companyId)
-- "InventoryTransaction"(id, type, materialId, quantity, companyId, createdAt)
-- "Material"(id, sku, name, category, unitPrice, companyId)
-- "JournalEntry"(id, entryNo, date, ref, companyId)
-- "JournalEntryLine"(id, journalEntryId, accountId, debit, credit)
+Tables and Fields:
+- "Order": id(uuid), orderNo(string), status(enum: DRAFT, PENDING, SHIPPED, COMPLETED), totalAmount(decimal), partnerId(uuid), companyId(uuid), createdAt(datetime)
+- "Invoice": id(uuid), invoiceNo(string), amount(decimal), status(enum: UNPAID, PARTIAL, PAID), postingStatus(enum: DRAFT, POSTED), companyId(uuid), orderId(uuid)
+- "Payment": id(uuid), invoiceId(uuid, optional legacy link), partnerId(uuid), companyId(uuid), amount(decimal), method(enum: BANK_TRANSFER, CASH, ALIPAY, WECHAT), paymentDate(datetime), postingStatus(enum: DRAFT, POSTED, CANCELLED)
+- "PaymentAllocation": id(uuid), paymentId(uuid), invoiceId(uuid), amount(decimal), companyId(uuid)
+- "Partner": id(uuid), name(string), code(string), type(enum: CUSTOMER, SUPPLIER, BOTH), companyId(uuid)
+- "InventoryTransaction": id(uuid), type(enum: INBOUND, OUTBOUND, TRANSFER), materialId(uuid), quantity(decimal), companyId(uuid), createdAt(datetime)
+- "Material": id(uuid), sku(string), name(string), category(string), unitPrice(decimal), companyId(uuid)
+- "JournalEntry": id(uuid), entryNo(string), date(datetime), ref(string), companyId(uuid)
+- "JournalEntryLine": id(uuid), journalEntryId(uuid), accountId(uuid), debit(decimal), credit(decimal)
+
+Relations:
+- Invoice.orderId -> Order.id
+- Order.partnerId -> Partner.id
+- Payment.invoiceId -> Invoice.id
+- PaymentAllocation.paymentId -> Payment.id
+- PaymentAllocation.invoiceId -> Invoice.id
+- JournalEntryLine.journalEntryId -> JournalEntry.id
 
 Rules:
-1) SQL must be read-only SELECT.
-2) Must include filter: "companyId" = $1 on company scoped table.
-3) No CTE, no semicolon, no DDL/DML.
+1) SQL must be a single read-only SELECT statement.
+2) MUST include filter: "companyId" = $1.
+3) Use JOINs for cross-table queries (e.g., to filter by Partner Name).
+4) No CTE, no semicolon, no DDL/DML.
+5) Do NOT use LIMIT in generated SQL (system enforces a row cap automatically).
+6) Do NOT use EXPLAIN, ANALYZE, pg_sleep, or any system/admin functions.
     `.trim();
   }
 
@@ -735,14 +1015,46 @@ Rules:
       'alter',
       'create',
       'truncate',
+      'grant',
+      'revoke',
       ';',
       'with ',
       'pg_',
       'information_schema',
+      'pg_catalog',
+      'pg_sleep',
+      'pg_stat',
+      'union',
+      'copy ',
+      'call ',
+      'do ',
+      'lo_import',
+      'lo_export',
+      'dblink',
+      'exec ',
+      'execute ',
+      'explain ',
+      'analyze ',
+      'set ',
+      'reset ',
+      'show ',
+      'vacuum ',
+      'declare ',
+      'cursor',
+      'fetch ',
+      'move ',
+      'listen',
+      'notify',
+      'lock ',
+      'unlock',
     ];
 
     if (forbidden.some((keyword) => lowered.includes(keyword))) {
       throw new BadRequestException('检测到不安全 SQL 关键字');
+    }
+
+    if (/[;][\s]*[a-z]/i.test(normalized)) {
+      throw new BadRequestException('检测到多语句注入');
     }
 
     const hasCompanyFilter =
@@ -753,6 +1065,23 @@ Rules:
     }
 
     return normalized;
+  }
+
+  private enforceRowLimit(sql: string, limit: number): string {
+    const limitMatch = sql.match(/\blimit\s+(\d+)(?:\s+offset\s+\d+)?\s*$/i);
+    if (limitMatch) {
+      const requestedLimit = Number(limitMatch[1]);
+      if (requestedLimit > limit) {
+        throw new BadRequestException(`查询 LIMIT 不能超过 ${limit}`);
+      }
+      return sql;
+    }
+
+    if (/\blimit\b/i.test(sql)) {
+      throw new BadRequestException('查询 LIMIT 语法不受支持');
+    }
+
+    return `${sql} LIMIT ${limit}`;
   }
 
   private suggestChart(rows: Array<Record<string, unknown>>) {
@@ -773,6 +1102,56 @@ Rules:
       xKey: categoryKey,
       yKey: numericKey,
     };
+  }
+
+  private explainReadSql(sql: string, rowCount: number) {
+    const lowered = sql.toLowerCase();
+    const filters: string[] = ['已按当前公司 companyId 过滤'];
+    if (lowered.includes('status')) filters.push('查询包含状态字段筛选或分组');
+    if (lowered.includes('createdat') || lowered.includes('date')) {
+      filters.push('查询包含日期范围或日期字段');
+    }
+    if (lowered.includes('join')) {
+      filters.push('查询使用关联表 JOIN 获取业务维度');
+    }
+    if (lowered.includes('limit')) filters.push('查询包含返回行数限制');
+
+    return {
+      summary: `本次只读查询返回 ${rowCount} 行明细。`,
+      filters,
+      safety: [
+        '仅允许单条 SELECT 语句',
+        '禁止 DDL/DML、CTE、系统表和多语句',
+        '必须包含 companyId 参数过滤',
+        `自动限制返回上限 ${AIService.CHAT2SQL_ROW_LIMIT} 行`,
+        '禁止 pg_sleep、EXPLAIN、ANALYZE 等探测函数',
+      ],
+    };
+  }
+
+  private toCsv(rows: Array<Record<string, unknown>>) {
+    if (!rows.length) return '';
+    const headers = Object.keys(rows[0]);
+    const escape = (value: unknown) => {
+      const text =
+        value === null || value === undefined
+          ? ''
+          : value instanceof Date
+            ? value.toISOString()
+            : typeof value === 'object'
+              ? JSON.stringify(value)
+              : typeof value === 'string' ||
+                  typeof value === 'number' ||
+                  typeof value === 'boolean'
+                ? String(value)
+                : '';
+      return `"${text.replace(/"/g, '""')}"`;
+    };
+
+    return [
+      headers.map(escape).join(','),
+      ...rows.map((row) => headers.map((key) => escape(row[key])).join(',')),
+    ].join('\n');
   }
 
   private extractLikelySupplierFromFileName(fileName: string) {

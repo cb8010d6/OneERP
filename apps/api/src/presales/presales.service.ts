@@ -1,0 +1,1216 @@
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateRequirementDto } from './dto/create-requirement.dto';
+import { ListRequirementsDto } from './dto/list-requirements.dto';
+import { AddFollowUpDto } from './dto/add-follow-up.dto';
+import { CloseRequirementDto } from './dto/close-requirement.dto';
+import { CreateQuoteDto } from './dto/create-quote.dto';
+import { CreateQuoteVersionDto } from './dto/create-quote-version.dto';
+import { CreateContractDto } from './dto/create-contract.dto';
+import { ContractDecisionDto } from './dto/contract-decision.dto';
+
+const REQUIREMENT_DOCUMENT_TYPE = 'CUSTOMER_REQUIREMENT';
+const QUOTE_DOCUMENT_TYPE = 'QUOTE';
+const CONTRACT_DOCUMENT_TYPE = 'SALES_CONTRACT';
+const CONTRACT_EXTRA_REVIEW_THRESHOLD = new Prisma.Decimal(100000);
+
+type ContractApprovalStage = 'SALES_MANAGER' | 'FINANCE' | 'BUSINESS';
+
+const CONTRACT_STAGE_CONFIG: Record<
+  ContractApprovalStage,
+  { expectedStatus: string; nextStatus: string }
+> = {
+  SALES_MANAGER: {
+    expectedStatus: 'PENDING_SALES_MANAGER',
+    nextStatus: 'APPROVED',
+  },
+  FINANCE: {
+    expectedStatus: 'PENDING_FINANCE_REVIEW',
+    nextStatus: 'PENDING_BUSINESS_REVIEW',
+  },
+  BUSINESS: {
+    expectedStatus: 'PENDING_BUSINESS_REVIEW',
+    nextStatus: 'APPROVED',
+  },
+};
+
+@Injectable()
+export class PresalesService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async createRequirement(
+    companyId: string,
+    ownerId: string,
+    data: CreateRequirementDto,
+  ) {
+    const now = new Date();
+    const year = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+      }).format(now),
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const partner = await tx.partner.findFirst({
+        where: {
+          id: data.partnerId,
+          companyId,
+          isActive: true,
+          type: { in: ['CUSTOMER', 'BOTH'] },
+        },
+        select: { id: true, name: true, type: true },
+      });
+      if (!partner) {
+        throw new BadRequestException('客户不存在、已停用或不属于当前公司');
+      }
+
+      const sequence = await tx.documentSequence.upsert({
+        where: {
+          companyId_documentType_year: {
+            companyId,
+            documentType: REQUIREMENT_DOCUMENT_TYPE,
+            year,
+          },
+        },
+        create: {
+          companyId,
+          documentType: REQUIREMENT_DOCUMENT_TYPE,
+          year,
+          lastValue: 1,
+        },
+        update: { lastValue: { increment: 1 } },
+        select: { lastValue: true },
+      });
+      const requirementNo = `REQ-${year}-${String(sequence.lastValue).padStart(6, '0')}`;
+
+      const requirement = await tx.customerRequirement.create({
+        data: {
+          requirementNo,
+          companyId,
+          partnerId: partner.id,
+          ownerId,
+          status: 'DRAFT',
+          sourceChannel: data.sourceChannel.trim(),
+          summary: data.summary.trim(),
+          estimatedAmount:
+            data.estimatedAmount === undefined
+              ? null
+              : new Prisma.Decimal(data.estimatedAmount),
+          expectedCloseDate: data.expectedCloseDate
+            ? new Date(data.expectedCloseDate)
+            : null,
+          nextFollowUpAt: data.nextFollowUpAt
+            ? new Date(data.nextFollowUpAt)
+            : null,
+        },
+        include: {
+          partner: { select: { id: true, name: true, code: true } },
+          owner: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: ownerId,
+          companyId,
+          entity: 'customerRequirement',
+          entityId: requirement.id,
+          action: 'REQUIREMENT_CREATED',
+          details: {
+            requirementNo,
+            partnerId: partner.id,
+            sourceChannel: data.sourceChannel.trim(),
+          },
+        },
+      });
+
+      return requirement;
+    });
+  }
+
+  async listRequirements(companyId: string, query: ListRequirementsDto) {
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 20));
+    const search = query.search?.trim();
+    const status = query.status?.trim();
+    const where: Prisma.CustomerRequirementWhereInput = {
+      companyId,
+      ...(status ? { status } : {}),
+      ...(search
+        ? {
+            OR: [
+              { requirementNo: { contains: search, mode: 'insensitive' } },
+              { summary: { contains: search, mode: 'insensitive' } },
+              {
+                partner: {
+                  name: { contains: search, mode: 'insensitive' },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.customerRequirement.findMany({
+        where,
+        include: {
+          partner: { select: { id: true, name: true, code: true } },
+          owner: { select: { id: true, name: true, email: true } },
+          quotes: {
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              id: true,
+              quoteNo: true,
+              currentVersionNo: true,
+              versions: {
+                take: 1,
+                orderBy: { versionNo: 'desc' },
+                select: {
+                  id: true,
+                  versionNo: true,
+                  status: true,
+                  currencyCode: true,
+                  total: true,
+                  validUntil: true,
+                  contract: {
+                    select: {
+                      id: true,
+                      contractNo: true,
+                      status: true,
+                      currentVersionNo: true,
+                      signedFileId: true,
+                      signedAt: true,
+                      activatedAt: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ updatedAt: 'desc' }, { requirementNo: 'desc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      this.prisma.customerRequirement.count({ where }),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    };
+  }
+
+  async createQuoteFromRequirement(
+    companyId: string,
+    operatorId: string,
+    requirementId: string,
+    data: CreateQuoteDto,
+  ) {
+    const currencyCode = data.currencyCode.trim().toUpperCase();
+    if (currencyCode !== 'CNY') {
+      throw new BadRequestException('非 CNY 报价需配置汇率服务后才能创建');
+    }
+
+    const now = new Date();
+    const validUntil = new Date(data.validUntil);
+    if (validUntil <= now) {
+      throw new BadRequestException('报价有效期必须晚于当前时间');
+    }
+    if (
+      new Set(data.items.map((item) => item.productId)).size !==
+      data.items.length
+    ) {
+      throw new BadRequestException('同一产品不能在报价明细中重复出现');
+    }
+    const year = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+      }).format(now),
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const requirement = await tx.customerRequirement.findFirst({
+        where: { id: requirementId, companyId },
+        select: {
+          id: true,
+          partnerId: true,
+          ownerId: true,
+          status: true,
+        },
+      });
+      if (!requirement) {
+        throw new NotFoundException('客户需求单不存在或无权访问');
+      }
+      if (['LOST', 'CANCELLED', 'CONVERTED'].includes(requirement.status)) {
+        throw new BadRequestException('已关闭的客户需求单不能创建报价');
+      }
+      const existingQuote = await tx.quote.findFirst({
+        where: { companyId, requirementId: requirement.id },
+        select: { id: true },
+      });
+      if (existingQuote) {
+        throw new BadRequestException(
+          '该客户需求单已经创建报价，请新增报价版本',
+        );
+      }
+
+      const products = await tx.product.findMany({
+        where: {
+          companyId,
+          isActive: true,
+          id: { in: data.items.map((item) => item.productId) },
+        },
+        select: { id: true, sku: true, name: true, uom: true, listPrice: true },
+      });
+      if (products.length !== data.items.length) {
+        throw new BadRequestException('报价包含不存在、已停用或跨公司的产品');
+      }
+      const productsById = new Map(
+        products.map((product) => [product.id, product]),
+      );
+
+      let subtotal = new Prisma.Decimal(0);
+      let taxTotal = new Prisma.Decimal(0);
+      const items = data.items.map((item) => {
+        const product = productsById.get(item.productId)!;
+        const quantity = new Prisma.Decimal(item.quantity);
+        const unitPrice = new Prisma.Decimal(item.unitPrice);
+        const discountRate = new Prisma.Decimal(item.discountRate ?? 0);
+        const taxRate = new Prisma.Decimal(item.taxRate ?? 0);
+        const netAmount = quantity
+          .mul(unitPrice)
+          .mul(new Prisma.Decimal(1).minus(discountRate))
+          .toDecimalPlaces(4);
+        const taxAmount = netAmount.mul(taxRate).toDecimalPlaces(4);
+        const grossAmount = netAmount.plus(taxAmount).toDecimalPlaces(4);
+        subtotal = subtotal.plus(netAmount);
+        taxTotal = taxTotal.plus(taxAmount);
+        return {
+          companyId,
+          productId: product.id,
+          skuSnapshot: product.sku,
+          nameSnapshot: product.name,
+          uomSnapshot: product.uom,
+          quantity,
+          unitPrice,
+          discountRate,
+          taxRate,
+          netAmount,
+          taxAmount,
+          grossAmount,
+        };
+      });
+
+      const sequence = await tx.documentSequence.upsert({
+        where: {
+          companyId_documentType_year: {
+            companyId,
+            documentType: QUOTE_DOCUMENT_TYPE,
+            year,
+          },
+        },
+        create: {
+          companyId,
+          documentType: QUOTE_DOCUMENT_TYPE,
+          year,
+          lastValue: 1,
+        },
+        update: { lastValue: { increment: 1 } },
+        select: { lastValue: true },
+      });
+      const quoteNo = `QT-${year}-${String(sequence.lastValue).padStart(6, '0')}`;
+
+      const quote = await tx.quote.create({
+        data: {
+          quoteNo,
+          companyId,
+          requirementId: requirement.id,
+          partnerId: requirement.partnerId,
+          ownerId: requirement.ownerId,
+          currentVersionNo: 1,
+          versions: {
+            create: {
+              companyId,
+              versionNo: 1,
+              status: 'DRAFT',
+              currencyCode,
+              baseCurrencyCode: 'CNY',
+              exchangeRate: new Prisma.Decimal(1),
+              exchangeRateAt: now,
+              exchangeRateSource: 'SYSTEM_BASE',
+              validUntil,
+              paymentTerms: data.paymentTerms?.trim() || null,
+              deliveryTerms: data.deliveryTerms?.trim() || null,
+              subtotal: subtotal.toDecimalPlaces(4),
+              taxTotal: taxTotal.toDecimalPlaces(4),
+              total: subtotal.plus(taxTotal).toDecimalPlaces(4),
+              items: { create: items },
+            },
+          },
+        },
+        include: { versions: { include: { items: true } } },
+      });
+
+      await tx.customerRequirement.update({
+        where: { id: requirement.id },
+        data: { status: 'QUOTING' },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quote',
+          entityId: quote.id,
+          action: 'QUOTE_V1_CREATED',
+          details: { quoteNo, requirementId, versionNo: 1, currencyCode },
+        },
+      });
+
+      return quote;
+    });
+  }
+
+  async createQuoteVersion(
+    companyId: string,
+    operatorId: string,
+    quoteId: string,
+    data: CreateQuoteVersionDto = {},
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const quote = await tx.quote.findFirst({
+        where: { id: quoteId, companyId },
+        select: {
+          id: true,
+          currentVersionNo: true,
+          versions: {
+            take: 1,
+            orderBy: { versionNo: 'desc' },
+            include: { items: true },
+          },
+        },
+      });
+      if (!quote) {
+        throw new NotFoundException('报价不存在或无权访问');
+      }
+      const currentVersion = quote.versions[0];
+      if (
+        !currentVersion ||
+        currentVersion.versionNo !== quote.currentVersionNo
+      ) {
+        throw new BadRequestException('报价当前版本数据不完整');
+      }
+      if (currentVersion.status === 'DRAFT') {
+        throw new BadRequestException('当前版本仍是草稿，请直接编辑该版本');
+      }
+      if (currentVersion.status === 'ACCEPTED') {
+        throw new BadRequestException('已接受的报价不能创建新版本');
+      }
+
+      const requestedValidUntil = data.validUntil
+        ? new Date(data.validUntil)
+        : null;
+      const fallbackValidUntil = new Date(now);
+      fallbackValidUntil.setDate(fallbackValidUntil.getDate() + 14);
+      const validUntil =
+        requestedValidUntil ??
+        (currentVersion.validUntil > now
+          ? currentVersion.validUntil
+          : fallbackValidUntil);
+      if (validUntil <= now) {
+        throw new BadRequestException('新版本有效期必须晚于当前时间');
+      }
+
+      const versionNo = quote.currentVersionNo + 1;
+      const claimed = await tx.quote.updateMany({
+        where: {
+          id: quote.id,
+          companyId,
+          currentVersionNo: quote.currentVersionNo,
+        },
+        data: { currentVersionNo: versionNo },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('报价当前版本已变化，请刷新后重试');
+      }
+      const version = await tx.quoteVersion.create({
+        data: {
+          quoteId: quote.id,
+          companyId,
+          versionNo,
+          status: 'DRAFT',
+          currencyCode: currentVersion.currencyCode,
+          baseCurrencyCode: currentVersion.baseCurrencyCode,
+          exchangeRate: currentVersion.exchangeRate,
+          exchangeRateAt: currentVersion.exchangeRateAt,
+          exchangeRateSource: currentVersion.exchangeRateSource,
+          validUntil,
+          paymentTerms: currentVersion.paymentTerms,
+          deliveryTerms: currentVersion.deliveryTerms,
+          subtotal: currentVersion.subtotal,
+          taxTotal: currentVersion.taxTotal,
+          total: currentVersion.total,
+          items: {
+            create: currentVersion.items.map((item) => ({
+              companyId,
+              productId: item.productId,
+              skuSnapshot: item.skuSnapshot,
+              nameSnapshot: item.nameSnapshot,
+              uomSnapshot: item.uomSnapshot,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              discountRate: item.discountRate,
+              taxRate: item.taxRate,
+              netAmount: item.netAmount,
+              taxAmount: item.taxAmount,
+              grossAmount: item.grossAmount,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quote',
+          entityId: quote.id,
+          action: 'QUOTE_VERSION_CREATED',
+          details: { fromVersionNo: currentVersion.versionNo, versionNo },
+        },
+      });
+      return version;
+    });
+  }
+
+  async sendQuoteVersion(
+    companyId: string,
+    operatorId: string,
+    versionId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const version = await tx.quoteVersion.findFirst({
+        where: { id: versionId, companyId },
+        include: { quote: { select: { currentVersionNo: true } }, items: true },
+      });
+      if (!version) throw new NotFoundException('报价版本不存在或无权访问');
+      if (version.status !== 'DRAFT') {
+        throw new BadRequestException('只有草稿报价版本可以发出');
+      }
+      if (version.versionNo !== version.quote.currentVersionNo) {
+        throw new BadRequestException('只能发出当前报价版本');
+      }
+      if (!version.items.length)
+        throw new BadRequestException('报价明细不能为空');
+      if (version.validUntil <= now)
+        throw new BadRequestException('报价已过有效期');
+
+      const sent = await tx.quoteVersion.updateMany({
+        where: { id: version.id, companyId, status: 'DRAFT' },
+        data: { status: 'SENT', sentAt: now },
+      });
+      if (sent.count !== 1) {
+        throw new ConflictException('报价版本状态已变化，请刷新后重试');
+      }
+      if (version.versionNo > 1) {
+        await tx.quoteVersion.updateMany({
+          where: {
+            quoteId: version.quoteId,
+            companyId,
+            status: 'SENT',
+            versionNo: { lt: version.versionNo },
+          },
+          data: { status: 'SUPERSEDED' },
+        });
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quoteVersion',
+          entityId: version.id,
+          action: 'QUOTE_SENT',
+          details: { quoteId: version.quoteId, versionNo: version.versionNo },
+        },
+      });
+      return tx.quoteVersion.findFirst({
+        where: { id: version.id, companyId },
+        include: { items: true },
+      });
+    });
+  }
+
+  async recordQuoteDecision(
+    companyId: string,
+    operatorId: string,
+    versionId: string,
+    decision: 'ACCEPTED' | 'REJECTED',
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const version = await tx.quoteVersion.findFirst({
+        where: { id: versionId, companyId },
+        select: { id: true, quoteId: true, versionNo: true, status: true },
+      });
+      if (!version) throw new NotFoundException('报价版本不存在或无权访问');
+      if (version.status !== 'SENT') {
+        throw new BadRequestException('只有已发出的报价可以记录客户决策');
+      }
+      const updated = await tx.quoteVersion.updateMany({
+        where: { id: version.id, companyId, status: 'SENT' },
+        data: {
+          status: decision,
+          acceptedAt: decision === 'ACCEPTED' ? now : null,
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('报价版本状态已变化，请刷新后重试');
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'quoteVersion',
+          entityId: version.id,
+          action: 'QUOTE_CUSTOMER_DECISION_RECORDED',
+          details: {
+            quoteId: version.quoteId,
+            versionNo: version.versionNo,
+            decision,
+          },
+        },
+      });
+      return tx.quoteVersion.findFirst({
+        where: { id: version.id, companyId },
+        include: { items: true },
+      });
+    });
+  }
+
+  async createContractFromQuoteVersion(
+    companyId: string,
+    operatorId: string,
+    quoteVersionId: string,
+    data: CreateContractDto,
+  ) {
+    const now = new Date();
+    const year = Number(
+      new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Shanghai',
+        year: 'numeric',
+      }).format(now),
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const quoteVersion = await tx.quoteVersion.findFirst({
+        where: { id: quoteVersionId, companyId },
+        select: {
+          id: true,
+          status: true,
+          currencyCode: true,
+          baseCurrencyCode: true,
+          exchangeRate: true,
+          exchangeRateAt: true,
+          exchangeRateSource: true,
+          total: true,
+          paymentTerms: true,
+          deliveryTerms: true,
+          quote: {
+            select: { id: true, partnerId: true, ownerId: true },
+          },
+        },
+      });
+      if (!quoteVersion) {
+        throw new NotFoundException('报价版本不存在或无权访问');
+      }
+      if (quoteVersion.status !== 'ACCEPTED') {
+        throw new BadRequestException('只有客户已接受的报价版本可以登记合同');
+      }
+
+      const existingContract = await tx.salesContract.findFirst({
+        where: { companyId, quoteVersionId: quoteVersion.id },
+        select: { id: true },
+      });
+      if (existingContract) {
+        throw new BadRequestException('该报价版本已经登记合同');
+      }
+
+      const sequence = await tx.documentSequence.upsert({
+        where: {
+          companyId_documentType_year: {
+            companyId,
+            documentType: CONTRACT_DOCUMENT_TYPE,
+            year,
+          },
+        },
+        create: {
+          companyId,
+          documentType: CONTRACT_DOCUMENT_TYPE,
+          year,
+          lastValue: 1,
+        },
+        update: { lastValue: { increment: 1 } },
+        select: { lastValue: true },
+      });
+      const contractNo = `CT-${year}-${String(sequence.lastValue).padStart(6, '0')}`;
+      const effectiveAt = data.effectiveAt ? new Date(data.effectiveAt) : null;
+      const expiresAt = data.expiresAt ? new Date(data.expiresAt) : null;
+      if (effectiveAt && expiresAt && expiresAt <= effectiveAt) {
+        throw new BadRequestException('合同到期日期必须晚于生效日期');
+      }
+
+      let contract;
+      try {
+        contract = await tx.salesContract.create({
+          data: {
+            contractNo,
+            companyId,
+            quoteVersionId: quoteVersion.id,
+            partnerId: quoteVersion.quote.partnerId,
+            ownerId: quoteVersion.quote.ownerId,
+            status: 'DRAFT',
+            currentVersionNo: 1,
+            versions: {
+              create: {
+                companyId,
+                versionNo: 1,
+                title: data.title.trim(),
+                status: 'DRAFT',
+                currencyCode: quoteVersion.currencyCode,
+                baseCurrencyCode: quoteVersion.baseCurrencyCode,
+                exchangeRate: quoteVersion.exchangeRate,
+                exchangeRateAt: quoteVersion.exchangeRateAt,
+                exchangeRateSource: quoteVersion.exchangeRateSource,
+                total: quoteVersion.total,
+                paymentTerms: quoteVersion.paymentTerms,
+                deliveryTerms: quoteVersion.deliveryTerms,
+                effectiveAt,
+                expiresAt,
+              },
+            },
+          },
+          include: { versions: true },
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('该报价版本已经登记合同');
+        }
+        throw error;
+      }
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_V1_CREATED',
+          details: {
+            contractNo,
+            quoteVersionId: quoteVersion.id,
+            sourceQuoteId: quoteVersion.quote.id,
+          },
+        },
+      });
+      return contract;
+    });
+  }
+
+  async submitContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== 'DRAFT') {
+        throw new BadRequestException('只有草稿合同可以提交审批');
+      }
+
+      const claimed = await tx.salesContract.updateMany({
+        where: { id: contract.id, companyId, status: 'DRAFT' },
+        data: { status: 'PENDING_SALES_MANAGER', submittedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+      }
+      await tx.salesContractVersion.updateMany({
+        where: {
+          contractId: contract.id,
+          companyId,
+          versionNo: contract.currentVersionNo,
+          status: 'DRAFT',
+        },
+        data: { status: 'PENDING_APPROVAL' },
+      });
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage: 'SALES_SUBMISSION',
+          decision: 'SUBMITTED',
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_SUBMITTED',
+          details: { contractNo: contract.contractNo },
+        },
+      });
+      return { ...contract, status: 'PENDING_SALES_MANAGER', submittedAt: now };
+    });
+  }
+
+  async decideContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+    stage: ContractApprovalStage,
+    data: ContractDecisionDto,
+  ) {
+    const comment = data.comment?.trim() || null;
+    if (data.decision === 'REJECT' && !comment) {
+      throw new BadRequestException('拒绝合同时必须填写审批意见');
+    }
+    const config = CONTRACT_STAGE_CONFIG[stage];
+    const now = new Date();
+
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+          versions: {
+            take: 1,
+            orderBy: { versionNo: 'desc' },
+            select: { versionNo: true, total: true },
+          },
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== config.expectedStatus) {
+        throw new BadRequestException('合同当前不在该审批阶段');
+      }
+      const currentVersion = contract.versions[0];
+      if (
+        !currentVersion ||
+        currentVersion.versionNo !== contract.currentVersionNo
+      ) {
+        throw new ConflictException('合同当前版本数据不完整，请刷新后重试');
+      }
+
+      let nextStatus = config.nextStatus;
+      if (data.decision === 'REJECT') {
+        nextStatus = 'REJECTED';
+      } else if (
+        stage === 'SALES_MANAGER' &&
+        new Prisma.Decimal(currentVersion.total).greaterThanOrEqualTo(
+          CONTRACT_EXTRA_REVIEW_THRESHOLD,
+        )
+      ) {
+        nextStatus = 'PENDING_FINANCE_REVIEW';
+      }
+
+      const claimed = await tx.salesContract.updateMany({
+        where: {
+          id: contract.id,
+          companyId,
+          status: config.expectedStatus,
+        },
+        data: {
+          status: nextStatus,
+          ...(nextStatus === 'APPROVED' ? { approvedAt: now } : {}),
+          ...(nextStatus === 'REJECTED' ? { rejectedAt: now } : {}),
+        },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+      }
+      if (nextStatus === 'APPROVED' || nextStatus === 'REJECTED') {
+        await tx.salesContractVersion.updateMany({
+          where: {
+            contractId: contract.id,
+            companyId,
+            versionNo: contract.currentVersionNo,
+            status: 'PENDING_APPROVAL',
+          },
+          data: { status: nextStatus },
+        });
+      }
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage,
+          decision: data.decision === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+          comment,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action:
+            data.decision === 'APPROVE'
+              ? `CONTRACT_${stage}_APPROVED`
+              : `CONTRACT_${stage}_REJECTED`,
+          details: {
+            contractNo: contract.contractNo,
+            fromStatus: config.expectedStatus,
+            toStatus: nextStatus,
+            comment,
+          },
+        },
+      });
+      return { ...contract, status: nextStatus };
+    });
+  }
+
+  async signContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+    fileRecordId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+          signedFileId: true,
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== 'APPROVED') {
+        throw new BadRequestException('只有已批准合同可以登记签署件');
+      }
+      const file = await tx.fileRecord.findFirst({
+        where: { id: fileRecordId, companyId },
+        select: { id: true, fileName: true, mimeType: true },
+      });
+      if (!file) {
+        throw new NotFoundException('签署件不存在或无权访问');
+      }
+
+      try {
+        const claimed = await tx.salesContract.updateMany({
+          where: {
+            id: contract.id,
+            companyId,
+            status: 'APPROVED',
+            signedFileId: null,
+          },
+          data: {
+            status: 'SIGNED',
+            signedFileId: file.id,
+            signedById: operatorId,
+            signedAt: now,
+          },
+        });
+        if (claimed.count !== 1) {
+          throw new ConflictException('合同状态已变化，请刷新后重试');
+        }
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('该签署件已关联其他合同');
+        }
+        throw error;
+      }
+      await tx.salesContractVersion.updateMany({
+        where: {
+          contractId: contract.id,
+          companyId,
+          versionNo: contract.currentVersionNo,
+          status: 'APPROVED',
+        },
+        data: { status: 'SIGNED', signedAt: now },
+      });
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage: 'SIGNATURE',
+          decision: 'SIGNED',
+          comment: file.fileName,
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_SIGNED',
+          details: {
+            contractNo: contract.contractNo,
+            fileRecordId: file.id,
+            fileName: file.fileName,
+            mimeType: file.mimeType,
+          },
+        },
+      });
+      return {
+        ...contract,
+        status: 'SIGNED',
+        signedFileId: file.id,
+        signedAt: now,
+      };
+    });
+  }
+
+  async activateContract(
+    companyId: string,
+    operatorId: string,
+    contractId: string,
+  ) {
+    const now = new Date();
+    return this.prisma.$transaction(async (tx) => {
+      const contract = await tx.salesContract.findFirst({
+        where: { id: contractId, companyId },
+        select: {
+          id: true,
+          contractNo: true,
+          status: true,
+          currentVersionNo: true,
+          signedFileId: true,
+          versions: {
+            take: 1,
+            orderBy: { versionNo: 'desc' },
+            select: {
+              versionNo: true,
+              effectiveAt: true,
+              expiresAt: true,
+            },
+          },
+        },
+      });
+      if (!contract) {
+        throw new NotFoundException('合同不存在或无权访问');
+      }
+      if (contract.status !== 'SIGNED' || !contract.signedFileId) {
+        throw new BadRequestException('只有已关联签署件的合同可以生效');
+      }
+      const currentVersion = contract.versions[0];
+      if (
+        !currentVersion ||
+        currentVersion.versionNo !== contract.currentVersionNo
+      ) {
+        throw new ConflictException('合同当前版本数据不完整，请刷新后重试');
+      }
+      if (currentVersion.effectiveAt && currentVersion.effectiveAt > now) {
+        throw new BadRequestException('合同尚未到生效日期');
+      }
+      if (currentVersion.expiresAt && currentVersion.expiresAt <= now) {
+        throw new BadRequestException('合同已超过到期日期，不能生效');
+      }
+
+      const claimed = await tx.salesContract.updateMany({
+        where: { id: contract.id, companyId, status: 'SIGNED' },
+        data: { status: 'ACTIVE', activatedAt: now },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('合同状态已变化，请刷新后重试');
+      }
+      await tx.salesContractVersion.updateMany({
+        where: {
+          contractId: contract.id,
+          companyId,
+          versionNo: contract.currentVersionNo,
+          status: 'SIGNED',
+        },
+        data: { status: 'ACTIVE' },
+      });
+      await tx.salesContractApproval.create({
+        data: {
+          contractId: contract.id,
+          companyId,
+          actorId: operatorId,
+          stage: 'ACTIVATION',
+          decision: 'ACTIVATED',
+        },
+      });
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'salesContract',
+          entityId: contract.id,
+          action: 'CONTRACT_ACTIVATED',
+          details: {
+            contractNo: contract.contractNo,
+            signedFileId: contract.signedFileId,
+          },
+        },
+      });
+      return { ...contract, status: 'ACTIVE', activatedAt: now };
+    });
+  }
+
+  async addFollowUp(
+    companyId: string,
+    operatorId: string,
+    requirementId: string,
+    data: AddFollowUpDto,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const requirement = await tx.customerRequirement.findFirst({
+        where: { id: requirementId, companyId },
+        select: { id: true, status: true },
+      });
+      if (!requirement) {
+        throw new NotFoundException('客户需求单不存在或无权访问');
+      }
+      if (['LOST', 'CANCELLED', 'CONVERTED'].includes(requirement.status)) {
+        throw new BadRequestException('终态客户需求单不能继续跟进');
+      }
+
+      const nextFollowUpAt = data.nextFollowUpAt
+        ? new Date(data.nextFollowUpAt)
+        : null;
+      const activity = await tx.requirementActivity.create({
+        data: {
+          requirementId,
+          companyId,
+          activityType: 'FOLLOW_UP',
+          content: data.content.trim(),
+          nextFollowUpAt,
+          createdById: operatorId,
+        },
+      });
+      const updatedRequirement = await tx.customerRequirement.update({
+        where: { id: requirementId },
+        data: {
+          status: requirement.status === 'DRAFT' ? 'FOLLOWING' : undefined,
+          nextFollowUpAt,
+        },
+        include: {
+          partner: { select: { id: true, name: true, code: true } },
+          owner: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'customerRequirement',
+          entityId: requirementId,
+          action: 'REQUIREMENT_FOLLOW_UP_ADDED',
+          details: {
+            activityId: activity.id,
+            nextFollowUpAt: data.nextFollowUpAt ?? null,
+          },
+        },
+      });
+
+      return { requirement: updatedRequirement, activity };
+    });
+  }
+
+  async closeRequirement(
+    companyId: string,
+    operatorId: string,
+    requirementId: string,
+    data: CloseRequirementDto,
+  ) {
+    if (data.status === 'LOST' && !data.reason?.trim()) {
+      throw new BadRequestException('标记丢单时必须填写关闭原因');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const requirement = await tx.customerRequirement.findFirst({
+        where: { id: requirementId, companyId },
+        select: { id: true, status: true },
+      });
+      if (!requirement) {
+        throw new NotFoundException('客户需求单不存在或无权访问');
+      }
+      if (['LOST', 'CANCELLED', 'CONVERTED'].includes(requirement.status)) {
+        throw new BadRequestException('客户需求单已关闭，不能重复操作');
+      }
+
+      const closeReason = data.reason?.trim() || null;
+      const updatedRequirement = await tx.customerRequirement.update({
+        where: { id: requirementId },
+        data: {
+          status: data.status,
+          closeReason,
+          nextFollowUpAt: null,
+        },
+        include: {
+          partner: { select: { id: true, name: true, code: true } },
+          owner: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: operatorId,
+          companyId,
+          entity: 'customerRequirement',
+          entityId: requirementId,
+          action: 'REQUIREMENT_CLOSED',
+          details: {
+            from: requirement.status,
+            to: data.status,
+            reason: closeReason,
+          },
+        },
+      });
+
+      return updatedRequirement;
+    });
+  }
+}

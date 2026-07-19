@@ -6,7 +6,11 @@ import {
   IsNumber,
   Min,
   Max,
+  IsIn,
+  IsArray,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateInvoiceDto {
   @ApiProperty({ description: '关联订单ID' })
@@ -38,10 +42,62 @@ export class CreatePaymentDto {
   @Min(1)
   amount!: number;
 
-  @ApiProperty({ description: '支付方式: BANK_TRANSFER, ALIPAY, WECHAT' })
+  @ApiProperty({
+    description: '支付方式: BANK_TRANSFER, CASH, ALIPAY, WECHAT',
+    enum: ['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'],
+  })
   @IsString()
   @IsNotEmpty()
+  @IsIn(['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'])
   method!: string;
+}
+
+export class ReceivablePaymentAllocationDto {
+  @ApiProperty({ description: '待核销的应收发票 ID' })
+  @IsString()
+  @IsNotEmpty()
+  invoiceId!: string;
+
+  @ApiProperty({ description: '本次分配到该发票的金额' })
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+}
+
+export class CreateReceivablePaymentDto {
+  @ApiProperty({ description: '客户/往来单位 ID' })
+  @IsString()
+  @IsNotEmpty()
+  partnerId!: string;
+
+  @ApiProperty({ description: '收款总金额' })
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+
+  @ApiProperty({
+    description: '支付方式: BANK_TRANSFER, CASH, ALIPAY, WECHAT',
+    enum: ['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'],
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'])
+  method!: string;
+
+  @ApiProperty({ type: [ReceivablePaymentAllocationDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReceivablePaymentAllocationDto)
+  allocations?: ReceivablePaymentAllocationDto[];
+}
+
+export class ApplyReceivablePaymentDto {
+  @ApiProperty({ type: [ReceivablePaymentAllocationDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReceivablePaymentAllocationDto)
+  allocations!: ReceivablePaymentAllocationDto[];
 }
 
 export class PostInvoiceDto {
@@ -63,4 +119,130 @@ export class PostInvoiceDto {
   @Min(0)
   @Max(1)
   taxRate?: number;
+}
+
+export class CreateCreditNoteDto {
+  @ApiProperty({ description: '要冲减的原应收发票 ID' })
+  @IsString()
+  @IsNotEmpty()
+  invoiceId!: string;
+
+  @ApiProperty({ description: '贷项/红字金额，含税' })
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+
+  @ApiProperty({
+    description: '税码ID (未填则沿用原发票税码或公司默认税码)',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  taxCodeId?: string;
+
+  @ApiProperty({
+    description: '关联的销售退货单 ID，用于把库存退货与财务红字闭环',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  inventoryReturnDocumentId?: string;
+
+  @ApiProperty({
+    description: '冲减原因，例如客户退货、价格折让、开票错误',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+
+  @ApiProperty({ description: '贷项日期 (ISO string)', required: false })
+  @IsOptional()
+  @IsString()
+  creditDate?: string;
+}
+
+export class CreateCustomerRefundDto {
+  @ApiProperty({ description: '关联的已过账贷项凭证 ID' })
+  @IsString()
+  @IsNotEmpty()
+  creditNoteId!: string;
+
+  @ApiProperty({ description: '退款金额' })
+  @IsNumber()
+  @Min(0.01)
+  amount!: number;
+
+  @ApiProperty({
+    description: '退款方式: BANK_TRANSFER, CASH, ALIPAY, WECHAT',
+    enum: ['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'],
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsIn(['BANK_TRANSFER', 'CASH', 'ALIPAY', 'WECHAT'])
+  method!: string;
+
+  @ApiProperty({ description: '退款日期 (ISO string)', required: false })
+  @IsOptional()
+  @IsString()
+  refundDate?: string;
+
+  @ApiProperty({ description: '退款备注', required: false })
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+export class ImportBankStatementLineDto {
+  @ApiProperty({ description: '银行账号或账户名称', required: false })
+  @IsOptional()
+  @IsString()
+  bankAccount?: string;
+
+  @ApiProperty({ description: '交易日期 (ISO string)' })
+  @IsString()
+  @IsNotEmpty()
+  transactionDate!: string;
+
+  @ApiProperty({ description: '交易摘要', required: false })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiProperty({ description: '交易对方', required: false })
+  @IsOptional()
+  @IsString()
+  counterparty?: string;
+
+  @ApiProperty({ description: '交易金额，收入为正，支出为负' })
+  @IsNumber()
+  amount!: number;
+
+  @ApiProperty({ description: '银行流水唯一参考号', required: false })
+  @IsOptional()
+  @IsString()
+  externalRef?: string;
+}
+
+export class ImportBankStatementLinesDto {
+  @ApiProperty({ type: [ImportBankStatementLineDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ImportBankStatementLineDto)
+  lines!: ImportBankStatementLineDto[];
+}
+
+export class MatchBankStatementLineDto {
+  @ApiProperty({
+    description: '匹配目标类型',
+    enum: ['CUSTOMER_PAYMENT', 'SUPPLIER_PAYMENT'],
+  })
+  @IsString()
+  @IsIn(['CUSTOMER_PAYMENT', 'SUPPLIER_PAYMENT'])
+  targetType!: 'CUSTOMER_PAYMENT' | 'SUPPLIER_PAYMENT';
+
+  @ApiProperty({ description: '客户收款 ID 或供应商付款 ID' })
+  @IsString()
+  @IsNotEmpty()
+  targetId!: string;
 }

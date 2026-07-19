@@ -5,7 +5,11 @@ import {
   IsNumber,
   Min,
   IsOptional,
+  IsArray,
+  IsBoolean,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateInboundDto {
   @ApiProperty({ description: '目标库位ID' })
@@ -49,6 +53,12 @@ export class CreateStockMoveDto {
   @IsNumber()
   @Min(1)
   quantity!: number;
+
+  @ApiPropertyOptional({ description: '本次入库/调整单位成本' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitCost?: number;
 
   @ApiPropertyOptional({ description: '批次号' })
   @IsOptional()
@@ -103,6 +113,23 @@ export class SaleOrderShipmentDto {
   @IsString()
   sourceLocationId?: string;
 
+  @ApiProperty({
+    description: '发货明细列表',
+    type: () => [SaleOrderShipmentItemDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SaleOrderShipmentItemDto)
+  items!: SaleOrderShipmentItemDto[];
+
+  @ApiPropertyOptional({
+    description: '是否允许库存不足时部分发货；默认 false，整笔拒绝',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  allowPartial?: boolean;
+
   @ApiPropertyOptional({ description: '批次号（可选）' })
   @IsOptional()
   @IsString()
@@ -112,6 +139,18 @@ export class SaleOrderShipmentDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+export class SaleOrderShipmentItemDto {
+  @ApiProperty({ description: '产品ID' })
+  @IsString()
+  @IsNotEmpty()
+  productId!: string;
+
+  @ApiProperty({ description: '发货数量' })
+  @IsNumber()
+  @Min(1)
+  shipQuantity!: number;
 }
 
 export class PurchaseInboundPostingDto {
@@ -129,6 +168,12 @@ export class PurchaseInboundPostingDto {
   @IsNumber()
   @Min(1)
   quantity!: number;
+
+  @ApiPropertyOptional({ description: '本次入库单位成本' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  unitCost?: number;
 
   @ApiPropertyOptional({ description: '目标库位ID' })
   @IsOptional()

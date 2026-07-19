@@ -1,0 +1,187 @@
+# OneERP HA-lite single-machine production trial deployment.
+# Usage:
+#   docker compose -f docker-compose.ha-lite.yml up -d --build
+#
+# This file intentionally exposes only Web and API ports. PostgreSQL, Redis,
+# and MinIO are reachable only from the Docker network.
+
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+x-app-resources: &app_resources
+  deploy:
+    resources:
+      limits:
+        cpus: "1.50"
+        memory: 1024M
+      reservations:
+        memory: 256M
+
+x-data-resources: &data_resources
+  deploy:
+    resources:
+      limits:
+        cpus: "2.00"
+        memory: 2048M
+      reservations:
+        memory: 512M
+
+services:
+  db:
+    <<: [*common, *data_resources]
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-oneerp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-oneerp}
+    volumes:
+      - oneerp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-oneerp} -d ${POSTGRES_DB:-oneerp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    <<: [*common, *data_resources]
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --save 60 1000
+    volumes:
+      - oneerp_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  minio:
+    <<: [*common, *data_resources]
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-oneerp_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    command: server /data --console-address ":9001"
+    volumes:
+      - oneerp_miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: builder
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oneerp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-oneerp}
+      INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL:?INIT_ADMIN_EMAIL is required}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:?INIT_ADMIN_PASSWORD is required}
+      INIT_ADMIN_NAME: ${INIT_ADMIN_NAME:-Administrator}
+      INIT_COMPANY_NAME: ${INIT_COMPANY_NAME:-OneERP Company}
+    command: >
+      sh -c "npx prisma migrate deploy --schema=./prisma/schema.prisma
+      && npm run init:prod"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  api:
+    <<: [*common, *app_resources]
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-oneerp}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-oneerp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: 9000
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-oneerp_minio}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      AI_WRITE_ENABLED: ${AI_WRITE_ENABLED:-false}
+      PORT: 8000
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  web:
+    <<: [*common, *app_resources]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api/proxy}
+        API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api/proxy}
+      API_BASE_URL: http://api:8000
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  oneerp_pgdata:
+  oneerp_redisdata:
+  oneerp_miniodata:
