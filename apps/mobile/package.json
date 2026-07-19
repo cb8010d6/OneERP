@@ -9,20 +9,21 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@react-native-async-storage/async-storage": "^3.0.1",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "axios": "^1.17.0",
-    "expo": "~55.0.8",
+    "expo": "~55.0.28",
     "expo-barcode-scanner": "^13.0.1",
-    "expo-camera": "^55.0.10",
-    "expo-status-bar": "~55.0.4",
-    "lucide-react-native": "^0.577.0",
+    "expo-camera": "~55.0.21",
+    "expo-status-bar": "~55.0.6",
+    "lucide-react-native": "^1.25.0",
     "react": "19.2.0",
-    "react-native": "0.83.2"
+    "react-native": "0.83.6"
   },
   "overrides": {
     "@xmldom/xmldom": "0.8.13",
     "node-forge": "1.4.0",
-    "picomatch": "2.3.2"
+    "picomatch": "2.3.2",
+    "uuid": "11.1.1"
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
