@@ -132,6 +132,7 @@ export function ListEngine({
       return {
         id: column,
         accessorKey: column,
+        meta: { label: field?.label ?? column },
         header: () => (
           <button
             type="button"
@@ -169,9 +170,11 @@ export function ListEngine({
 
       <div className="p-2">
         <DataGrid
+          key={schema.model}
           columns={dataGridColumns}
           data={viewRows}
           height={500}
+          viewId={schema.model}
           onRowClick={(row) => onRowClick?.(row)}
         />
       </div>

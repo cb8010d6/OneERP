@@ -9,11 +9,13 @@ import {
   VisibilityState,
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { Columns3, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSelect';
 import type { UiFieldReference } from '@/lib/ui-schema';
 
 type DataGridColumnMeta<TData> = {
+  label?: string;
   editable?: boolean;
   options?: Array<{ label: string; value: string }>;
   reference?: UiFieldReference;
@@ -37,6 +39,37 @@ interface DataGridProps<TData extends { id: string }> {
   enableRowSelection?: boolean;
   onSelectionChange?: (rowIds: string[]) => void;
   height?: number;
+  viewId?: string;
+}
+
+function columnVisibilityStorageKey(viewId: string) {
+  return `oneerp:data-grid:${viewId}:columns`;
+}
+
+function readColumnVisibility(viewId?: string): VisibilityState {
+  if (!viewId || typeof window === 'undefined') return {};
+
+  try {
+    const raw = window.localStorage.getItem(columnVisibilityStorageKey(viewId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, boolean] => typeof entry[1] === 'boolean',
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function getColumnLabel<TData>(
+  columnDef: ColumnDef<TData, unknown>,
+  columnId: string,
+) {
+  const meta = columnDef.meta as DataGridColumnMeta<TData> | undefined;
+  if (meta?.label) return meta.label;
+  return typeof columnDef.header === 'string' ? columnDef.header : columnId;
 }
 
 export function DataGrid<TData extends { id: string }>({
@@ -47,11 +80,27 @@ export function DataGrid<TData extends { id: string }>({
   enableRowSelection = false,
   onSelectionChange,
   height = 460,
+  viewId,
 }: DataGridProps<TData>) {
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+    () => readColumnVisibility(viewId),
+  );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [editingCell, setEditingCell] = useState<{ rowId: string; columnId: string } | null>(null);
   const [editingValue, setEditingValue] = useState('');
+  const [columnMenuOpen, setColumnMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!viewId) return;
+    try {
+      window.localStorage.setItem(
+        columnVisibilityStorageKey(viewId),
+        JSON.stringify(columnVisibility),
+      );
+    } catch {
+      // Column preferences are optional; storage failures must not block the grid.
+    }
+  }, [columnVisibility, viewId]);
 
   // TanStack Table returns callable state accessors that React Compiler cannot
   // safely memoize; the component already owns their state explicitly.
@@ -109,20 +158,55 @@ export function DataGrid<TData extends { id: string }>({
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-white p-2">
-        {table.getAllLeafColumns().map((column) => {
-          const visible = column.getIsVisible();
-          return (
-            <label key={column.id} className="inline-flex items-center gap-1 rounded bg-gray-50 px-2 py-1 text-xs text-gray-600">
-              <input
-                type="checkbox"
-                checked={visible}
-                onChange={(event) => column.toggleVisibility(event.target.checked)}
-              />
-              {String(column.columnDef.header ?? column.id)}
-            </label>
-          );
-        })}
+      <div className="relative flex justify-end">
+        <button
+          type="button"
+          aria-label="列设置"
+          aria-expanded={columnMenuOpen}
+          onClick={() => setColumnMenuOpen((open) => !open)}
+          className="inline-flex h-9 items-center gap-2 rounded-md border border-gray-200 bg-white px-3 text-sm text-gray-700 hover:bg-gray-50"
+          title="列设置"
+        >
+          <Columns3 className="h-4 w-4" />
+          <span>列设置</span>
+        </button>
+        {columnMenuOpen ? (
+          <div className="absolute right-0 top-10 z-20 min-w-48 rounded-md border border-gray-200 bg-white p-2 shadow-lg">
+            <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-2 pb-2">
+              <span className="text-xs font-medium text-gray-500">可见列</span>
+              <button
+                type="button"
+                aria-label="恢复默认列"
+                title="恢复默认列"
+                onClick={() => setColumnVisibility({})}
+                className="inline-flex h-7 w-7 items-center justify-center rounded text-gray-500 hover:bg-gray-100 hover:text-gray-800"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {table.getAllLeafColumns().map((column) => {
+              const visible = column.getIsVisible();
+              const isLastVisibleColumn =
+                visible && table.getVisibleLeafColumns().length === 1;
+              return (
+                <label
+                  key={column.id}
+                  className="flex items-center gap-2 rounded px-2 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                >
+                  <input
+                    type="checkbox"
+                    checked={visible}
+                    disabled={isLastVisibleColumn}
+                    onChange={(event) =>
+                      column.toggleVisibility(event.target.checked)
+                    }
+                  />
+                  {getColumnLabel(column.columnDef, column.id)}
+                </label>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
