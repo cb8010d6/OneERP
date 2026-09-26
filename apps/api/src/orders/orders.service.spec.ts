@@ -19,6 +19,8 @@ type MockPrisma = {
   stockQuant: {
     findMany: jest.Mock;
   };
+  inventoryTransaction: { findMany: jest.Mock };
+  inventoryReturnDocument: { findMany: jest.Mock };
 };
 
 describe('OrdersService', () => {
@@ -39,6 +41,8 @@ describe('OrdersService', () => {
     stockQuant: {
       findMany: jest.fn(),
     },
+    inventoryTransaction: { findMany: jest.fn() },
+    inventoryReturnDocument: { findMany: jest.fn() },
   };
 
   const eventQueueService = {
@@ -49,6 +53,8 @@ describe('OrdersService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    prisma.inventoryTransaction.findMany.mockResolvedValue([]);
+    prisma.inventoryReturnDocument.findMany.mockResolvedValue([]);
     service = new OrdersService(
       prisma as unknown as ConstructorParameters<typeof OrdersService>[0],
       eventQueueService as unknown as ConstructorParameters<
@@ -170,7 +176,7 @@ describe('OrdersService', () => {
       'company-1',
     );
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       orderId: 'order-1',
       orderNo: 'ORD-001',
       status: 'IN_PRODUCTION',
@@ -286,6 +292,124 @@ describe('OrdersService', () => {
         },
       }),
     );
+  });
+
+  it('batches tenant evidence and returns the same material assessment in list and detail', async () => {
+    const order = {
+      id: 'o1',
+      orderNo: 'ORD',
+      status: 'PENDING',
+      expectedDate: null,
+      items: [
+        { id: 'i1', productId: 'p1', quantity: 10 },
+        { id: 'i2', productId: 'p1', quantity: 5 },
+      ],
+      workOrders: [],
+    };
+    prisma.order.findMany.mockResolvedValue([
+      order,
+      { ...order, id: 'o2', orderNo: 'ORD-2' },
+    ]);
+    prisma.order.findFirst.mockResolvedValue(order);
+    prisma.order.count.mockResolvedValue(2);
+    prisma.product.findMany.mockResolvedValue([
+      { id: 'p1', sku: 'P', name: 'Product', materialId: 'm1' },
+    ]);
+    prisma.stockQuant.findMany.mockResolvedValue([
+      { materialId: 'm1', quantity: 5 },
+    ]);
+    prisma.inventoryTransaction.findMany.mockResolvedValue([
+      {
+        id: 's1',
+        companyId: 'c1',
+        materialId: 'm1',
+        type: 'OUTBOUND',
+        referenceNo: 'SALE-SHIP-ORD',
+        quantity: 10,
+      },
+      {
+        id: 'r2',
+        companyId: 'c1',
+        materialId: 'm1',
+        type: 'INBOUND',
+        referenceNo: 'SALE-SHIP-REV-ORD-2',
+        quantity: 1,
+      },
+    ]);
+    prisma.inventoryReturnDocument.findMany.mockResolvedValue([
+      { sourceDocumentId: 'o2', lines: [{ inventoryMoveId: 'r2' }] },
+    ]);
+    const list = await service.getOrdersByCompany('c1', { page: 1, limit: 20 });
+    expect(prisma.product.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.stockQuant.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.inventoryTransaction.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.inventoryReturnDocument.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['p1'] }, companyId: 'c1', isActive: true },
+      }),
+    );
+    expect(prisma.inventoryTransaction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ companyId: 'c1' }),
+      }),
+    );
+    expect(prisma.inventoryReturnDocument.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyId: 'c1',
+          returnType: 'SALES',
+          status: 'POSTED',
+          lines: { some: { inventoryMoveId: { in: ['r2'] } } },
+        },
+      }),
+    );
+    expect(prisma.order.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({
+          workOrders: expect.objectContaining({
+            where: {
+              companyId: 'c1',
+              status: { in: ['PENDING', 'IN_PROGRESS'] },
+            },
+          }),
+        }),
+      }),
+    );
+    const detail = await service.getOrderFulfillmentAvailability('o1', 'c1');
+    expect(detail.fulfillmentEvidence).toEqual(
+      list.data[0].fulfillmentEvidence,
+    );
+    expect(detail.fulfillmentEvidence).toMatchObject({
+      assessment: 'ON_HAND_COVERAGE',
+      materialDemandGroups: [
+        { orderedQty: 15, netShippedQty: 10, remainingQty: 5, onHandQty: 5 },
+      ],
+    });
+  });
+
+  it('does not hide invalid raw stock behind a valid aggregate', async () => {
+    prisma.order.findFirst.mockResolvedValue({
+      id: 'o1',
+      orderNo: 'ORD',
+      status: 'PENDING',
+      expectedDate: null,
+      items: [{ id: 'i1', productId: 'p1', quantity: 2 }],
+      workOrders: [],
+    });
+    prisma.product.findMany.mockResolvedValue([
+      { id: 'p1', sku: 'P', name: 'Product', materialId: 'm1' },
+    ]);
+    prisma.stockQuant.findMany.mockResolvedValue([
+      { materialId: 'm1', quantity: -1 },
+      { materialId: 'm1', quantity: 10 },
+    ]);
+    const detail = await service.getOrderFulfillmentAvailability('o1', 'c1');
+    expect(detail.fulfillmentEvidence).toMatchObject({
+      assessment: 'DATA_REVIEW',
+      materialDemandGroups: [{ onHandQty: null, remainingQty: null }],
+    });
+    expect(detail.overallStatus).toBe('UNMAPPED');
   });
 
   it('keeps draft status when discount is at most 10%', async () => {
