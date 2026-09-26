@@ -52,68 +52,246 @@ export class AccountingService {
 
   async postStockDepletedEntry(payload: {
     companyId: string;
+    transactionId: string;
+    idempotencyKey?: string;
     referenceNo?: string;
     materialId: string;
     quantity: number;
     unitCost?: number;
     operatorId?: string;
   }) {
-    const material = await this.prisma.material.findFirst({
-      where: { id: payload.materialId },
-      select: { name: true, unitPrice: true },
-    });
-    const materialCost = await this.prisma.materialCost.findUnique({
-      where: {
-        companyId_materialId: {
-          companyId: payload.companyId,
-          materialId: payload.materialId,
-        },
-      },
-      select: { averageCost: true },
-    });
-
-    const unitCost = new Decimal(
-      payload.unitCost ?? materialCost?.averageCost ?? material?.unitPrice ?? 0,
-    );
-    const amount = this.money(unitCost.times(payload.quantity ?? 0));
-    if (amount.lte(0)) {
-      this.logger.warn(
-        `跳过零成本库存出库凭证: material=${payload.materialId}`,
-      );
-      return null;
+    if (
+      !payload.companyId ||
+      !payload.transactionId ||
+      payload.idempotencyKey !== `stock_depleted:${payload.transactionId}`
+    ) {
+      throw new BadRequestException('库存事件缺少有效的流水身份或幂等键');
     }
-    const cogsAccount =
-      await this.financeAccountMappingService.resolveLineAccount(
-        payload.companyId,
-        'COGS',
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'SELECT pg_advisory_xact_lock(hashtext($1))',
+        `journal-entry-${payload.companyId}`,
       );
-    const inventoryAccount =
-      await this.financeAccountMappingService.resolveLineAccount(
-        payload.companyId,
-        'INVENTORY',
-      );
+      const movement = await tx.inventoryTransaction.findFirst({
+        where: {
+          id: payload.transactionId,
+          companyId: payload.companyId,
+          type: 'OUTBOUND',
+        },
+        include: { material: true, sourceLocation: true },
+      });
+      if (
+        !movement ||
+        !movement.quantity.gt(0) ||
+        movement.destLocationId ||
+        movement.sourceLocation?.companyId !== payload.companyId ||
+        (movement.material.companyId !== null &&
+          movement.material.companyId !== payload.companyId)
+      ) {
+        throw new BadRequestException('库存出库流水不存在或不属于当前公司');
+      }
 
-    return this.createBalancedEntry({
-      companyId: payload.companyId,
-      journalCode: 'INV',
-      journalName: 'Inventory Journal',
-      journalType: JournalType.INVENTORY,
-      ref: payload.referenceNo,
-      description: `库存出库自动凭证: ${material?.name ?? payload.materialId}`,
-      createdBy: payload.operatorId,
-      lines: [
-        {
-          ...cogsAccount,
-          debit: amount,
-          memo: '库存出库结转成本',
+      const matchesMovement = (event: Record<string, unknown>) =>
+        event.companyId === movement.companyId &&
+        event.transactionId === movement.id &&
+        event.idempotencyKey === payload.idempotencyKey &&
+        event.materialId === movement.materialId &&
+        (event.referenceNo ?? null) === movement.referenceNo &&
+        this.isFiniteStockNumber(event.quantity) &&
+        movement.quantity.eq(String(event.quantity));
+      if (!matchesMovement(payload)) {
+        throw new BadRequestException('库存事件与出库流水不一致');
+      }
+
+      // The immutable movement has no cost column. Read the original durable
+      // outbox snapshot, never an arbitrary caller-supplied price.
+      const queued = await tx.eventDlq.findMany({
+        where: {
+          companyId: payload.companyId,
+          eventName: 'inventory.stock_depleted',
+          idempotencyKey: payload.idempotencyKey,
         },
-        {
-          ...inventoryAccount,
-          credit: amount,
-          memo: '库存出库结转成本',
+        select: { payload: true },
+      });
+      const snapshot = queued[0]?.payload;
+      if (
+        !snapshot ||
+        typeof snapshot !== 'object' ||
+        Array.isArray(snapshot) ||
+        !matchesMovement(snapshot)
+      ) {
+        throw new BadRequestException('库存事件缺少匹配的持久化成本来源');
+      }
+      const snapshotCost = snapshot.unitCost;
+      if (
+        (snapshotCost !== undefined &&
+          (!this.isFiniteStockNumber(snapshotCost) ||
+            new Decimal(String(snapshotCost)).lt(0))) ||
+        (payload.unitCost !== undefined &&
+          (!this.isFiniteStockNumber(payload.unitCost) ||
+            snapshotCost === undefined ||
+            !new Decimal(payload.unitCost).eq(String(snapshotCost))))
+      ) {
+        throw new BadRequestException('库存事件成本与持久化来源不一致');
+      }
+      if (
+        queued.some(({ payload: candidate }) => {
+          if (
+            !candidate ||
+            typeof candidate !== 'object' ||
+            Array.isArray(candidate) ||
+            !matchesMovement(candidate)
+          )
+            return true;
+          if (snapshotCost === undefined)
+            return candidate.unitCost !== undefined;
+          return (
+            !this.isFiniteStockNumber(candidate.unitCost) ||
+            !new Decimal(String(snapshotCost)).eq(candidate.unitCost)
+          );
+        })
+      ) {
+        throw new BadRequestException('库存事件存在冲突的持久化来源');
+      }
+
+      const existing = await tx.journalEntry.findFirst({
+        where: {
+          companyId: payload.companyId,
+          inventoryTransactionId: movement.id,
         },
-      ],
+        include: {
+          lines: { include: { account: true }, orderBy: { lineNo: 'asc' } },
+          journal: true,
+        },
+      });
+      if (existing) {
+        if (
+          existing.journal.code !== 'INV' ||
+          existing.ref !== movement.referenceNo ||
+          existing.postingStatus !== EntryPostingStatus.POSTED
+        ) {
+          throw new BadRequestException('库存流水关联凭证状态或来源不一致');
+        }
+        return {
+          ...existing,
+          totals: {
+            debit: this.money(
+              existing.lines.reduce(
+                (sum, line) => sum.plus(line.debit),
+                new Decimal(0),
+              ),
+            ).toNumber(),
+            credit: this.money(
+              existing.lines.reduce(
+                (sum, line) => sum.plus(line.credit),
+                new Decimal(0),
+              ),
+            ).toNumber(),
+          },
+        };
+      }
+      // Historic reference-only journals cannot be safely attributed to one of
+      // several movements. Leave the event retryable for controlled review.
+      if (
+        await tx.journalEntry.findFirst({
+          where: {
+            companyId: payload.companyId,
+            ref: movement.referenceNo,
+            inventoryTransactionId: null,
+            journal: { code: 'INV' },
+          },
+          select: { id: true },
+        })
+      ) {
+        throw new BadRequestException(
+          '库存引用存在未关联流水的历史凭证，需人工核对',
+        );
+      }
+
+      // Only legitimate legacy outbox events omit the snapshot. Preserve the
+      // existing moving-average/material-price fallback for that case.
+      const materialCost =
+        snapshotCost === undefined
+          ? await tx.materialCost.findUnique({
+              where: {
+                companyId_materialId: {
+                  companyId: payload.companyId,
+                  materialId: movement.materialId,
+                },
+              },
+              select: { averageCost: true },
+            })
+          : null;
+      const unitCost = new Decimal(
+        snapshotCost === undefined
+          ? (materialCost?.averageCost ?? movement.material.unitPrice ?? 0)
+          : String(snapshotCost),
+      );
+      if (!unitCost.isFinite() || unitCost.lt(0)) {
+        throw new BadRequestException(
+          '库存成本来源必须为有限非负数，需核对成本数据',
+        );
+      }
+      const amount = this.money(unitCost.times(movement.quantity));
+      if (amount.lte(0)) {
+        this.logger.warn(
+          `跳过零成本库存出库凭证: material=${movement.materialId}`,
+        );
+        return null;
+      }
+      const entryDate = new Date();
+      await this.accountingPeriodService?.assertOpenForDate(
+        payload.companyId,
+        entryDate,
+        tx,
+      );
+      await this.ensureDefaultMasterData(payload.companyId, tx);
+      const cogsAccount =
+        await this.financeAccountMappingService.resolveLineAccount(
+          payload.companyId,
+          'COGS',
+          undefined,
+          tx,
+        );
+      const inventoryAccount =
+        await this.financeAccountMappingService.resolveLineAccount(
+          payload.companyId,
+          'INVENTORY',
+          undefined,
+          tx,
+        );
+      return this.createBalancedEntryInTransaction(
+        tx,
+        {
+          companyId: payload.companyId,
+          journalCode: 'INV',
+          journalName: 'Inventory Journal',
+          journalType: JournalType.INVENTORY,
+          ref: movement.referenceNo ?? undefined,
+          description: `库存出库自动凭证: ${movement.material.name}`,
+          createdBy: movement.operatorId,
+          lines: [
+            { ...cogsAccount, debit: amount, memo: '库存出库结转成本' },
+            { ...inventoryAccount, credit: amount, memo: '库存出库结转成本' },
+          ],
+        },
+        entryDate,
+        movement.id,
+      );
     });
+  }
+
+  private isFiniteStockNumber(value: unknown): value is number | string {
+    if (
+      typeof value !== 'number' &&
+      (typeof value !== 'string' || value.trim() === '')
+    )
+      return false;
+    try {
+      return new Decimal(value).isFinite();
+    } catch {
+      return false;
+    }
   }
 
   async postInvoicePostedEntry(payload: {
@@ -941,128 +1119,36 @@ export class AccountingService {
         `journal-entry-${input.companyId}`,
       );
 
-      // Supplier events may be delivered concurrently or retried after their
-      // journal commits. Check under the same lock as creation; the listener's
-      // earlier lookup alone cannot prevent two callers from both creating.
-      // Preserve existing source references, including journals written before
-      // this guard. Other callers may intentionally reuse a manual reference.
-      if (input.supplierPostingSource) {
-        const source = input.supplierPostingSource;
-        const ref =
-          source.kind === 'payment'
-            ? `SUPPAY-${source.paymentId}`
-            : source.creditNo;
-        const journalCodes =
-          source.kind === 'payment' ? ['BNK', 'CSH'] : ['PUR'];
-        if (input.ref !== ref || !journalCodes.includes(input.journalCode)) {
-          throw new BadRequestException('供应商凭证来源与凭证引用不一致');
-        }
-        const existing = await tx.journalEntry.findFirst({
-          where: {
-            companyId: input.companyId,
-            ref,
-            journal: { code: { in: journalCodes } },
-          },
-          include: {
-            lines: {
-              include: { account: true },
-              orderBy: { lineNo: 'asc' },
-            },
-            journal: true,
-          },
-        });
-        if (existing) {
-          return {
-            ...existing,
-            totals: {
-              debit: this.money(
-                existing.lines.reduce(
-                  (sum, line) => sum.plus(line.debit),
-                  new Decimal(0),
-                ),
-              ).toNumber(),
-              credit: this.money(
-                existing.lines.reduce(
-                  (sum, line) => sum.plus(line.credit),
-                  new Decimal(0),
-                ),
-              ).toNumber(),
-            },
-          };
-        }
+      return this.createBalancedEntryInTransaction(tx, input, entryDate);
+    });
+  }
+
+  private async createBalancedEntryInTransaction(
+    tx: Prisma.TransactionClient,
+    input: CreateBalancedEntryInput,
+    entryDate: Date,
+    inventoryTransactionId?: string,
+  ) {
+    // Supplier events may be delivered concurrently or retried after their
+    // journal commits. Check under the same lock as creation; the listener's
+    // earlier lookup alone cannot prevent two callers from both creating.
+    // Preserve existing source references, including journals written before
+    // this guard. Other callers may intentionally reuse a manual reference.
+    if (input.supplierPostingSource) {
+      const source = input.supplierPostingSource;
+      const ref =
+        source.kind === 'payment'
+          ? `SUPPAY-${source.paymentId}`
+          : source.creditNo;
+      const journalCodes = source.kind === 'payment' ? ['BNK', 'CSH'] : ['PUR'];
+      if (input.ref !== ref || !journalCodes.includes(input.journalCode)) {
+        throw new BadRequestException('供应商凭证来源与凭证引用不一致');
       }
-
-      const lines = input.lines.map((line) => ({
-        ...line,
-        debit: this.money(line.debit ?? 0),
-        credit: this.money(line.credit ?? 0),
-      }));
-
-      this.validateLines(lines);
-      const totalDebit = this.money(
-        lines.reduce((sum, line) => sum.plus(line.debit), new Decimal(0)),
-      );
-      const totalCredit = this.money(
-        lines.reduce((sum, line) => sum.plus(line.credit), new Decimal(0)),
-      );
-
-      if (!totalDebit.eq(totalCredit)) {
-        throw new BadRequestException(
-          `借贷不平衡: debit=${totalDebit.toFixed(2)}, credit=${totalCredit.toFixed(2)}`,
-        );
-      }
-
-      const journal = await tx.journal.upsert({
+      const existing = await tx.journalEntry.findFirst({
         where: {
-          companyId_code: {
-            companyId: input.companyId,
-            code: input.journalCode,
-          },
-        },
-        update: {
-          name: input.journalName,
-          type: input.journalType,
-          isActive: true,
-        },
-        create: {
           companyId: input.companyId,
-          code: input.journalCode,
-          name: input.journalName,
-          type: input.journalType,
-        },
-      });
-
-      const entry = await tx.journalEntry.create({
-        data: {
-          entryNo: this.generateEntryNo(),
-          date: entryDate,
-          ref: input.ref,
-          description: input.description,
-          journalId: journal.id,
-          companyId: input.companyId,
-          createdBy: input.createdBy,
-          postingStatus: EntryPostingStatus.POSTED,
-          postedAt: new Date(),
-          lines: {
-            create: await Promise.all(
-              lines.map(async (line, index) => {
-                const account = await this.getPostingAccount(
-                  tx,
-                  input.companyId,
-                  line.accountCode,
-                );
-
-                return {
-                  lineNo: index + 1,
-                  accountId: account.id,
-                  partnerId: line.partnerId,
-                  debit: line.debit,
-                  credit: line.credit,
-                  memo: line.memo,
-                };
-              }),
-            ),
-          },
+          ref,
+          journal: { code: { in: journalCodes } },
         },
         include: {
           lines: {
@@ -1072,15 +1158,116 @@ export class AccountingService {
           journal: true,
         },
       });
+      if (existing) {
+        return {
+          ...existing,
+          totals: {
+            debit: this.money(
+              existing.lines.reduce(
+                (sum, line) => sum.plus(line.debit),
+                new Decimal(0),
+              ),
+            ).toNumber(),
+            credit: this.money(
+              existing.lines.reduce(
+                (sum, line) => sum.plus(line.credit),
+                new Decimal(0),
+              ),
+            ).toNumber(),
+          },
+        };
+      }
+    }
 
-      return {
-        ...entry,
-        totals: {
-          debit: totalDebit.toNumber(),
-          credit: totalCredit.toNumber(),
+    const lines = input.lines.map((line) => ({
+      ...line,
+      debit: this.money(line.debit ?? 0),
+      credit: this.money(line.credit ?? 0),
+    }));
+
+    this.validateLines(lines);
+    const totalDebit = this.money(
+      lines.reduce((sum, line) => sum.plus(line.debit), new Decimal(0)),
+    );
+    const totalCredit = this.money(
+      lines.reduce((sum, line) => sum.plus(line.credit), new Decimal(0)),
+    );
+
+    if (!totalDebit.eq(totalCredit)) {
+      throw new BadRequestException(
+        `借贷不平衡: debit=${totalDebit.toFixed(2)}, credit=${totalCredit.toFixed(2)}`,
+      );
+    }
+
+    const journal = await tx.journal.upsert({
+      where: {
+        companyId_code: {
+          companyId: input.companyId,
+          code: input.journalCode,
         },
-      };
+      },
+      update: {
+        name: input.journalName,
+        type: input.journalType,
+        isActive: true,
+      },
+      create: {
+        companyId: input.companyId,
+        code: input.journalCode,
+        name: input.journalName,
+        type: input.journalType,
+      },
     });
+
+    const entry = await tx.journalEntry.create({
+      data: {
+        entryNo: this.generateEntryNo(),
+        date: entryDate,
+        ref: input.ref,
+        description: input.description,
+        journalId: journal.id,
+        companyId: input.companyId,
+        createdBy: input.createdBy,
+        postingStatus: EntryPostingStatus.POSTED,
+        postedAt: new Date(),
+        inventoryTransactionId,
+        lines: {
+          create: await Promise.all(
+            lines.map(async (line, index) => {
+              const account = await this.getPostingAccount(
+                tx,
+                input.companyId,
+                line.accountCode,
+              );
+
+              return {
+                lineNo: index + 1,
+                accountId: account.id,
+                partnerId: line.partnerId,
+                debit: line.debit,
+                credit: line.credit,
+                memo: line.memo,
+              };
+            }),
+          ),
+        },
+      },
+      include: {
+        lines: {
+          include: { account: true },
+          orderBy: { lineNo: 'asc' },
+        },
+        journal: true,
+      },
+    });
+
+    return {
+      ...entry,
+      totals: {
+        debit: totalDebit.toNumber(),
+        credit: totalCredit.toNumber(),
+      },
+    };
   }
 
   private async splitPurchasePriceVariance(input: {
@@ -1165,10 +1352,16 @@ export class AccountingService {
     return { inventory, expense };
   }
 
-  private async ensureDefaultMasterData(companyId: string) {
-    await this.financeAccountMappingService.ensureDefaultAccounts(companyId);
+  private async ensureDefaultMasterData(
+    companyId: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    await this.financeAccountMappingService.ensureDefaultAccounts(
+      companyId,
+      client,
+    );
 
-    await this.prisma.journal.upsert({
+    await client.journal.upsert({
       where: { companyId_code: { companyId, code: 'GEN' } },
       update: {
         name: 'General Journal',

@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 interface StockDepletedPayload {
   companyId: string;
+  transactionId: string;
   idempotencyKey?: string;
   materialId: string;
   quantity: number;
@@ -83,39 +84,18 @@ export class FinanceBridgeListener {
     private readonly prisma: PrismaService,
   ) {}
 
-  @OnEvent('inventory.stock_depleted')
+  @OnEvent('inventory.stock_depleted', { suppressErrors: false })
   async onStockDepleted(payload: StockDepletedPayload) {
     try {
-      // 幂等检查：若已有同 referenceNo 的 INV 凭证则跳过
-      if (payload.referenceNo) {
-        const existing = await this.prisma.journalEntry.findFirst({
-          where: {
-            companyId: payload.companyId,
-            ref: payload.referenceNo,
-            journal: { code: 'INV' },
-          },
-          select: { id: true },
-        });
-
-        if (existing) {
-          this.logger.debug(
-            `幂等跳过库存凭证: ref=${payload.referenceNo} 已存在 (id=${existing.id})`,
-          );
-          return;
-        }
-      }
-
+      // Allocations and partial shipments share a business reference. Only the
+      // accounting transaction can deduplicate the immutable stock movement.
       await this.accountingService.postStockDepletedEntry(payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`库存事件记账失败: ${message}`);
-      await this.financeDlqService.recordFailure({
-        eventName: 'inventory.stock_depleted',
-        idempotencyKey: payload.idempotencyKey,
-        payload: payload as unknown as Record<string, unknown>,
-        error: message,
-        companyId: payload.companyId,
-      });
+      // Keep the original durable queue item retryable. Re-enqueueing and
+      // swallowing would resolve it and deduplicate away its failed posting.
+      throw error;
     }
   }
 

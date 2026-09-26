@@ -9,6 +9,17 @@ import { FinanceDlqService } from './finance-dlq.service';
 
 describe.each([
   [
+    'inventory.stock_depleted',
+    'stock_depleted:move-1',
+    'postStockDepletedEntry',
+    {
+      transactionId: 'move-1',
+      materialId: 'm1',
+      quantity: 2,
+      referenceNo: 'SALE-SHIP-1',
+    },
+  ],
+  [
     'purchase.supplier_payment.posted',
     'supplier_payment_posted:sp-1',
     'postSupplierPaymentEntry',
@@ -21,12 +32,13 @@ describe.each([
     { supplierCreditNoteId: 'scn-1' },
   ],
 ] as const)(
-  'Supplier queue/listener integration: %s',
+  'Finance queue/listener integration: %s',
   (eventName, idempotencyKey, accountingMethod, document) => {
     let module: TestingModule;
     let queue: EventQueueService;
     let event: EventDlq;
     const accounting = {
+      postStockDepletedEntry: jest.fn(),
       postSupplierPaymentEntry: jest.fn(),
       postSupplierCreditNotePostedEntry: jest.fn(),
     };
@@ -139,6 +151,15 @@ describe.each([
         id: 'event-1',
         status: 'RESOLVED',
       });
+      if (eventName === 'inventory.stock_depleted') {
+        // A shared reference is not a stock-movement receipt. The accounting
+        // transaction, not this listener, must deduplicate movement delivery.
+        expect(accounting[accountingMethod]).toHaveBeenCalledWith(
+          event.payload,
+        );
+        expect(prisma.journalEntry.findFirst).not.toHaveBeenCalled();
+        return;
+      }
       expect(accounting[accountingMethod]).not.toHaveBeenCalled();
       expect(financeDlq.recordFailure).not.toHaveBeenCalled();
       expect(prisma.journalEntry.findFirst).toHaveBeenCalledWith(

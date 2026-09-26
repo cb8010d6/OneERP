@@ -1,5 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AccountingPeriodStatus, EntryPostingStatus } from '@prisma/client';
+import {
+  AccountingPeriodStatus,
+  EntryPostingStatus,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpsertAccountingPeriodDto } from './dto/accounting-period.dto';
 
@@ -126,10 +130,14 @@ export class AccountingPeriodService {
     });
   }
 
-  async assertOpenForDate(companyId: string, value: Date | string) {
+  async assertOpenForDate(
+    companyId: string,
+    value: Date | string,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
     const postingDate =
       value instanceof Date ? value : this.parseDate(value, '过账日期无效');
-    const period = await this.prisma.accountingPeriod.findFirst({
+    const period = await client.accountingPeriod.findFirst({
       where: {
         companyId,
         startDate: { lte: postingDate },
