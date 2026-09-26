@@ -33,6 +33,9 @@ interface CreateBalancedEntryInput {
   ref?: string;
   description?: string;
   createdBy?: string;
+  supplierPostingSource?:
+    | { kind: 'payment'; paymentId: string }
+    | { kind: 'credit-note'; creditNo: string };
   lines: JournalLineInput[];
 }
 
@@ -797,6 +800,10 @@ export class AccountingService {
       ref: creditNote.creditNo,
       description: `供应商扣款自动凭证: ${creditNote.creditNo}`,
       createdBy: payload.operatorId,
+      supplierPostingSource: {
+        kind: 'credit-note',
+        creditNo: creditNote.creditNo,
+      },
       lines: [
         {
           ...payableAccount,
@@ -892,6 +899,7 @@ export class AccountingService {
       ref: `SUPPAY-${payment.id}`,
       description: `供应商付款自动凭证: ${payment.paymentNo}`,
       createdBy: payload.operatorId,
+      supplierPostingSource: { kind: 'payment', paymentId: payment.id },
       lines: [
         ...payment.allocations.map((allocation) => ({
           ...payableAccount,
@@ -932,6 +940,57 @@ export class AccountingService {
         'SELECT pg_advisory_xact_lock(hashtext($1))',
         `journal-entry-${input.companyId}`,
       );
+
+      // Supplier events may be delivered concurrently or retried after their
+      // journal commits. Check under the same lock as creation; the listener's
+      // earlier lookup alone cannot prevent two callers from both creating.
+      // Preserve existing source references, including journals written before
+      // this guard. Other callers may intentionally reuse a manual reference.
+      if (input.supplierPostingSource) {
+        const source = input.supplierPostingSource;
+        const ref =
+          source.kind === 'payment'
+            ? `SUPPAY-${source.paymentId}`
+            : source.creditNo;
+        const journalCodes =
+          source.kind === 'payment' ? ['BNK', 'CSH'] : ['PUR'];
+        if (input.ref !== ref || !journalCodes.includes(input.journalCode)) {
+          throw new BadRequestException('供应商凭证来源与凭证引用不一致');
+        }
+        const existing = await tx.journalEntry.findFirst({
+          where: {
+            companyId: input.companyId,
+            ref,
+            journal: { code: { in: journalCodes } },
+          },
+          include: {
+            lines: {
+              include: { account: true },
+              orderBy: { lineNo: 'asc' },
+            },
+            journal: true,
+          },
+        });
+        if (existing) {
+          return {
+            ...existing,
+            totals: {
+              debit: this.money(
+                existing.lines.reduce(
+                  (sum, line) => sum.plus(line.debit),
+                  new Decimal(0),
+                ),
+              ).toNumber(),
+              credit: this.money(
+                existing.lines.reduce(
+                  (sum, line) => sum.plus(line.credit),
+                  new Decimal(0),
+                ),
+              ).toNumber(),
+            },
+          };
+        }
+      }
 
       const lines = input.lines.map((line) => ({
         ...line,

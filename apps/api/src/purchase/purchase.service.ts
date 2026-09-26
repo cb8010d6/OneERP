@@ -5,7 +5,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { EntryPostingStatus } from '@prisma/client';
+import { EntryPostingStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import {
@@ -705,50 +705,91 @@ export class PurchaseService {
     supplierCreditNoteId: string,
     operatorId?: string,
   ) {
-    const creditNote = await this.prisma.supplierCreditNote.findFirst({
-      where: { id: supplierCreditNoteId, companyId },
-      include: {
-        purchaseInvoice: {
-          include: {
-            supplierCreditNotes: {
-              where: {
-                postingStatus: EntryPostingStatus.POSTED,
-                id: { not: supplierCreditNoteId },
+    const outcome = await this.withSupplierPostingTransaction(async (tx) => {
+      const creditNote = await tx.supplierCreditNote.findFirst({
+        where: { id: supplierCreditNoteId, companyId },
+        include: {
+          supplier: { select: { companyId: true } },
+          inventoryReturnDocument: { select: { companyId: true } },
+          purchaseInvoice: {
+            include: {
+              supplierCreditNotes: {
+                where: {
+                  postingStatus: EntryPostingStatus.POSTED,
+                  id: { not: supplierCreditNoteId },
+                },
+                select: { amount: true, postingStatus: true },
               },
-              select: { amount: true, postingStatus: true },
+              supplierPaymentAllocations: {
+                where: {
+                  supplierPayment: { postingStatus: EntryPostingStatus.POSTED },
+                },
+                select: { amount: true },
+              },
             },
           },
         },
-      },
-    });
-    if (!creditNote) {
-      throw new NotFoundException('供应商贷项不存在');
-    }
-    if (creditNote.postingStatus === EntryPostingStatus.POSTED) {
-      return {
-        supplierCreditNoteId: creditNote.id,
-        creditNo: creditNote.creditNo,
-        postingStatus: creditNote.postingStatus,
-        message: '供应商贷项已过账，无需重复处理',
-      };
-    }
-    await this.assertAccountingPeriodOpen(companyId, creditNote.creditDate);
+      });
+      if (!creditNote) {
+        throw new NotFoundException('供应商贷项不存在');
+      }
+      if (
+        creditNote.supplier.companyId !== companyId ||
+        creditNote.purchaseInvoice.companyId !== companyId ||
+        (creditNote.inventoryReturnDocument &&
+          creditNote.inventoryReturnDocument.companyId !== companyId)
+      ) {
+        throw new NotFoundException('供应商贷项关联资源不存在或无权访问');
+      }
+      if (creditNote.purchaseInvoice.supplierId !== creditNote.supplierId) {
+        throw new BadRequestException('供应商贷项与应付发票供应商不一致');
+      }
+      if (creditNote.postingStatus === EntryPostingStatus.POSTED) {
+        return {
+          result: {
+            supplierCreditNoteId: creditNote.id,
+            creditNo: creditNote.creditNo,
+            postingStatus: creditNote.postingStatus,
+            message: '供应商贷项已过账，无需重复处理',
+          },
+          eventId: null,
+        };
+      }
+      if (
+        creditNote.postingStatus === EntryPostingStatus.CANCELLED ||
+        creditNote.status === 'CANCELLED'
+      ) {
+        throw new BadRequestException('已取消的供应商贷项不能过账');
+      }
+      await this.assertAccountingPeriodOpen(companyId, creditNote.creditDate);
 
-    const amount = purchaseMoney(creditNote.amount);
-    const invoiceAmount = purchaseMoney(creditNote.purchaseInvoice.amount);
-    const postedCreditAmount = postedSupplierCreditAmount(
-      creditNote.purchaseInvoice.supplierCreditNotes,
-    );
-    if (amount.gt(invoiceAmount.minus(postedCreditAmount).plus(0.01))) {
-      throw new BadRequestException('供应商贷项金额超过发票剩余应付');
-    }
+      const amount = purchaseMoney(creditNote.amount);
+      if (amount.lte(0))
+        throw new BadRequestException('供应商贷项金额必须大于0');
+      const invoiceAmount = purchaseMoney(creditNote.purchaseInvoice.amount);
+      const postedCreditAmount = postedSupplierCreditAmount(
+        creditNote.purchaseInvoice.supplierCreditNotes,
+      );
+      if (amount.gt(invoiceAmount.minus(postedCreditAmount).plus(0.01))) {
+        throw new BadRequestException('供应商贷项金额超过发票剩余应付');
+      }
 
-    const nextCreditedAmount = postedCreditAmount.plus(amount);
-    const status = supplierSettlementStatus(invoiceAmount, nextCreditedAmount);
+      // Preserve the existing credit cap. Payments affect settlement status,
+      // not the policy for the maximum credit amount.
+      const nextCreditedAmount = postedCreditAmount
+        .plus(amount)
+        .plus(
+          postedSupplierPaymentAmount(
+            creditNote.purchaseInvoice.supplierPaymentAllocations,
+          ),
+        );
+      const status = supplierSettlementStatus(
+        invoiceAmount,
+        nextCreditedAmount,
+      );
 
-    const posted = await this.prisma.$transaction(async (tx) => {
       const posted = await tx.supplierCreditNote.update({
-        where: { id: creditNote.id },
+        where: { id: creditNote.id, companyId },
         data: {
           status: 'POSTED',
           postingStatus: EntryPostingStatus.POSTED,
@@ -756,25 +797,26 @@ export class PurchaseService {
         },
       });
       await tx.purchaseInvoice.update({
-        where: { id: creditNote.purchaseInvoiceId },
+        where: { id: creditNote.purchaseInvoiceId, companyId },
         data: { status },
       });
-      return posted;
-    });
 
-    await this.eventQueueService.publish({
-      eventName: 'purchase.supplier_credit_note.posted',
-      idempotencyKey: `supplier_credit_note_posted:${creditNote.id}`,
-      companyId,
-      payload: {
-        companyId,
+      const event = await this.eventQueueService.enqueueInTransaction(tx, {
+        eventName: 'purchase.supplier_credit_note.posted',
         idempotencyKey: `supplier_credit_note_posted:${creditNote.id}`,
-        supplierCreditNoteId: creditNote.id,
-        operatorId,
-      },
+        companyId,
+        payload: {
+          companyId,
+          idempotencyKey: `supplier_credit_note_posted:${creditNote.id}`,
+          supplierCreditNoteId: creditNote.id,
+          operatorId,
+        },
+      });
+      return { result: posted, eventId: event?.id ?? null };
     });
-
-    return posted;
+    if (outcome.eventId)
+      await this.eventQueueService.dispatchById(outcome.eventId);
+    return outcome.result;
   }
 
   async postSupplierPayment(
@@ -782,79 +824,108 @@ export class PurchaseService {
     supplierPaymentId: string,
     operatorId?: string,
   ) {
-    const payment = await this.prisma.supplierPayment.findFirst({
-      where: { id: supplierPaymentId, companyId },
-      include: {
-        allocations: {
-          include: {
-            purchaseInvoice: {
-              include: {
-                supplierCreditNotes: {
-                  where: { postingStatus: EntryPostingStatus.POSTED },
-                  select: { amount: true, postingStatus: true },
-                },
-                supplierPaymentAllocations: {
-                  where: {
-                    supplierPayment: {
-                      postingStatus: EntryPostingStatus.POSTED,
-                      id: { not: supplierPaymentId },
-                    },
+    const outcome = await this.withSupplierPostingTransaction(async (tx) => {
+      const payment = await tx.supplierPayment.findFirst({
+        where: { id: supplierPaymentId, companyId },
+        include: {
+          supplier: { select: { companyId: true } },
+          allocations: {
+            include: {
+              purchaseInvoice: {
+                include: {
+                  supplierCreditNotes: {
+                    where: { postingStatus: EntryPostingStatus.POSTED },
+                    select: { amount: true, postingStatus: true },
                   },
-                  select: { amount: true },
+                  supplierPaymentAllocations: {
+                    where: {
+                      supplierPayment: {
+                        postingStatus: EntryPostingStatus.POSTED,
+                        id: { not: supplierPaymentId },
+                      },
+                    },
+                    select: { amount: true },
+                  },
                 },
               },
             },
           },
         },
-      },
-    });
-    if (!payment) {
-      throw new NotFoundException('供应商付款不存在');
-    }
-    if (payment.postingStatus === EntryPostingStatus.POSTED) {
-      return {
-        supplierPaymentId: payment.id,
-        paymentNo: payment.paymentNo,
-        postingStatus: payment.postingStatus,
-        message: '供应商付款已过账，无需重复处理',
-      };
-    }
-    await this.assertAccountingPeriodOpen(companyId, payment.paymentDate);
-    if (!payment.allocations.length) {
-      throw new BadRequestException('供应商付款缺少核销明细');
-    }
-
-    const paymentAmount = purchaseMoney(payment.amount);
-    const allocatedTotal = purchaseMoney(
-      payment.allocations.reduce(
-        (sum, allocation) => sum.plus(allocation.amount),
-        new Decimal(0),
-      ),
-    );
-    if (allocatedTotal.gt(paymentAmount.plus(0.01))) {
-      throw new BadRequestException('核销金额合计不能超过付款金额');
-    }
-
-    for (const allocation of payment.allocations) {
-      const openAmount = purchaseInvoiceOpenAmount(allocation.purchaseInvoice);
-      const amount = purchaseMoney(allocation.amount);
-      if (amount.gt(openAmount.plus(0.01))) {
-        throw new BadRequestException(
-          `应付发票 ${allocation.purchaseInvoice.invoiceNo} 付款金额超过未结应付`,
-        );
+      });
+      if (!payment) {
+        throw new NotFoundException('供应商付款不存在');
       }
-    }
+      if (payment.supplier.companyId !== companyId) {
+        throw new NotFoundException('供应商不存在或无权访问');
+      }
+      for (const allocation of payment.allocations) {
+        if (
+          allocation.companyId !== companyId ||
+          allocation.purchaseInvoice.companyId !== companyId
+        ) {
+          throw new NotFoundException('应付发票核销明细不存在或无权访问');
+        }
+        if (allocation.purchaseInvoice.supplierId !== payment.supplierId) {
+          throw new BadRequestException('只能核销同一供应商的应付发票');
+        }
+      }
+      if (payment.postingStatus === EntryPostingStatus.POSTED) {
+        return {
+          result: {
+            supplierPaymentId: payment.id,
+            paymentNo: payment.paymentNo,
+            postingStatus: payment.postingStatus,
+            message: '供应商付款已过账，无需重复处理',
+          },
+          eventId: null,
+        };
+      }
+      if (payment.postingStatus === EntryPostingStatus.CANCELLED) {
+        throw new BadRequestException('已取消的供应商付款不能过账');
+      }
+      await this.assertAccountingPeriodOpen(companyId, payment.paymentDate);
+      if (!payment.allocations.length) {
+        throw new BadRequestException('供应商付款缺少核销明细');
+      }
 
-    const posted = await this.prisma.$transaction(async (tx) => {
+      const paymentAmount = purchaseMoney(payment.amount);
+      if (paymentAmount.lte(0))
+        throw new BadRequestException('付款金额必须大于0');
+      const allocatedTotal = purchaseMoney(
+        payment.allocations.reduce(
+          (sum, allocation) => sum.plus(allocation.amount),
+          new Decimal(0),
+        ),
+      );
+      if (allocatedTotal.gt(paymentAmount.plus(0.01))) {
+        throw new BadRequestException('核销金额合计不能超过付款金额');
+      }
+
+      for (const allocation of payment.allocations) {
+        const openAmount = purchaseInvoiceOpenAmount(
+          allocation.purchaseInvoice,
+        );
+        const amount = purchaseMoney(allocation.amount);
+        if (amount.lte(0))
+          throw new BadRequestException('付款核销金额必须大于0');
+        if (amount.gt(openAmount.plus(0.01))) {
+          throw new BadRequestException(
+            `应付发票 ${allocation.purchaseInvoice.invoiceNo} 付款金额超过未结应付`,
+          );
+        }
+      }
+
       const posted = await tx.supplierPayment.update({
-        where: { id: payment.id },
+        where: { id: payment.id, companyId },
         data: {
           postingStatus: EntryPostingStatus.POSTED,
           postedAt: new Date(),
         },
       });
 
-      for (const allocation of payment.allocations) {
+      for (const allocation of [...payment.allocations].sort((a, b) =>
+        a.purchaseInvoice.id.localeCompare(b.purchaseInvoice.id),
+      )) {
         const invoice = allocation.purchaseInvoice;
         const credited = postedSupplierCreditAmount(
           invoice.supplierCreditNotes,
@@ -867,27 +938,49 @@ export class PurchaseService {
           credited.plus(paidBefore).plus(allocation.amount),
         );
         await tx.purchaseInvoice.update({
-          where: { id: invoice.id },
+          where: { id: invoice.id, companyId },
           data: { status },
         });
       }
 
-      return posted;
-    });
-
-    await this.eventQueueService.publish({
-      eventName: 'purchase.supplier_payment.posted',
-      idempotencyKey: `supplier_payment_posted:${payment.id}`,
-      companyId,
-      payload: {
-        companyId,
+      const event = await this.eventQueueService.enqueueInTransaction(tx, {
+        eventName: 'purchase.supplier_payment.posted',
         idempotencyKey: `supplier_payment_posted:${payment.id}`,
-        supplierPaymentId: payment.id,
-        operatorId,
-      },
+        companyId,
+        payload: {
+          companyId,
+          idempotencyKey: `supplier_payment_posted:${payment.id}`,
+          supplierPaymentId: payment.id,
+          operatorId,
+        },
+      });
+      return { result: posted, eventId: event?.id ?? null };
     });
+    if (outcome.eventId)
+      await this.eventQueueService.dispatchById(outcome.eventId);
+    return outcome.result;
+  }
 
-    return posted;
+  private async withSupplierPostingTransaction<T>(
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    // Re-read and revalidate each attempt. Only committed results reach dispatch;
+    // validation and post-commit delivery errors are never retried here.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(work, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== 'P2034' ||
+          attempt >= 2
+        ) {
+          throw error;
+        }
+      }
+    }
   }
 
   private generateDocumentNo(prefix: string, attempt = 0) {
