@@ -313,7 +313,18 @@ describe('OrdersService', () => {
     prisma.order.findFirst.mockResolvedValue(order);
     prisma.order.count.mockResolvedValue(2);
     prisma.product.findMany.mockResolvedValue([
-      { id: 'p1', sku: 'P', name: 'Product', materialId: 'm1' },
+      {
+        id: 'p1',
+        sku: 'P',
+        name: 'Product',
+        materialId: 'm1',
+        material: {
+          companyId: 'c1',
+          name: 'Finished widget',
+          sku: 'FG-001',
+          unit: 'kg',
+        },
+      },
     ]);
     prisma.stockQuant.findMany.mockResolvedValue([
       { materialId: 'm1', quantity: 5 },
@@ -383,7 +394,15 @@ describe('OrdersService', () => {
     expect(detail.fulfillmentEvidence).toMatchObject({
       assessment: 'ON_HAND_COVERAGE',
       materialDemandGroups: [
-        { orderedQty: 15, netShippedQty: 10, remainingQty: 5, onHandQty: 5 },
+        {
+          orderedQty: 15,
+          netShippedQty: 10,
+          remainingQty: 5,
+          onHandQty: 5,
+          materialName: 'Finished widget',
+          materialSku: 'FG-001',
+          materialUnit: 'kg',
+        },
       ],
     });
   });

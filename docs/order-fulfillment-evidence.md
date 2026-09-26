@@ -15,6 +15,10 @@ material. Child `orderItemIds` and distinct `productIds` preserve traceability;
 there is deliberately no invented per-item shipped quantity. Missing/inactive
 products, unmapped products and foreign-company material mappings receive review
 groups (company-less global materials are allowed). Each group exposes
+nullable `materialName`, `materialSku`, and `materialUnit` for display alongside
+the material ID. Metadata is exposed only for verified same-company/global
+materials; foreign, unverified, and unmapped material metadata is null.
+Quantitative fields are
 `orderedQty`, `netShippedQty`, `remainingQty`, `onHandQty`, `openWorkOrderQty`,
 `onHandGapQty`, `projectedGapQty`, `assessment`, and machine-readable `issues`.
 All quantity fields are nullable: invalid source aggregates are null, and uncertain

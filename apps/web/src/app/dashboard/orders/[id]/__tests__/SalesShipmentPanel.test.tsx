@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
@@ -145,5 +145,85 @@ describe("SalesShipmentPanel", () => {
     expect(mockedToast.success).toHaveBeenCalledWith(
       "部分发货完成：过账 1 行，跳过 1 行",
     );
+  });
+
+  it("keeps one selected duplicate-product row and omits its zero sibling from the request", async () => {
+    const user = userEvent.setup();
+    mockedApi.post.mockResolvedValue({
+      data: {
+        status: "PARTIAL_SHIPPED",
+        postingStatus: "POSTED",
+        message: "销售订单部分发货完成",
+        postedLines: [],
+        skippedLines: [],
+      },
+    });
+
+    render(
+      <SalesShipmentPanel
+        orderId="order-1"
+        orderNo="SO-001"
+        items={[
+          { id: "line-a", productId: "product-1", quantity: 2 },
+          { id: "line-b", productId: "product-1", quantity: 3 },
+        ]}
+      />,
+    );
+
+    await screen.findByRole("option", { name: "成品仓 / 成品库位" });
+    const duplicateInputs = screen.getAllByRole("spinbutton", {
+      name: "产品 product-1 发货数量",
+    });
+    fireEvent.change(duplicateInputs[0], { target: { value: "2.5" } });
+    fireEvent.change(duplicateInputs[1], { target: { value: "0" } });
+    expect(duplicateInputs[0]).toHaveAttribute("step", "0.0001");
+    await user.click(screen.getByRole("button", { name: "执行整单原子发货" }));
+
+    await waitFor(() => {
+      expect(mockedApi.post).toHaveBeenCalledWith(
+        "/inventory/posting/sale-order/order-1/ship",
+        expect.objectContaining({
+          items: [{ productId: "product-1", shipQuantity: 2.5 }],
+        }),
+      );
+    });
+  });
+
+  it("aggregates both duplicate-product rows using four-place quantity precision", async () => {
+    const user = userEvent.setup();
+    mockedApi.post.mockResolvedValue({
+      data: {
+        status: "SHIPPED",
+        postingStatus: "POSTED",
+        message: "销售订单自动过账完成",
+        postedLines: [],
+        skippedLines: [],
+      },
+    });
+
+    render(
+      <SalesShipmentPanel
+        orderId="order-1"
+        orderNo="SO-001"
+        items={[
+          { id: "line-a", productId: "product-1", quantity: 0.0001 },
+          { id: "line-b", productId: "product-1", quantity: 8.9999 },
+          { id: "line-zero", productId: "product-2", quantity: 0 },
+        ]}
+      />,
+    );
+
+    await screen.findByRole("option", { name: "成品仓 / 成品库位" });
+    expect(screen.getByText(/本次申请 9 件/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "执行整单原子发货" }));
+
+    await waitFor(() => {
+      expect(mockedApi.post).toHaveBeenCalledWith(
+        "/inventory/posting/sale-order/order-1/ship",
+        expect.objectContaining({
+          items: [{ productId: "product-1", shipQuantity: 9 }],
+        }),
+      );
+    });
   });
 });

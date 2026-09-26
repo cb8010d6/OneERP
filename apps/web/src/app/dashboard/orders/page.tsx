@@ -2,16 +2,18 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AlertTriangle, Loader2, PackageCheck, Search } from 'lucide-react';
+import { Loader2, Search } from 'lucide-react';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
 import Pagination from '@/components/Pagination';
-
-type FulfillmentStatus =
-  | 'READY'
-  | 'COVERED_BY_PRODUCTION'
-  | 'SHORTAGE'
-  | 'UNMAPPED';
+import {
+  FulfillmentEvidenceAssessmentBadge,
+} from '@/components/orders/FulfillmentEvidenceCard';
+import {
+  parseFulfillmentEvidence,
+  type FulfillmentAssessment,
+} from '@/lib/order-fulfillment-evidence';
+import { useI18n } from '@/lib/i18n';
 
 type OrderRow = {
   id: string;
@@ -22,13 +24,7 @@ type OrderRow = {
   createdAt?: string;
   partner?: { name?: string };
   salesPerson?: { name?: string };
-  fulfillmentSummary?: {
-    overallStatus: FulfillmentStatus;
-    lineCount: number;
-    shortageLineCount: number;
-    unmappedLineCount: number;
-    totalShortageQty: number;
-  };
+  fulfillmentEvidence?: unknown;
 };
 
 interface PaginatedResponse<T> {
@@ -60,34 +56,9 @@ const orderStatusMap: Record<string, { label: string; className: string }> = {
   CANCELLED: { label: '已取消', className: 'bg-red-100 text-red-800' },
 };
 
-const fulfillmentStatusMap: Record<
-  FulfillmentStatus,
-  { label: string; className: string; tone: string }
-> = {
-  READY: {
-    label: '现货可交',
-    className: 'bg-emerald-50 text-emerald-700 ring-emerald-100',
-    tone: 'text-emerald-700',
-  },
-  COVERED_BY_PRODUCTION: {
-    label: '生产覆盖',
-    className: 'bg-blue-50 text-blue-700 ring-blue-100',
-    tone: 'text-blue-700',
-  },
-  SHORTAGE: {
-    label: '存在缺口',
-    className: 'bg-red-50 text-red-700 ring-red-100',
-    tone: 'text-red-700',
-  },
-  UNMAPPED: {
-    label: '缺成品映射',
-    className: 'bg-amber-50 text-amber-700 ring-amber-100',
-    tone: 'text-amber-700',
-  },
-};
-
 export default function OrdersPage() {
   const router = useRouter();
+  const { t } = useI18n();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -166,21 +137,33 @@ export default function OrdersPage() {
     setPagination((previous) => ({ ...previous, page: 1 }));
   };
 
+  const evidenceByOrder = useMemo(
+    () =>
+      new Map(
+        orders.map((order) => [
+          order.id,
+          parseFulfillmentEvidence(order.fulfillmentEvidence),
+        ]),
+      ),
+    [orders],
+  );
+
   const summary = useMemo(() => {
+    const assessments = [...evidenceByOrder.values()].map(
+      (evidence) => evidence?.assessment ?? null,
+    );
     return {
       total: orders.length,
-      shortage: orders.filter(
-        (order) => order.fulfillmentSummary?.overallStatus === 'SHORTAGE',
-      ).length,
-      unmapped: orders.filter(
-        (order) => order.fulfillmentSummary?.overallStatus === 'UNMAPPED',
-      ).length,
-      covered: orders.filter(
-        (order) =>
-          order.fulfillmentSummary?.overallStatus === 'COVERED_BY_PRODUCTION',
+      fulfilled: countAssessment(assessments, 'FULFILLED'),
+      onHand: countAssessment(assessments, 'ON_HAND_COVERAGE'),
+      workOrder: countAssessment(assessments, 'WORK_ORDER_COVERAGE'),
+      shortage: countAssessment(assessments, 'SHORTAGE'),
+      review: assessments.filter(
+        (assessment) => assessment === null || assessment === 'DATA_REVIEW',
       ).length,
     };
-  }, [orders]);
+  }, [evidenceByOrder, orders.length]);
+  const summaryValue = (value: number) => (loading || error ? '—' : value);
 
   return (
     <div className="space-y-4">
@@ -190,7 +173,7 @@ export default function OrdersPage() {
             销售订单
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            从订单列表直接识别现货、生产覆盖、缺口和成品映射风险。
+            {t('orderEvidenceListHint')}
           </p>
         </div>
         <button
@@ -202,26 +185,36 @@ export default function OrdersPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <SummaryCard
-          label="本页订单数"
-          value={summary.total}
+          label={t('orderEvidencePageOrderCount')}
+          value={summaryValue(summary.total)}
           tone="text-slate-900"
         />
         <SummaryCard
-          label="本页存在缺口"
-          value={summary.shortage}
+          label={t('orderEvidenceFulfilledOrders')}
+          value={summaryValue(summary.fulfilled)}
+          tone="text-slate-700"
+        />
+        <SummaryCard
+          label={t('orderEvidenceOnHandOrders')}
+          value={summaryValue(summary.onHand)}
+          tone="text-blue-700"
+        />
+        <SummaryCard
+          label={t('orderEvidenceWorkOrderOrders')}
+          value={summaryValue(summary.workOrder)}
+          tone="text-indigo-700"
+        />
+        <SummaryCard
+          label={t('orderEvidenceShortageOrders')}
+          value={summaryValue(summary.shortage)}
           tone="text-red-700"
         />
         <SummaryCard
-          label="本页缺成品映射"
-          value={summary.unmapped}
+          label={t('orderEvidenceReviewOrders')}
+          value={summaryValue(summary.review)}
           tone="text-amber-700"
-        />
-        <SummaryCard
-          label="本页生产覆盖"
-          value={summary.covered}
-          tone="text-blue-700"
         />
       </div>
 
@@ -273,13 +266,14 @@ export default function OrdersPage() {
           <>
             <div className="space-y-3 md:hidden">
               {orders.map((order) => {
+                const evidence = evidenceByOrder.get(order.id) ?? null;
                 const orderStatus = orderStatusMap[order.status] ?? {
                   label: order.status,
                   className: 'bg-slate-100 text-slate-700',
                 };
-                const fulfillment =
-                  order.fulfillmentSummary?.overallStatus ?? 'UNMAPPED';
-                const fulfillmentStatus = fulfillmentStatusMap[fulfillment];
+                const problemGroupCount = evidence
+                  ? evidence.materialDemandGroups.filter(isProblemGroup).length
+                  : null;
                 return (
                   <button
                     key={order.id}
@@ -300,13 +294,15 @@ export default function OrdersPage() {
                     </div>
 
                     <div className="mt-3 flex items-center justify-between gap-3">
-                      <FulfillmentBadge status={fulfillment} />
+                      <FulfillmentEvidenceAssessmentBadge
+                        assessment={evidence?.assessment ?? null}
+                      />
                       <div className="text-right">
-                        <p className="text-xs text-slate-500">缺口</p>
-                        <p
-                          className={`font-semibold ${fulfillmentStatus.tone}`}
-                        >
-                          {order.fulfillmentSummary?.totalShortageQty ?? 0}
+                        <p className="text-xs text-slate-500">
+                          {t('orderEvidenceProblemGroupCount')}
+                        </p>
+                        <p className="font-semibold text-slate-700">
+                          {problemGroupCount ?? '—'}
                         </p>
                       </div>
                     </div>
@@ -337,21 +333,24 @@ export default function OrdersPage() {
                   <th className="rounded-l-lg px-4 py-3">订单</th>
                   <th className="px-4 py-3">客户</th>
                   <th className="px-4 py-3">状态</th>
-                  <th className="px-4 py-3">交付风险</th>
-                  <th className="px-4 py-3 text-right">缺口</th>
+                  <th className="px-4 py-3">{t('orderEvidenceAssessmentColumn')}</th>
+                  <th className="px-4 py-3 text-right">
+                    {t('orderEvidenceProblemGroupCount')}
+                  </th>
                   <th className="px-4 py-3">交付日期</th>
                   <th className="rounded-r-lg px-4 py-3 text-right">金额</th>
                 </tr>
               </thead>
               <tbody>
                 {orders.map((order) => {
+                  const evidence = evidenceByOrder.get(order.id) ?? null;
                   const orderStatus = orderStatusMap[order.status] ?? {
                     label: order.status,
                     className: 'bg-slate-100 text-slate-700',
                   };
-                  const fulfillment =
-                    order.fulfillmentSummary?.overallStatus ?? 'UNMAPPED';
-                  const fulfillmentStatus = fulfillmentStatusMap[fulfillment];
+                  const problemGroupCount = evidence
+                    ? evidence.materialDemandGroups.filter(isProblemGroup).length
+                    : null;
                   return (
                     <tr
                       key={order.id}
@@ -378,12 +377,12 @@ export default function OrdersPage() {
                         <OrderStatusBadge status={orderStatus} />
                       </td>
                       <td className="px-4 py-3">
-                        <FulfillmentBadge status={fulfillment} />
+                        <FulfillmentEvidenceAssessmentBadge
+                          assessment={evidence?.assessment ?? null}
+                        />
                       </td>
-                      <td
-                        className={`px-4 py-3 text-right font-semibold ${fulfillmentStatus.tone}`}
-                      >
-                        {order.fulfillmentSummary?.totalShortageQty ?? 0}
+                      <td className="px-4 py-3 text-right font-semibold text-slate-700">
+                        {problemGroupCount ?? '—'}
                       </td>
                       <td className="px-4 py-3 text-slate-600">
                         {formatDate(order.expectedDate)}
@@ -434,20 +433,15 @@ function OrderStatusBadge({
   );
 }
 
-function FulfillmentBadge({ status }: { status: FulfillmentStatus }) {
-  const fulfillmentStatus = fulfillmentStatusMap[status];
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ${fulfillmentStatus.className}`}
-    >
-      {status === 'SHORTAGE' || status === 'UNMAPPED' ? (
-        <AlertTriangle className="h-3 w-3" />
-      ) : (
-        <PackageCheck className="h-3 w-3" />
-      )}
-      {fulfillmentStatus.label}
-    </span>
-  );
+function countAssessment(
+  assessments: Array<FulfillmentAssessment | null>,
+  requested: FulfillmentAssessment,
+) {
+  return assessments.filter((assessment) => assessment === requested).length;
+}
+
+function isProblemGroup(group: { assessment: FulfillmentAssessment }) {
+  return group.assessment === 'SHORTAGE' || group.assessment === 'DATA_REVIEW';
 }
 
 function formatDate(value?: string | null) {
@@ -460,7 +454,7 @@ function SummaryCard({
   tone,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   tone: string;
 }) {
   return (

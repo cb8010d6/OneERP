@@ -11,6 +11,9 @@ export type FulfillmentAssessment =
 
 export interface MaterialDemandGroup {
   materialId: string | null;
+  materialName: string | null;
+  materialSku: string | null;
+  materialUnit: string | null;
   orderItemIds: string[];
   productIds: string[];
   orderedQty: number | null;
@@ -81,7 +84,13 @@ export function buildFulfillmentEvidence(
   order: FulfillmentOrder,
   products: Map<
     string,
-    { materialId: string | null; materialCompanyId?: string | null }
+    {
+      materialId: string | null;
+      materialCompanyId?: string | null;
+      materialName?: string | null;
+      materialSku?: string | null;
+      materialUnit?: string | null;
+    }
   >,
   onHandByMaterial: Map<string, number>,
   ledger: FulfillmentLedgerRow[],
@@ -92,11 +101,19 @@ export function buildFulfillmentEvidence(
   for (const item of order.items) {
     const product = products.get(item.productId);
     const materialId = product?.materialId ?? null;
+    const visibleMaterial =
+      materialId !== null &&
+      product !== undefined &&
+      (product.materialCompanyId === null ||
+        product.materialCompanyId === companyId);
     const key = materialId ?? `unmapped:${item.productId}`;
     let group = groups.get(key);
     if (!group) {
       group = {
         materialId,
+        materialName: visibleMaterial ? (product.materialName ?? null) : null,
+        materialSku: visibleMaterial ? (product.materialSku ?? null) : null,
+        materialUnit: visibleMaterial ? (product.materialUnit ?? null) : null,
         orderItemIds: [],
         productIds: [],
         orderedQty: 0,

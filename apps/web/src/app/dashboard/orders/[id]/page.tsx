@@ -1,12 +1,24 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useParams, useRouter } from "next/navigation";
 import api from "../../../../lib/api";
 import { useAuthStore } from "../../../../store/authStore";
 import { ArrowLeft, Loader2, FileText, Package } from "lucide-react";
 import toast from "react-hot-toast";
 import { formatCurrency, formatDateTime } from "../../../../lib/format";
+import { useI18n } from "../../../../lib/i18n";
+import { parseFulfillmentEvidence } from "../../../../lib/order-fulfillment-evidence";
+import {
+  FulfillmentEvidenceCard,
+  type FulfillmentEvidenceLoadState,
+} from "../../../../components/orders/FulfillmentEvidenceCard";
 import { SalesShipmentPanel } from "./SalesShipmentPanel";
 import { SalesShipmentReversalPanel } from "./SalesShipmentReversalPanel";
 import { canCancelSalesOrder } from "../../../../lib/sales-order-transition";
@@ -41,7 +53,7 @@ interface OrderDetail {
     workOrderNo: string;
     status: string;
     plannedQty: number;
-    completedQty: number;
+    actualQty: number;
   }>;
   invoices: Array<{
     id: string;
@@ -49,22 +61,6 @@ interface OrderDetail {
     status: string;
     amount: number;
     paidAmount: number;
-  }>;
-}
-
-interface FulfillmentAvailability {
-  overallStatus: "READY" | "COVERED_BY_PRODUCTION" | "SHORTAGE" | "UNMAPPED";
-  lines: Array<{
-    orderItemId: string;
-    productId: string;
-    productSku: string | null;
-    productName: string;
-    orderedQty: number;
-    onHandQty: number;
-    inProductionQty: number;
-    projectedQty: number;
-    shortageQty: number;
-    status: "READY" | "COVERED_BY_PRODUCTION" | "SHORTAGE" | "UNMAPPED";
   }>;
 }
 
@@ -89,19 +85,6 @@ const statusMap: Record<string, { label: string; color: string }> = {
   CANCELLED: { label: "已取消", color: "bg-red-100 text-red-800" },
 };
 
-const fulfillmentStatusMap: Record<
-  FulfillmentAvailability["overallStatus"],
-  { label: string; color: string }
-> = {
-  READY: { label: "现货可交", color: "bg-green-100 text-green-800" },
-  COVERED_BY_PRODUCTION: {
-    label: "生产覆盖",
-    color: "bg-blue-100 text-blue-800",
-  },
-  SHORTAGE: { label: "存在缺口", color: "bg-red-100 text-red-800" },
-  UNMAPPED: { label: "缺成品映射", color: "bg-amber-100 text-amber-800" },
-};
-
 function resolveOrderAction(from: string, to: string) {
   if (from === "DRAFT" && to === "PENDING") return "submit";
   if (from === "PENDING" && to === "IN_PRODUCTION") return "start_production";
@@ -113,62 +96,147 @@ function resolveOrderAction(from: string, to: string) {
 export default function OrderDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { currentCompanyId } = useAuthStore();
+  const orderId = String(params.id ?? "");
+  const { currentCompanyId, companies, contextVersion, user } = useAuthStore();
+  const userId = user?.id ?? null;
+  const { t } = useI18n();
   const [order, setOrder] = useState<OrderDetail | null>(null);
-  const [fulfillmentAvailability, setFulfillmentAvailability] =
-    useState<FulfillmentAvailability | null>(null);
+  const [fulfillmentEvidence, setFulfillmentEvidence] = useState<unknown>(null);
+  const [evidenceLoadState, setEvidenceLoadState] =
+    useState<FulfillmentEvidenceLoadState>("loading");
   const [timeline, setTimeline] = useState<OrderTimelineEvent[]>([]);
+  const [timelineLoadFailed, setTimelineLoadFailed] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [orderLoadFailed, setOrderLoadFailed] = useState(false);
+  const readSequence = useRef(0);
+  const isMountedRef = useRef(false);
+  const activeContextRef = useRef({
+    orderId,
+    companyId: currentCompanyId,
+    contextVersion,
+    userId,
+  });
+  const [loadedContext, setLoadedContext] = useState<{
+    orderId: string;
+    companyId: string;
+    contextVersion: number;
+    userId: string | null;
+  } | null>(null);
+  const permissions =
+    companies.find((company) => company.id === currentCompanyId)?.permissions ??
+    [];
 
-  useEffect(() => {
-    const fetchOrder = async () => {
-      try {
-        const res = await api.get(`/orders/${params.id}`);
-        setOrder(res.data);
-      } catch {
-        toast.error("加载订单详情失败");
-        router.push("/dashboard/orders");
-      } finally {
-        setLoading(false);
-      }
+  useLayoutEffect(() => {
+    activeContextRef.current = {
+      orderId,
+      companyId: currentCompanyId,
+      contextVersion,
+      userId,
     };
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      readSequence.current += 1;
+    };
+  }, [contextVersion, currentCompanyId, orderId, userId]);
 
-    if (currentCompanyId && params.id) {
-      fetchOrder();
-    }
-  }, [currentCompanyId, params.id, router]);
-
-  useEffect(() => {
-    const fetchFulfillmentAvailability = async () => {
-      try {
-        const res = await api.get(
-          `/orders/${params.id}/fulfillment-availability`,
+  const refreshAuthoritativeOrder = useCallback(
+    async (initialLoad = false) => {
+      if (!isMountedRef.current || !currentCompanyId || !orderId) return;
+      const requestedContext = {
+        orderId,
+        companyId: currentCompanyId,
+        contextVersion,
+        userId,
+      };
+      const matchesActiveContext = () => {
+        const active = activeContextRef.current;
+        return (
+          active.orderId === requestedContext.orderId &&
+          active.companyId === requestedContext.companyId &&
+          active.contextVersion === requestedContext.contextVersion &&
+          active.userId === requestedContext.userId
         );
-        setFulfillmentAvailability(res.data);
-      } catch {
-        setFulfillmentAvailability(null);
-      }
-    };
+      };
+      // An old callback must not clear or supersede reads for a newly selected order.
+      if (!matchesActiveContext()) return;
+      const sequence = ++readSequence.current;
+      const requestedCompanyId = currentCompanyId;
+      const isCurrent = () =>
+        sequence === readSequence.current &&
+        matchesActiveContext() &&
+        useAuthStore.getState().currentCompanyId === requestedCompanyId &&
+        useAuthStore.getState().contextVersion === contextVersion &&
+        (useAuthStore.getState().user?.id ?? null) === userId;
 
-    if (currentCompanyId && params.id) {
-      fetchFulfillmentAvailability();
-    }
-  }, [currentCompanyId, params.id]);
+      setFulfillmentEvidence(null);
+      setEvidenceLoadState("loading");
+      setTimeline([]);
+      setTimelineLoadFailed(false);
+      setOrderLoadFailed(false);
+      if (initialLoad) {
+        setOrder(null);
+        setLoadedContext(null);
+        setLoading(true);
+      }
+
+      const [orderResult, availabilityResult, timelineResult] =
+        await Promise.allSettled([
+          api.get<OrderDetail>(`/orders/${orderId}`),
+          api.get<{ fulfillmentEvidence?: unknown }>(
+            `/orders/${orderId}/fulfillment-availability`,
+          ),
+          api.get<{ events?: OrderTimelineEvent[] }>(
+            `/orders/${orderId}/timeline`,
+          ),
+        ]);
+
+      if (!isCurrent()) return;
+
+      if (orderResult.status === "fulfilled") {
+        setOrder(orderResult.value.data);
+        setLoadedContext(requestedContext);
+      } else {
+        setOrder(null);
+        setLoadedContext(null);
+        setOrderLoadFailed(true);
+      }
+
+      if (availabilityResult.status === "fulfilled") {
+        const parsedEvidence = parseFulfillmentEvidence(
+          availabilityResult.value.data?.fulfillmentEvidence,
+        );
+        setFulfillmentEvidence(parsedEvidence);
+        setEvidenceLoadState(parsedEvidence ? "ready" : "unavailable");
+      } else {
+        setFulfillmentEvidence(null);
+        setEvidenceLoadState("error");
+      }
+
+      if (timelineResult.status === "fulfilled") {
+        const events = timelineResult.value.data?.events;
+        if (Array.isArray(events)) {
+          setTimeline(events);
+          setTimelineLoadFailed(false);
+        } else {
+          setTimeline([]);
+          setTimelineLoadFailed(true);
+        }
+      } else {
+        setTimeline([]);
+        setTimelineLoadFailed(true);
+      }
+
+      setLoading(false);
+    },
+    [contextVersion, currentCompanyId, orderId, userId],
+  );
 
   useEffect(() => {
-    const fetchTimeline = async () => {
-      try {
-        const res = await api.get(`/orders/${params.id}/timeline`);
-        setTimeline(res.data?.events || []);
-      } catch {
-        setTimeline([]);
-      }
-    };
-
-    if (currentCompanyId && params.id) {
-      fetchTimeline();
+    if (currentCompanyId && orderId) {
+      void refreshAuthoritativeOrder(true);
     }
-  }, [currentCompanyId, params.id]);
+  }, [currentCompanyId, orderId, refreshAuthoritativeOrder]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!order) return;
@@ -179,15 +247,21 @@ export default function OrderDetailPage() {
     }
 
     try {
-      await api.post(`/v1/workflow/order/${params.id}/transition`, { action });
+      await api.post(`/v1/workflow/order/${orderId}/transition`, { action });
       toast.success("状态更新成功");
-      setOrder((prev) => (prev ? { ...prev, status: newStatus } : null));
+      await refreshAuthoritativeOrder();
     } catch {
       toast.error("状态更新失败");
     }
   };
 
-  if (loading) {
+  const hasCurrentOrderContext =
+    loadedContext?.orderId === orderId &&
+    loadedContext.companyId === currentCompanyId &&
+    loadedContext.contextVersion === contextVersion &&
+    loadedContext.userId === userId;
+
+  if (loading || (!hasCurrentOrderContext && !orderLoadFailed)) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
@@ -195,16 +269,25 @@ export default function OrderDetailPage() {
     );
   }
 
-  if (!order) return null;
+  if (!hasCurrentOrderContext || !order) {
+    return orderLoadFailed ? (
+      <div className="space-y-3 rounded-xl border border-red-100 bg-red-50 p-5 text-sm text-red-800">
+        <p role="alert">{t("orderEvidenceOrderLoadError")}</p>
+        <button
+          type="button"
+          onClick={() => void refreshAuthoritativeOrder(true)}
+          className="rounded-md border border-red-200 bg-white px-3 py-1.5 font-medium hover:bg-red-100"
+        >
+          {t("orderEvidenceRetry")}
+        </button>
+      </div>
+    ) : null;
+  }
 
   const currentStatusInfo = statusMap[order.status] || {
     label: order.status,
     color: "bg-gray-100 text-gray-800",
   };
-  const fulfillmentStatusInfo = fulfillmentAvailability
-    ? fulfillmentStatusMap[fulfillmentAvailability.overallStatus]
-    : null;
-
   const relatedCards = (
     <>
       {/* Work Orders */}
@@ -231,10 +314,10 @@ export default function OrderDetailPage() {
                   <span>计划: {wo.plannedQty}</span>
                   <span
                     className={
-                      wo.completedQty > 0 ? "text-green-600 font-medium" : ""
+                      wo.actualQty > 0 ? "text-green-600 font-medium" : ""
                     }
                   >
-                    完成: {wo.completedQty}
+                    完成: {wo.actualQty}
                   </span>
                 </div>
               </div>
@@ -407,92 +490,18 @@ export default function OrderDetailPage() {
             )}
           </div>
 
-          {fulfillmentAvailability && fulfillmentStatusInfo && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <h2 className="text-lg font-bold text-gray-900 flex items-center">
-                  <Package className="h-5 w-5 mr-2 text-gray-400" />
-                  交付可承诺
-                </h2>
-                <span
-                  className={`px-2.5 py-1 text-xs font-medium rounded-full ${fulfillmentStatusInfo.color}`}
-                >
-                  {fulfillmentStatusInfo.label}
-                </span>
-              </div>
-              <div className="space-y-3">
-                {fulfillmentAvailability.lines.map((line) => {
-                  const lineStatus = fulfillmentStatusMap[line.status];
-                  return (
-                    <div
-                      key={line.orderItemId}
-                      className="rounded-lg border border-gray-100 p-3"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-gray-900">
-                            {line.productSku ? `${line.productSku} · ` : ""}
-                            {line.productName}
-                          </p>
-                          <p className="mt-1 text-xs text-gray-500">
-                            订购 {line.orderedQty} · 预计 {line.projectedQty}
-                          </p>
-                        </div>
-                        <span
-                          className={`shrink-0 px-2 py-0.5 text-xs font-medium rounded-full ${lineStatus.color}`}
-                        >
-                          {lineStatus.label}
-                        </span>
-                      </div>
-                      <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
-                        <div>
-                          <p className="text-gray-500">现存</p>
-                          <p className="font-semibold text-gray-900">
-                            {line.onHandQty}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">生产中</p>
-                          <p className="font-semibold text-gray-900">
-                            {line.inProductionQty}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">预计</p>
-                          <p className="font-semibold text-gray-900">
-                            {line.projectedQty}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">缺口</p>
-                          <p
-                            className={
-                              line.shortageQty > 0
-                                ? "font-semibold text-red-700"
-                                : "font-semibold text-green-700"
-                            }
-                          >
-                            {line.shortageQty}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          <FulfillmentEvidenceCard
+            value={fulfillmentEvidence}
+            loadState={evidenceLoadState}
+            permissions={permissions}
+          />
 
           {["IN_PRODUCTION", "PARTIAL_SHIPPED"].includes(order.status) && (
             <SalesShipmentPanel
               orderId={order.id}
               orderNo={order.orderNo}
               items={order.items}
-              onPosted={(shipment) => {
-                setOrder((current) =>
-                  current ? { ...current, status: shipment.status } : current,
-                );
-              }}
+              onPosted={() => void refreshAuthoritativeOrder()}
             />
           )}
 
@@ -502,13 +511,7 @@ export default function OrderDetailPage() {
             <SalesShipmentReversalPanel
               orderId={order.id}
               orderNo={order.orderNo}
-              onReversed={() => {
-                setOrder((current) =>
-                  current
-                    ? { ...current, status: "IN_PRODUCTION" }
-                    : current,
-                );
-              }}
+              onReversed={() => void refreshAuthoritativeOrder()}
             />
           )}
 
@@ -582,7 +585,21 @@ export default function OrderDetailPage() {
             </p>
 
             <div className="mt-4 space-y-3 max-h-[70vh] overflow-auto pr-1">
-              {timeline.length === 0 ? (
+              {evidenceLoadState === "loading" ? (
+                <div
+                  role="status"
+                  className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm text-slate-600"
+                >
+                  {t("orderEvidenceTimelineLoading")}
+                </div>
+              ) : timelineLoadFailed ? (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+                >
+                  {t("orderEvidenceTimelineLoadError")}
+                </div>
+              ) : timeline.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-3 text-sm text-gray-500">
                   暂无动态记录。
                 </div>
