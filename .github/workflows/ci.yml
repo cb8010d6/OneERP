@@ -1,8 +1,8 @@
 name: CI
 
 on:
+  # Review branches use stacked PRs too; validate every PR base.
   pull_request:
-    branches: [main, develop]
   push:
     branches: [develop]
 

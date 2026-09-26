@@ -9,7 +9,7 @@ import { Button } from '../ui/Button';
 import { BusinessCorrectionWizard } from './BusinessCorrectionWizard';
 import { KanbanEngine } from './KanbanEngine';
 import { ListEngine } from './ListEngine';
-import { createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
+import { buildResourcePayload, createResource, fetchResourceList, fetchSchema, updateResource } from '@/lib/dynamic-resource';
 import api from '@/lib/api';
 import type { UiSchema } from '@/lib/ui-schema';
 import type { UiActionSchema } from '@/lib/ui-schema';
@@ -272,7 +272,7 @@ export function DynamicView({ modelName, title, externalDraft, slots }: DynamicV
     setSaving(true);
     try {
       const recordId = selected.id;
-      const payload = { ...selected };
+      const payload = buildResourcePayload(schema, selected);
 
       let persisted: Record<string, unknown>;
       if (typeof recordId === 'string' && recordId.trim()) {

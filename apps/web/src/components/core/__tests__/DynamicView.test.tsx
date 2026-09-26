@@ -34,6 +34,7 @@ const mockApiPost = jest.fn();
 const mockApiRequest = jest.fn();
 
 jest.mock('@/lib/dynamic-resource', () => ({
+  ...jest.requireActual('@/lib/dynamic-resource'),
   fetchSchema: mockFetchSchema,
   fetchResourceList: mockFetchResourceList,
   createResource: mockCreateResource,
@@ -59,7 +60,7 @@ jest.mock('../ListEngine', () => ({
     onSearchChange?: (value: string) => void;
   }) => (
     <div data-testid="list-engine">
-      <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row', status: 'SHIPPED' })}>row</button>
+      <button data-testid="row-click" onClick={() => onRowClick?.({ id: 'row-1', name: 'Test Row', status: 'SHIPPED', categoryId: 'category-1', category: { id: 'category-1', name: '分类' }, companyId: 'company-1', createdAt: '2026-01-01', customAttributes: { color: 'blue' } })}>row</button>
       <input data-testid="search-input" onChange={(event) => onSearchChange?.(event.target.value)} />
     </div>
   ),
@@ -211,7 +212,10 @@ describe('DynamicView', () => {
     await waitFor(() => { expect(screen.getByTestId('sheet')).toBeInTheDocument(); });
     await user.click(screen.getByText(/保存/));
     await waitFor(() => {
-      expect(mockUpdateResource).toHaveBeenCalledWith('Product', 'row-1', expect.objectContaining({ id: 'row-1' }));
+      expect(mockUpdateResource).toHaveBeenCalledWith('Product', 'row-1', {
+        name: 'Test Row', status: 'SHIPPED', categoryId: 'category-1',
+        customAttributes: { color: 'blue' },
+      });
     });
   });
 

@@ -11,6 +11,22 @@ import {
 // Test fixtures
 // ---------------------------------------------------------------------------
 
+const relatedModels: Record<string, DmmfModelMeta> = {
+  Partner: {
+    name: 'Partner',
+    fields: [{ name: 'name', kind: 'scalar', type: 'String', isList: false }],
+  },
+  OrderItem: {
+    name: 'OrderItem',
+    fields: [
+      { name: 'product', kind: 'object', type: 'Product', isList: false },
+      { name: 'order', kind: 'object', type: 'Order', isList: false },
+    ],
+  },
+};
+const resolveRelatedModel = (name: string) =>
+  name === 'Order' ? orderModelMeta : relatedModels[name];
+
 const orderModelMeta: DmmfModelMeta = {
   name: 'Order',
   fields: [
@@ -44,6 +60,7 @@ describe('sanitizeInclude', () => {
     const result = sanitizeInclude(
       { items: { include: { product: true } } },
       orderModelMeta,
+      resolveRelatedModel,
     );
     expect(result).toEqual({ items: { include: { product: true } } });
   });
@@ -61,9 +78,9 @@ describe('sanitizeInclude', () => {
       },
     };
 
-    expect(() => sanitizeInclude(deepInclude, orderModelMeta)).toThrow(
-      BadRequestException,
-    );
+    expect(() =>
+      sanitizeInclude(deepInclude, orderModelMeta, resolveRelatedModel),
+    ).toThrow(BadRequestException);
   });
 
   it('包含不存在的字段应抛异常', () => {
@@ -86,9 +103,10 @@ describe('sanitizeInclude', () => {
     );
   });
 
-  it('无 modelMeta 时应放行（不做校验）', () => {
-    const result = sanitizeInclude({ anything: true }, undefined);
-    expect(result).toEqual({ anything: true });
+  it('无 modelMeta 时应拒绝关联查询', () => {
+    expect(() => sanitizeInclude({ anything: true }, undefined)).toThrow(
+      BadRequestException,
+    );
   });
 });
 
@@ -132,17 +150,19 @@ describe('sanitizeFilter', () => {
     ).toThrow(BadRequestException);
   });
 
-  it('关联字段 filter 应放行（Prisma 中间件负责租户隔离）', () => {
+  it('关联字段 filter 应递归校验', () => {
     const result = sanitizeFilter(
       { partner: { name: 'Test' } },
       orderModelMeta,
+      resolveRelatedModel,
     );
     expect(result).toEqual({ partner: { name: 'Test' } });
   });
 
-  it('无 modelMeta 时应放行', () => {
-    const result = sanitizeFilter({ anything: 'value' }, undefined);
-    expect(result).toEqual({ anything: 'value' });
+  it('无 modelMeta 时应拒绝过滤查询', () => {
+    expect(() => sanitizeFilter({ anything: 'value' }, undefined)).toThrow(
+      BadRequestException,
+    );
   });
 });
 
@@ -187,9 +207,10 @@ describe('sanitizeOrderBy', () => {
     ).toThrow(BadRequestException);
   });
 
-  it('无 modelMeta 时应放行', () => {
-    const result = sanitizeOrderBy({ anything: 'asc' }, undefined);
-    expect(result).toEqual({ anything: 'asc' });
+  it('无 modelMeta 时应拒绝排序查询', () => {
+    expect(() => sanitizeOrderBy({ anything: 'asc' }, undefined)).toThrow(
+      BadRequestException,
+    );
   });
 });
 
@@ -198,6 +219,16 @@ describe('sanitizeOrderBy', () => {
 // ---------------------------------------------------------------------------
 
 describe('getDmmfModel', () => {
+  it('应将 lowerCamel delegate 映射为 Prisma UpperCamel 模型并补充名称', () => {
+    const client = {
+      _runtimeDataModel: { models: { UserCompanyRole: { fields: [] } } },
+    };
+    expect(getDmmfModel(client, 'userCompanyRole')).toEqual({
+      name: 'UserCompanyRole',
+      fields: [],
+    });
+  });
+
   it('应从 PrismaClient 的 _runtimeDataModel 中提取模型元数据', () => {
     const mockPrisma = {
       _runtimeDataModel: {

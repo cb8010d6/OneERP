@@ -9,6 +9,21 @@ export interface ResourceListResponse<T = Record<string, unknown>> {
   totalPages: number;
 }
 
+/** Keep expanded display relations and server-owned fields out of generic writes. */
+export function buildResourcePayload(schema: UiSchema, record: Record<string, unknown>) {
+  const payload = { ...record };
+  for (const field of ['id', 'companyId', 'createdAt', 'updatedAt']) {
+    delete payload[field];
+  }
+  for (const field of schema.fields) {
+    if (field.type !== 'reference') continue;
+    const relation = field.reference?.relationField ??
+      (field.name.endsWith('Id') ? field.name.slice(0, -2) : undefined);
+    if (relation && relation !== field.name) delete payload[relation];
+  }
+  return payload;
+}
+
 interface ListParams {
   page?: number;
   limit?: number;
