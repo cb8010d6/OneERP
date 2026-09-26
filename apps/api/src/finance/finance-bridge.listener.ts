@@ -385,7 +385,7 @@ export class FinanceBridgeListener {
     }
   }
 
-  @OnEvent('purchase.supplier_credit_note.posted')
+  @OnEvent('purchase.supplier_credit_note.posted', { suppressErrors: false })
   async onSupplierCreditNotePosted(payload: SupplierCreditNotePostedPayload) {
     try {
       const creditNote = await this.prisma.supplierCreditNote.findFirst({
@@ -420,17 +420,13 @@ export class FinanceBridgeListener {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`供应商贷项过账事件记账失败: ${message}`);
-      await this.financeDlqService.recordFailure({
-        eventName: 'purchase.supplier_credit_note.posted',
-        idempotencyKey: payload.idempotencyKey,
-        payload: payload as unknown as Record<string, unknown>,
-        error: message,
-        companyId: payload.companyId,
-      });
+      // The durable queue owns retries. Swallowing this error would resolve
+      // the original event and permanently deduplicate a replacement event.
+      throw error;
     }
   }
 
-  @OnEvent('purchase.supplier_payment.posted')
+  @OnEvent('purchase.supplier_payment.posted', { suppressErrors: false })
   async onSupplierPaymentPosted(payload: SupplierPaymentPostedPayload) {
     try {
       const payment = await this.prisma.supplierPayment.findFirst({
@@ -466,13 +462,9 @@ export class FinanceBridgeListener {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.logger.error(`供应商付款事件记账失败: ${message}`);
-      await this.financeDlqService.recordFailure({
-        eventName: 'purchase.supplier_payment.posted',
-        idempotencyKey: payload.idempotencyKey,
-        payload: payload as unknown as Record<string, unknown>,
-        error: message,
-        companyId: payload.companyId,
-      });
+      // The durable queue owns retries. Swallowing this error would resolve
+      // the original event and permanently deduplicate a replacement event.
+      throw error;
     }
   }
 }

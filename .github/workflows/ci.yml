@@ -32,8 +32,22 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: printf "%s\n" "$PR_TITLE" | npx commitlint --config commitlint.config.cjs
 
+  # Independent, blocking security gate: audit failure must not hide regression evidence.
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Run dependency security audit
+        run: npm run audit:security
+
   # ---- Validate: prisma validate -> prisma generate -> typecheck -> lint -> test -> build ----
-  validate:
+  validation-tests:
     runs-on: ubuntu-latest
 
     services:
@@ -84,12 +98,18 @@ jobs:
         run: npm ci
         working-directory: apps/web
 
-      - name: Run dependency security audit
-        run: npm run audit:security
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+        working-directory: apps/api
 
       - name: Run Prisma migrations
         run: npx prisma migrate deploy --schema=./prisma/schema.prisma
         working-directory: apps/api
+
+      - name: Run PostgreSQL posting regression tests
+        run: npm run test:integration
+        env:
+          ONEERP_INTEGRATION_TEST: '1'
 
       - name: Run release risk preflight
         run: npm run risk:preflight:db
@@ -97,7 +117,19 @@ jobs:
       - name: Validate Docker Compose files
         run: npm run compose:config
 
-      # Policy: ``npm run validate`` runs format -> lint -> typecheck -> test -> build.
+      # Policy: ``npm run validate`` runs Prisma static checks -> typecheck -> lint -> test -> build.
       # The lint step must NOT use --fix in CI; developers use ``npm run lint:fix`` locally.
       - name: Validate
         run: npm run validate
+
+  # Retain the existing required check name and require BOTH independent jobs.
+  validate:
+    if: always()
+    needs: [security-audit, validation-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require security and validation success
+        env:
+          SECURITY_RESULT: ${{ needs.security-audit.result }}
+          VALIDATION_RESULT: ${{ needs.validation-tests.result }}
+        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success

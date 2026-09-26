@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PurchaseService } from './purchase.service';
 import { SupplierStatementService } from './supplier-statement.service';
 import { PurchaseQueryService } from './purchase-query.service';
@@ -20,9 +21,11 @@ function createService() {
       update: jest.fn(),
     },
     supplierCreditNote: {
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     supplierPayment: {
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
   };
@@ -61,7 +64,7 @@ function createService() {
     auditLog: {
       create: jest.fn(),
     },
-    $transaction: jest.fn((callback: (client: typeof tx) => unknown) =>
+    $transaction: jest.fn((callback: (client: typeof tx) => Promise<unknown>) =>
       callback(tx),
     ),
   };
@@ -72,6 +75,10 @@ function createService() {
   };
   const eventQueueService = {
     publish: jest.fn(),
+    enqueueInTransaction: jest.fn().mockResolvedValue({ id: 'event-1' }),
+    dispatchById: jest
+      .fn()
+      .mockResolvedValue({ id: 'event-1', status: 'RESOLVED' }),
   };
   const supplierStatementService = new SupplierStatementService(
     prisma as never,
@@ -818,15 +825,19 @@ describe('PurchaseService', () => {
   });
 
   it('posts supplier credit note and updates purchase invoice status', async () => {
-    const { service, prisma, tx, eventQueueService } = createService();
-    prisma.supplierCreditNote.findFirst.mockResolvedValue({
+    const { service, tx, eventQueueService } = createService();
+    tx.supplierCreditNote.findFirst.mockResolvedValue({
       id: 'scn-1',
       creditNo: 'SCN-001',
       purchaseInvoiceId: 'pi-1',
       amount: new Decimal(300),
       postingStatus: 'DRAFT',
+      supplierId: 'supplier-1',
+      supplier: { companyId: 'c1' },
       purchaseInvoice: {
         id: 'pi-1',
+        companyId: 'c1',
+        supplierId: 'supplier-1',
         amount: new Decimal(1000),
         supplierCreditNotes: [
           { amount: new Decimal(700), postingStatus: 'POSTED' },
@@ -841,19 +852,21 @@ describe('PurchaseService', () => {
 
     const result = await service.postSupplierCreditNote('c1', 'scn-1', 'u1');
 
+    expect(eventQueueService.dispatchById).toHaveBeenCalledWith('event-1');
+    expect(eventQueueService.publish).not.toHaveBeenCalled();
     expect(result).toEqual({ id: 'scn-1', postingStatus: 'POSTED' });
     expect(tx.supplierCreditNote.update).toHaveBeenCalledWith({
-      where: { id: 'scn-1' },
+      where: { id: 'scn-1', companyId: 'c1' },
       data: expect.objectContaining({
         status: 'POSTED',
         postingStatus: 'POSTED',
       }) as unknown,
     });
     expect(tx.purchaseInvoice.update).toHaveBeenCalledWith({
-      where: { id: 'pi-1' },
+      where: { id: 'pi-1', companyId: 'c1' },
       data: { status: 'PAID' },
     });
-    expect(eventQueueService.publish).toHaveBeenCalledWith({
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledWith(tx, {
       eventName: 'purchase.supplier_credit_note.posted',
       idempotencyKey: 'supplier_credit_note_posted:scn-1',
       companyId: 'c1',
@@ -940,17 +953,22 @@ describe('PurchaseService', () => {
   });
 
   it('posts supplier payment and marks payable invoice paid', async () => {
-    const { service, prisma, tx, eventQueueService } = createService();
-    prisma.supplierPayment.findFirst.mockResolvedValue({
+    const { service, tx, eventQueueService } = createService();
+    tx.supplierPayment.findFirst.mockResolvedValue({
       id: 'sp-1',
       paymentNo: 'SP-001',
       amount: new Decimal(300),
       postingStatus: 'DRAFT',
+      supplierId: 'supplier-1',
+      supplier: { companyId: 'c1' },
       allocations: [
         {
+          companyId: 'c1',
           amount: new Decimal(300),
           purchaseInvoice: {
             id: 'pi-1',
+            companyId: 'c1',
+            supplierId: 'supplier-1',
             invoiceNo: 'PI-001',
             amount: new Decimal(1000),
             supplierCreditNotes: [
@@ -969,18 +987,20 @@ describe('PurchaseService', () => {
 
     const result = await service.postSupplierPayment('c1', 'sp-1', 'u1');
 
+    expect(eventQueueService.dispatchById).toHaveBeenCalledWith('event-1');
+    expect(eventQueueService.publish).not.toHaveBeenCalled();
     expect(result).toEqual({ id: 'sp-1', postingStatus: 'POSTED' });
     expect(tx.supplierPayment.update).toHaveBeenCalledWith({
-      where: { id: 'sp-1' },
+      where: { id: 'sp-1', companyId: 'c1' },
       data: expect.objectContaining({
         postingStatus: 'POSTED',
       }) as unknown,
     });
     expect(tx.purchaseInvoice.update).toHaveBeenCalledWith({
-      where: { id: 'pi-1' },
+      where: { id: 'pi-1', companyId: 'c1' },
       data: { status: 'PAID' },
     });
-    expect(eventQueueService.publish).toHaveBeenCalledWith({
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledWith(tx, {
       eventName: 'purchase.supplier_payment.posted',
       idempotencyKey: 'supplier_payment_posted:sp-1',
       companyId: 'c1',
@@ -991,5 +1011,289 @@ describe('PurchaseService', () => {
         operatorId: 'u1',
       },
     });
+  });
+});
+
+function postingFixture(kind: 'payment' | 'credit') {
+  const deps = createService();
+  const invoice = {
+    id: 'pi-1',
+    companyId: 'c1',
+    supplierId: 'supplier-1',
+    invoiceNo: 'PI-001',
+    amount: new Decimal(1000),
+    supplierCreditNotes: [] as Array<{
+      amount: Decimal;
+      postingStatus: string;
+    }>,
+    supplierPaymentAllocations: [] as Array<{ amount: Decimal }>,
+  };
+  const payment = {
+    id: 'sp-1',
+    companyId: 'c1',
+    paymentNo: 'SP-001',
+    supplierId: 'supplier-1',
+    supplier: { companyId: 'c1' },
+    amount: new Decimal(300),
+    postingStatus: 'DRAFT',
+    paymentDate: new Date(),
+    allocations: [
+      { companyId: 'c1', amount: new Decimal(300), purchaseInvoice: invoice },
+    ],
+  };
+  const credit = {
+    id: 'scn-1',
+    companyId: 'c1',
+    creditNo: 'SCN-001',
+    supplierId: 'supplier-1',
+    supplier: { companyId: 'c1' },
+    amount: new Decimal(300),
+    postingStatus: 'DRAFT',
+    creditDate: new Date(),
+    purchaseInvoiceId: invoice.id,
+    purchaseInvoice: invoice,
+    inventoryReturnDocument: null as { companyId: string } | null,
+  };
+  deps.tx.supplierPayment.findFirst.mockResolvedValue(payment);
+  deps.tx.supplierCreditNote.findFirst.mockResolvedValue(credit);
+  deps.tx.supplierPayment.update.mockResolvedValue({
+    id: payment.id,
+    postingStatus: 'POSTED',
+  });
+  deps.tx.supplierCreditNote.update.mockResolvedValue({
+    id: credit.id,
+    postingStatus: 'POSTED',
+  });
+  const post = () =>
+    kind === 'payment'
+      ? deps.service.postSupplierPayment('c1', payment.id, 'u1')
+      : deps.service.postSupplierCreditNote('c1', credit.id, 'u1');
+  const delegate =
+    kind === 'payment' ? deps.tx.supplierPayment : deps.tx.supplierCreditNote;
+  return { ...deps, invoice, payment, credit, delegate, post };
+}
+
+function serializationConflict() {
+  return new Prisma.PrismaClientKnownRequestError('write conflict', {
+    code: 'P2034',
+    clientVersion: '5.22.0',
+  });
+}
+
+describe.each(['payment', 'credit'] as const)(
+  'Atomic supplier %s posting',
+  (kind) => {
+    it('reads and writes inside Serializable transaction and dispatches after commit', async () => {
+      const { prisma, tx, delegate, eventQueueService, post } =
+        postingFixture(kind);
+      const steps: string[] = [];
+      prisma.$transaction.mockImplementation(async (work) => {
+        steps.push('begin');
+        const result = await work(tx);
+        steps.push('commit');
+        return result;
+      });
+      eventQueueService.enqueueInTransaction.mockImplementation(() => {
+        steps.push('enqueue');
+        return Promise.resolve({ id: 'committed-event' });
+      });
+      eventQueueService.dispatchById.mockImplementation(() => {
+        steps.push('dispatch');
+        return Promise.resolve({ status: 'RESOLVED' });
+      });
+      await post();
+      expect(steps).toEqual(['begin', 'enqueue', 'commit', 'dispatch']);
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: 'Serializable',
+      });
+      expect(delegate.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ companyId: 'c1' }) as unknown,
+        }),
+      );
+      expect(prisma.supplierPayment.findFirst).not.toHaveBeenCalled();
+      expect(prisma.supplierCreditNote.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('rejects an outbox failure without dispatching or retrying', async () => {
+      const { post, prisma, eventQueueService } = postingFixture(kind);
+      eventQueueService.enqueueInTransaction.mockRejectedValue(
+        new Error('outbox unavailable'),
+      );
+      await expect(post()).rejects.toThrow('outbox unavailable');
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invoice write failure without queuing or dispatching', async () => {
+      const { post, tx, eventQueueService } = postingFixture(kind);
+      tx.purchaseInvoice.update.mockRejectedValue(
+        new Error('invoice write failed'),
+      );
+      await expect(post()).rejects.toThrow('invoice write failed');
+      expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+      expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+    });
+
+    it('discards the failed attempt event and dispatches only the committed retry', async () => {
+      const { post, tx, prisma, delegate, eventQueueService } =
+        postingFixture(kind);
+      prisma.$transaction.mockImplementationOnce(async (work) => {
+        await work(tx);
+        throw serializationConflict();
+      });
+      eventQueueService.enqueueInTransaction
+        .mockResolvedValueOnce({ id: 'rolled-back-event' })
+        .mockResolvedValueOnce({ id: 'committed-event' });
+      await post();
+      expect(delegate.findFirst).toHaveBeenCalledTimes(2);
+      expect(eventQueueService.dispatchById).toHaveBeenCalledTimes(1);
+      expect(eventQueueService.dispatchById).toHaveBeenCalledWith(
+        'committed-event',
+      );
+    });
+
+    it('revalidates a changed balance after a serialization conflict', async () => {
+      const { post, tx, prisma, invoice, delegate, eventQueueService } =
+        postingFixture(kind);
+      prisma.$transaction.mockImplementationOnce(async (work) => {
+        await work(tx);
+        invoice.supplierCreditNotes = [
+          { amount: new Decimal(900), postingStatus: 'POSTED' },
+        ];
+        throw serializationConflict();
+      });
+      await expect(post()).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(2);
+      expect(delegate.findFirst).toHaveBeenCalledTimes(2);
+      expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+      expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+    });
+
+    it('returns the existing replay response without writing or enqueueing', async () => {
+      const { post, payment, credit, delegate, eventQueueService } =
+        postingFixture(kind);
+      payment.postingStatus = credit.postingStatus = 'POSTED';
+      await expect(post()).resolves.toEqual(
+        expect.objectContaining({
+          postingStatus: 'POSTED',
+          message: expect.stringContaining('无需重复处理') as unknown,
+        }),
+      );
+      expect(delegate.update).not.toHaveBeenCalled();
+      expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+      expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+    });
+
+    it('re-reads a concurrently posted document without enqueueing another event', async () => {
+      const { post, payment, credit, prisma, eventQueueService } =
+        postingFixture(kind);
+      prisma.$transaction.mockImplementationOnce(() => {
+        payment.postingStatus = credit.postingStatus = 'POSTED';
+        return Promise.reject(serializationConflict());
+      });
+      await expect(post()).resolves.toEqual(
+        expect.objectContaining({ postingStatus: 'POSTED' }),
+      );
+      expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('stops after three serialization conflicts', async () => {
+      const { post, prisma, eventQueueService } = postingFixture(kind);
+      const conflict = serializationConflict();
+      prisma.$transaction.mockRejectedValue(conflict);
+      await expect(post()).rejects.toBe(conflict);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+      expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+    });
+
+    it('does not replay the transaction after a post-commit dispatch error', async () => {
+      const { post, prisma, eventQueueService } = postingFixture(kind);
+      eventQueueService.dispatchById.mockRejectedValue(serializationConflict());
+      await expect(post()).rejects.toBeInstanceOf(
+        Prisma.PrismaClientKnownRequestError,
+      );
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects another tenant invoice before mutation', async () => {
+      const { post, invoice, delegate, prisma, eventQueueService } =
+        postingFixture(kind);
+      invoice.companyId = 'c2';
+      await expect(post()).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(delegate.update).not.toHaveBeenCalled();
+      expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects another supplier invoice before mutation', async () => {
+      const { post, invoice, delegate } = postingFixture(kind);
+      invoice.supplierId = 'supplier-2';
+      await expect(post()).rejects.toBeInstanceOf(BadRequestException);
+      expect(delegate.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a missing document without retrying', async () => {
+      const { post, delegate, prisma } = postingFixture(kind);
+      delegate.findFirst.mockResolvedValue(null);
+      await expect(post()).rejects.toBeInstanceOf(NotFoundException);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a canceled document before writes and outbox creation', async () => {
+      const { post, payment, credit, delegate, eventQueueService } =
+        postingFixture(kind);
+      payment.postingStatus = credit.postingStatus = 'CANCELLED';
+      await expect(post()).rejects.toBeInstanceOf(BadRequestException);
+      expect(delegate.update).not.toHaveBeenCalled();
+      expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+    });
+  },
+);
+
+describe('Supplier settlement revalidation', () => {
+  it('rejects a credit canceled by its document status', async () => {
+    const { post, credit, delegate, eventQueueService } =
+      postingFixture('credit');
+    delegate.findFirst.mockResolvedValue({ ...credit, status: 'CANCELLED' });
+    await expect(post()).rejects.toThrow('已取消的供应商贷项不能过账');
+    expect(delegate.update).not.toHaveBeenCalled();
+    expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+  });
+
+  it('retains paid status when a credit follows a posted payment', async () => {
+    const { post, invoice, tx } = postingFixture('credit');
+    invoice.supplierPaymentAllocations = [{ amount: new Decimal(700) }];
+    await post();
+    expect(tx.purchaseInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'pi-1', companyId: 'c1' },
+      data: { status: 'PAID' },
+    });
+  });
+
+  it('preserves the existing credit cap independently of payments', async () => {
+    const { post, invoice } = postingFixture('credit');
+    invoice.supplierPaymentAllocations = [{ amount: new Decimal(1000) }];
+    await expect(post()).resolves.toEqual({
+      id: 'scn-1',
+      postingStatus: 'POSTED',
+    });
+  });
+
+  it('rejects a cross-tenant allocation or credit return association', async () => {
+    const payment = postingFixture('payment');
+    payment.payment.allocations[0].companyId = 'c2';
+    await expect(payment.post()).rejects.toBeInstanceOf(NotFoundException);
+    const credit = postingFixture('credit');
+    credit.credit.inventoryReturnDocument = { companyId: 'c2' };
+    await expect(credit.post()).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('revalidates positive allocation amounts before any writes', async () => {
+    const { post, payment, delegate } = postingFixture('payment');
+    payment.allocations[0].amount = new Decimal(-1);
+    await expect(post()).rejects.toThrow('付款核销金额必须大于0');
+    expect(delegate.update).not.toHaveBeenCalled();
   });
 });

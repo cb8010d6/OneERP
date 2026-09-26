@@ -535,6 +535,7 @@ describe('AccountingService', () => {
       expect.objectContaining({
         journalCode: 'PUR',
         ref: 'SCN-1',
+        supplierPostingSource: { kind: 'credit-note', creditNo: 'SCN-1' },
         lines: [
           expect.objectContaining({
             accountCode: '2202X',
@@ -598,6 +599,7 @@ describe('AccountingService', () => {
       expect.objectContaining({
         journalCode: 'BNK',
         ref: 'SUPPAY-sp1',
+        supplierPostingSource: { kind: 'payment', paymentId: 'sp1' },
         createdBy: 'u1',
         lines: [
           expect.objectContaining({
@@ -1036,4 +1038,160 @@ describe('AccountingService', () => {
       }),
     );
   });
+});
+
+describe('AccountingService supplier journal delivery deduplication', () => {
+  type EntryInput = Parameters<AccountingService['createBalancedEntry']>[0];
+
+  function setup() {
+    const { service, prisma } = createService();
+    const entry = {
+      id: 'journal-existing',
+      companyId: 'c1',
+      ref: 'SUPPAY-sp1',
+      journal: { code: 'BNK' },
+      lines: [
+        { debit: new Decimal(42), credit: new Decimal(0) },
+        { debit: new Decimal(0), credit: new Decimal(42) },
+      ],
+    };
+    const tx = {
+      $executeRawUnsafe: jest.fn().mockResolvedValue(1),
+      journalEntry: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue(entry),
+      },
+      journal: { upsert: jest.fn().mockResolvedValue({ id: 'journal' }) },
+      account: { findFirst: jest.fn().mockResolvedValue({ id: 'account' }) },
+    };
+    prisma.$transaction.mockImplementation(
+      (callback: (client: typeof tx) => unknown) => callback(tx),
+    );
+    const input: EntryInput = {
+      companyId: 'c1',
+      journalCode: 'BNK',
+      journalName: 'Bank Journal',
+      journalType: JournalType.BANK,
+      ref: 'SUPPAY-sp1',
+      supplierPostingSource: { kind: 'payment', paymentId: 'sp1' },
+      lines: [
+        {
+          accountCode: '2202',
+          accountName: 'Payable',
+          accountType: 'LIABILITY',
+          debit: 50,
+        },
+        {
+          accountCode: '1002',
+          accountName: 'Bank',
+          accountType: 'ASSET',
+          credit: 50,
+        },
+      ],
+    };
+    return { service, tx, entry, input };
+  }
+
+  it('waits for the company lock before checking a previously committed supplier journal', async () => {
+    const { service, tx, entry, input } = setup();
+    let releaseLock!: () => void;
+    let lockRequested!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      lockRequested = resolve;
+    });
+    tx.$executeRawUnsafe.mockImplementation(() => {
+      lockRequested();
+      return new Promise<void>((resolve) => {
+        releaseLock = resolve;
+      });
+    });
+    tx.journalEntry.findFirst.mockResolvedValue(entry);
+
+    const posting = service.createBalancedEntry(input);
+    await requested;
+    expect(tx.journalEntry.findFirst).not.toHaveBeenCalled();
+    expect(tx.journalEntry.create).not.toHaveBeenCalled();
+    releaseLock();
+
+    const result = await posting;
+    expect(result.id).toBe(entry.id);
+    // A replay reports the committed entry, not the new delivery's line values.
+    expect(result.totals).toEqual({ debit: 42, credit: 42 });
+    expect(tx.journalEntry.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          companyId: 'c1',
+          ref: 'SUPPAY-sp1',
+          journal: { code: { in: ['BNK', 'CSH'] } },
+        },
+      }),
+    );
+    expect(tx.journalEntry.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['payment', 'credit-note'] as const)(
+    'creates one journal across repeated %s delivery',
+    async (kind) => {
+      const { service, tx, entry, input } = setup();
+      if (kind === 'credit-note') {
+        input.journalCode = 'PUR';
+        input.journalType = JournalType.PURCHASE;
+        input.ref = 'SCN-1';
+        input.supplierPostingSource = { kind, creditNo: 'SCN-1' };
+      }
+      tx.journalEntry.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(entry);
+
+      const first = await service.createBalancedEntry(input);
+      const repeated = await service.createBalancedEntry(input);
+
+      expect(first.id).toBe(repeated.id);
+      expect(tx.journalEntry.create).toHaveBeenCalledTimes(1);
+      expect(tx.journalEntry.findFirst).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: {
+            companyId: 'c1',
+            ref: input.ref,
+            journal: {
+              code: { in: kind === 'payment' ? ['BNK', 'CSH'] : ['PUR'] },
+            },
+          },
+        }),
+      );
+    },
+  );
+
+  it('preserves repeated manual references when no supplier source is supplied', async () => {
+    const { service, tx, input } = setup();
+    delete input.supplierPostingSource;
+
+    await service.createBalancedEntry(input);
+    await service.createBalancedEntry(input);
+
+    expect(tx.journalEntry.findFirst).not.toHaveBeenCalled();
+    expect(tx.journalEntry.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not inspect or create journals when acquiring the lock fails', async () => {
+    const { service, tx, input } = setup();
+    tx.$executeRawUnsafe.mockRejectedValue(new Error('connection lost'));
+    await expect(service.createBalancedEntry(input)).rejects.toThrow(
+      'connection lost',
+    );
+    expect(tx.journalEntry.findFirst).not.toHaveBeenCalled();
+    expect(tx.journalEntry.create).not.toHaveBeenCalled();
+  });
+
+  it.each([{ ref: 'unrelated-ref' }, { journalCode: 'GEN' }])(
+    'rejects mismatched supplier source: %j',
+    async (patch) => {
+      const { service, tx, input } = setup();
+      await expect(
+        service.createBalancedEntry({ ...input, ...patch }),
+      ).rejects.toThrow('供应商凭证来源与凭证引用不一致');
+      expect(tx.journalEntry.findFirst).not.toHaveBeenCalled();
+      expect(tx.journalEntry.create).not.toHaveBeenCalled();
+    },
+  );
 });
