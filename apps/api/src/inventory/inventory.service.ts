@@ -110,101 +110,319 @@ export class InventoryService {
     payload: SaleOrderShipmentDto,
     operatorId?: string,
   ) {
-    const order = await this.prisma.order.findFirst({
-      where: { id: orderId, companyId },
-      include: {
-        items: {
-          select: { productId: true, quantity: true },
-        },
-      },
-    });
-
-    if (!order) {
-      throw new NotFoundException('销售订单不存在或无权限访问');
-    }
-
-    if (!order.items.length) {
-      throw new BadRequestException('销售订单无明细，无法自动过账');
-    }
-
     if (!payload.items?.length) {
       throw new BadRequestException('销售订单发货明细不能为空');
     }
+    // Reject rather than silently merging quantities: both posting modes must
+    // agree on what the caller explicitly requested before any line can commit.
+    const requestedProducts = new Set<string>();
+    for (const item of payload.items) {
+      if (requestedProducts.has(item.productId)) {
+        throw new BadRequestException(
+          '发货明细不能重复指定同一产品，请合并该产品数量后重试',
+        );
+      }
+      requestedProducts.add(item.productId);
+    }
 
-    const orderProductIds = [
-      ...new Set(order.items.map((item) => item.productId)),
-    ];
-    const products = await this.prisma.product.findMany({
-      where: { companyId, id: { in: orderProductIds } },
-      select: { id: true, materialId: true, name: true, sku: true },
+    type Outcome = Awaited<ReturnType<InventoryService['postShipmentBatch']>>;
+    const skippedLines: Array<{
+      productId: string;
+      requestedQuantity: number;
+      reason: string;
+    }> = [];
+    let outcome: Outcome;
+    if (!payload.allowPartial) {
+      outcome = await this.withShipmentTransaction((tx) =>
+        this.postShipmentBatch(tx, companyId, orderId, payload, operatorId),
+      );
+      await this.dispatchQueuedEvents(outcome.queuedEventIds);
+    } else {
+      const postedLines: Outcome['postedLines'] = [];
+      const queuedEventIds: string[] = [];
+      for (const item of payload.items) {
+        let line: Outcome;
+        try {
+          line = await this.withShipmentTransaction((tx) =>
+            this.postShipmentBatch(
+              tx,
+              companyId,
+              orderId,
+              { ...payload, items: [item] },
+              operatorId,
+            ),
+          );
+        } catch (error) {
+          skippedLines.push({
+            productId: item.productId,
+            requestedQuantity: Number.isFinite(Number(item.shipQuantity))
+              ? Number(item.shipQuantity)
+              : 0,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+          continue;
+        }
+        postedLines.push(...line.postedLines);
+        queuedEventIds.push(...line.queuedEventIds);
+        // A delivery failure is not a skipped shipment. The committed movement,
+        // order state and durable outbox must never be retried as a new write.
+        await this.dispatchQueuedEvents(line.queuedEventIds);
+      }
+      const final = await this.withShipmentTransaction((tx) =>
+        this.loadShipmentBalance(tx, companyId, orderId),
+      );
+      outcome = {
+        orderId: final.order.id,
+        orderNo: final.order.orderNo,
+        totalOrdered: final.totalOrdered,
+        totalShipped: final.totalShipped,
+        status: final.order.status,
+        postedLines,
+        queuedEventIds,
+      };
+    }
+
+    const result = {
+      orderId: outcome.orderId,
+      orderNo: outcome.orderNo,
+      totalOrdered: outcome.totalOrdered,
+      totalShipped: outcome.totalShipped,
+      status: outcome.status,
+      postedLines: outcome.postedLines,
+    };
+    return {
+      ...result,
+      postingStatus: result.postedLines.length ? 'POSTED' : 'NO_STOCK_POSTED',
+      skippedLines,
+      message: !result.postedLines.length
+        ? '本次未找到可发货库存，订单状态保持不变'
+        : result.status === 'SHIPPED'
+          ? '销售订单自动过账完成，订单状态已更新为 SHIPPED'
+          : '销售订单部分发货完成，订单状态已更新为 PARTIAL_SHIPPED',
+    };
+  }
+
+  private async withShipmentTransaction<T>(
+    work: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(work, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== 'P2034'
+        ) {
+          throw error;
+        }
+        if (attempt >= 2) {
+          throw new ConflictException('发货数据存在并发修改，请刷新后重试');
+        }
+        // Only a rolled-back serialization/deadlock conflict is replayed.
+        // Reads, validation and outbox insertion all restart with a new snapshot.
+      }
+    }
+  }
+
+  private async loadShipmentBalance(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    orderId: string,
+  ) {
+    const order = await tx.order.findFirst({
+      where: { id: orderId, companyId },
+      include: { items: { select: { productId: true, quantity: true } } },
+    });
+    if (!order) {
+      throw new NotFoundException('销售订单不存在或无权限访问');
+    }
+    if (!order.items.length) {
+      throw new BadRequestException('销售订单无明细，无法自动过账');
+    }
+    const products = await tx.product.findMany({
+      where: {
+        companyId,
+        id: { in: [...new Set(order.items.map((item) => item.productId))] },
+      },
+      select: {
+        id: true,
+        materialId: true,
+        name: true,
+        sku: true,
+        material: { select: { companyId: true } },
+      },
     });
     const productById = new Map(
       products.map((product) => [product.id, product]),
     );
-    const productByMaterialId = new Map(
-      products
-        .filter((product) => product.materialId)
-        .map((product) => [product.materialId as string, product.id]),
-    );
-
-    const orderedQuantityByProductId = new Map<string, number>();
+    const orderedByProduct = new Map<string, number>();
+    const productIdsByMaterial = new Map<string, Set<string>>();
+    const orderedByMaterial = new Map<string, number>();
     for (const item of order.items) {
-      const current = orderedQuantityByProductId.get(item.productId) ?? 0;
-      orderedQuantityByProductId.set(
+      orderedByProduct.set(
         item.productId,
-        current + Number(item.quantity ?? 0),
+        this.round4(
+          (orderedByProduct.get(item.productId) ?? 0) + Number(item.quantity),
+        ),
+      );
+      const materialId = productById.get(item.productId)?.materialId;
+      if (!materialId) continue;
+      const productIds =
+        productIdsByMaterial.get(materialId) ?? new Set<string>();
+      productIds.add(item.productId);
+      productIdsByMaterial.set(materialId, productIds);
+      orderedByMaterial.set(
+        materialId,
+        this.round4(
+          (orderedByMaterial.get(materialId) ?? 0) + Number(item.quantity),
+        ),
       );
     }
 
+    const { referenceNo, shippedByMaterial } =
+      await this.loadNetShipmentQuantities(tx, companyId, order);
+    for (const [materialId, shipped] of shippedByMaterial) {
+      if (shipped < 0 || shipped > (orderedByMaterial.get(materialId) ?? 0)) {
+        throw new BadRequestException(
+          '销售出库净数量与当前订单物料需求不一致，请核对产品映射及出库/冲销流水后重试',
+        );
+      }
+    }
+    return {
+      order,
+      referenceNo,
+      productById,
+      orderedByProduct,
+      orderedByMaterial,
+      productIdsByMaterial,
+      shippedByMaterial,
+      totalOrdered: this.round4(
+        order.items.reduce((sum, item) => sum + Number(item.quantity), 0),
+      ),
+      totalShipped: this.round4(
+        [...shippedByMaterial.values()].reduce((sum, qty) => sum + qty, 0),
+      ),
+    };
+  }
+
+  // Also used by reversal: deliberately independent of current product mapping
+  // and demand caps, so historical over-shipment can still be corrected.
+  private async loadNetShipmentQuantities(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    order: { id: string; orderNo: string },
+  ) {
     const referenceNo = `SALE-SHIP-${order.orderNo}`;
-    const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
-    const shipmentMoves = await this.prisma.inventoryTransaction.findMany({
+    const reversePrefix = `SALE-SHIP-REV-${order.orderNo}`;
+    const moves = await tx.inventoryTransaction.findMany({
       where: {
         companyId,
         OR: [
           { referenceNo, type: 'OUTBOUND' },
-          { referenceNo: reverseReferencePrefix, type: 'INBOUND' },
-          {
-            referenceNo: { startsWith: `${reverseReferencePrefix}-` },
-            type: 'INBOUND',
-          },
+          { referenceNo: reversePrefix, type: 'INBOUND' },
+          { referenceNo: { startsWith: `${reversePrefix}-` }, type: 'INBOUND' },
         ],
       },
       select: {
+        id: true,
         materialId: true,
         quantity: true,
         type: true,
         referenceNo: true,
       },
     });
-
-    const shippedQuantityByProductId = new Map<string, number>();
-    for (const move of shipmentMoves) {
-      const productId = productByMaterialId.get(move.materialId);
-      if (!productId) continue;
-
-      const current = shippedQuantityByProductId.get(productId) ?? 0;
-      const isReversal =
-        move.type === 'INBOUND' ||
-        move.referenceNo === reverseReferencePrefix ||
-        move.referenceNo?.startsWith(`${reverseReferencePrefix}-`);
-      shippedQuantityByProductId.set(
-        productId,
-        roundDecimal(
-          current + (isReversal ? -1 : 1) * Number(move.quantity ?? 0),
+    const reversalIds = moves
+      .filter((move) => move.type === 'INBOUND')
+      .map((move) => move.id);
+    const returns = reversalIds.length
+      ? await tx.inventoryReturnDocument.findMany({
+          where: {
+            companyId,
+            returnType: 'SALES',
+            status: 'POSTED',
+            lines: { some: { inventoryMoveId: { in: reversalIds } } },
+          },
+          select: {
+            sourceDocumentId: true,
+            lines: { select: { inventoryMoveId: true } },
+          },
+        })
+      : [];
+    const shippedByMaterial = new Map<string, number>();
+    for (const move of moves) {
+      if (move.type === 'INBOUND') {
+        const owners = new Set(
+          returns
+            .filter((document) =>
+              document.lines.some((line) => line.inventoryMoveId === move.id),
+            )
+            .map((document) => document.sourceDocumentId),
+        );
+        if (owners.size !== 1 || owners.has(null)) {
+          throw new BadRequestException(
+            '销售冲销流水缺少唯一的销售退货单归属，请核对冲销流水后重试',
+          );
+        }
+        if (!owners.has(order.id)) continue;
+      }
+      shippedByMaterial.set(
+        move.materialId,
+        this.round4(
+          (shippedByMaterial.get(move.materialId) ?? 0) +
+            (move.type === 'INBOUND' ? -1 : 1) * Number(move.quantity),
         ),
       );
     }
-    for (const [productId, quantity] of shippedQuantityByProductId) {
-      shippedQuantityByProductId.set(
-        productId,
-        roundDecimal(Math.max(0, quantity)),
-      );
-    }
+    return { referenceNo, shippedByMaterial };
+  }
 
-    const totalOrdered = roundDecimal(
-      order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
-    );
+  private async postShipmentBatch(
+    tx: Prisma.TransactionClient,
+    companyId: string,
+    orderId: string,
+    payload: SaleOrderShipmentDto,
+    operatorId?: string,
+  ) {
+    const balance = await this.loadShipmentBalance(tx, companyId, orderId);
+    const {
+      order,
+      referenceNo,
+      productById,
+      orderedByProduct,
+      shippedByMaterial,
+    } = balance;
+    const sharedMaterialMessage =
+      '多个订单产品共用物料，无法按产品确认剩余发货数量。仅支持净已发为零时关闭 allowPartial，按订单数量一次提交该物料全部产品；已有部分出库请人工核对，仅确需纠正的出库可按现有流程冲销，不得为绕过校验虚假回库';
+    // A ledger movement has a material, not an order-item/product identity.
+    // Shared-material products are safe only as a complete atomic group from
+    // zero net delivery. Never guess which product a legacy partial move served.
+    for (const item of payload.items) {
+      const product = productById.get(item.productId);
+      if (!product?.materialId) continue;
+      const group =
+        balance.productIdsByMaterial.get(product.materialId) ??
+        new Set<string>();
+      if (group.size <= 1) continue;
+      const shipped = shippedByMaterial.get(product.materialId) ?? 0;
+      if (shipped >= (balance.orderedByMaterial.get(product.materialId) ?? 0)) {
+        throw new BadRequestException(
+          `产品 ${product.name} 所属物料组已全部发货`,
+        );
+      }
+      if (
+        payload.allowPartial ||
+        shipped !== 0 ||
+        [...group].some(
+          (productId) =>
+            payload.items.find((request) => request.productId === productId)
+              ?.shipQuantity !== orderedByProduct.get(productId),
+        )
+      ) {
+        throw new BadRequestException(sharedMaterialMessage);
+      }
+    }
 
     const postedLines: Array<{
       productId: string;
@@ -222,393 +440,126 @@ export class InventoryService {
         transactionId: string;
       }>;
     }> = [];
-    const skippedLines: Array<{
-      productId: string;
-      requestedQuantity: number;
-      reason: string;
-    }> = [];
-    const atomicPlans: Array<{
-      product: { id: string; materialId: string; name: string };
-      requestedQuantity: number;
-      quantityRequestedThisRound: number;
-      allocations: Array<{
-        sourceLocationId: string;
-        batchNo: string;
-        quantity: number;
-      }>;
-    }> = [];
-
-    if (!payload.allowPartial) {
-      for (const requestItem of payload.items) {
-        const requestedQuantity = Number(requestItem.shipQuantity ?? 0);
-        if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
-          throw new BadRequestException('发货数量必须大于0');
-        }
-
-        const product = productById.get(requestItem.productId);
-        if (!product) {
-          throw new BadRequestException('销售订单中不存在该产品');
-        }
-        if (!product.materialId) {
-          throw new BadRequestException(
-            `产品 ${product.name} 未绑定主物料，无法发货`,
-          );
-        }
-
-        const orderedQuantity = orderedQuantityByProductId.get(product.id) ?? 0;
-        const alreadyShippedQuantity =
-          shippedQuantityByProductId.get(product.id) ?? 0;
-        const remainingQuantity = roundDecimal(
-          Math.max(0, orderedQuantity - alreadyShippedQuantity),
-        );
-        if (remainingQuantity <= 0) {
-          throw new BadRequestException(`产品 ${product.name} 已全部发货`);
-        }
-        if (requestedQuantity > remainingQuantity) {
-          throw new BadRequestException(
-            `产品 ${product.name} 请求发货 ${requestedQuantity}，订单剩余可发 ${remainingQuantity}`,
-          );
-        }
-
-        const stockPlan = await this.resolveShipmentAllocations(
-          companyId,
-          product.materialId,
-          requestedQuantity,
-          payload.sourceLocationId,
-          payload.batchNo,
-        );
-        if (stockPlan.allocatedQuantity < requestedQuantity) {
-          throw new BadRequestException(
-            `库存不足：产品 ${product.name} 请求发货 ${requestedQuantity}，当前可发 ${stockPlan.allocatedQuantity}；如需部分发货请显式设置 allowPartial=true`,
-          );
-        }
-
-        atomicPlans.push({
-          product: {
-            id: product.id,
-            materialId: product.materialId,
-            name: product.name,
-          },
-          requestedQuantity,
-          quantityRequestedThisRound: requestedQuantity,
-          allocations: stockPlan.allocations,
-        });
-      }
-
-      const atomicResult = await this.prisma.$transaction(
-        async (tx) => {
-          const atomicPostedLines: typeof postedLines = [];
-          const queuedEventIds: string[] = [];
-          const nextShippedQuantityByProductId = new Map(
-            shippedQuantityByProductId,
-          );
-
-          for (const plan of atomicPlans) {
-            const lineTransactions: (typeof postedLines)[number]['allocations'] =
-              [];
-
-            for (const allocation of plan.allocations) {
-              const transaction = await this.executeStockMove(tx, {
-                companyId,
-                sourceLocationId: allocation.sourceLocationId,
-                materialId: plan.product.materialId,
-                quantity: allocation.quantity,
-                batchNo: allocation.batchNo,
-                referenceNo,
-                note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
-                operatorId: operatorId || 'SYSTEM',
-              });
-              const queuedEvent = await this.queueStockDepletedInTransaction(
-                tx,
-                companyId,
-                transaction,
-                operatorId,
-              );
-              if (queuedEvent?.id) queuedEventIds.push(queuedEvent.id);
-
-              lineTransactions.push({
-                sourceLocationId: allocation.sourceLocationId,
-                batchNo: transaction.batchNo ?? allocation.batchNo,
-                quantity: allocation.quantity,
-                transactionId: transaction.id,
-              });
-            }
-
-            const quantityToShip = roundDecimal(
-              lineTransactions.reduce(
-                (sum, allocation) => sum + Number(allocation.quantity ?? 0),
-                0,
-              ),
-            );
-            const currentShipped =
-              nextShippedQuantityByProductId.get(plan.product.id) ?? 0;
-            nextShippedQuantityByProductId.set(
-              plan.product.id,
-              roundDecimal(currentShipped + quantityToShip),
-            );
-            atomicPostedLines.push({
-              productId: plan.product.id,
-              materialId: plan.product.materialId,
-              requestedQuantity: plan.requestedQuantity,
-              quantity: quantityToShip,
-              remainingQuantity: roundDecimal(
-                Math.max(0, plan.quantityRequestedThisRound - quantityToShip),
-              ),
-              sourceLocationId:
-                lineTransactions[0]?.sourceLocationId ??
-                payload.sourceLocationId ??
-                '',
-              batchNo: lineTransactions[0]?.batchNo ?? payload.batchNo ?? '',
-              transactionId: lineTransactions[0]?.transactionId ?? '',
-              allocations: lineTransactions,
-            });
-          }
-
-          const totalShippedAfterPosting = roundDecimal(
-            [...nextShippedQuantityByProductId.values()].reduce(
-              (sum, quantity) => sum + Number(quantity ?? 0),
-              0,
-            ),
-          );
-          const nextStatus =
-            totalShippedAfterPosting >= totalOrdered
-              ? 'SHIPPED'
-              : 'PARTIAL_SHIPPED';
-          await tx.order.update({
-            where: { id: order.id },
-            data: { status: nextStatus },
-          });
-
-          return {
-            postedLines: atomicPostedLines,
-            queuedEventIds,
-            totalShipped: totalShippedAfterPosting,
-            nextStatus,
-          };
-        },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-      );
-
-      await this.dispatchQueuedEvents(atomicResult.queuedEventIds);
-
-      return {
-        orderId: order.id,
-        orderNo: order.orderNo,
-        totalOrdered,
-        totalShipped: atomicResult.totalShipped,
-        status: atomicResult.nextStatus,
-        postingStatus: 'POSTED',
-        postedLines: atomicResult.postedLines,
-        skippedLines,
-        message:
-          atomicResult.nextStatus === 'SHIPPED'
-            ? '销售订单自动过账完成，订单状态已更新为 SHIPPED'
-            : '销售订单部分发货完成，订单状态已更新为 PARTIAL_SHIPPED',
-      };
-    }
-
-    for (const requestItem of payload.items) {
-      const requestedQuantity = Number(requestItem.shipQuantity ?? 0);
+    const queuedEventIds: string[] = [];
+    for (const request of payload.items) {
+      const requestedQuantity = Number(request.shipQuantity);
       if (!Number.isFinite(requestedQuantity) || requestedQuantity <= 0) {
-        skippedLines.push({
-          productId: requestItem.productId,
-          requestedQuantity: 0,
-          reason: '发货数量必须大于0',
-        });
-        continue;
+        throw new BadRequestException('发货数量必须大于0');
       }
-
-      const product = productById.get(requestItem.productId);
-      if (!product) {
-        skippedLines.push({
-          productId: requestItem.productId,
-          requestedQuantity,
-          reason: '销售订单中不存在该产品',
-        });
-        continue;
-      }
-
+      const product = productById.get(request.productId);
+      if (!product) throw new BadRequestException('销售订单中不存在该产品');
       if (!product.materialId) {
-        skippedLines.push({
-          productId: requestItem.productId,
-          requestedQuantity,
-          reason: `产品 ${product.name} 未绑定主物料，无法发货`,
-        });
-        continue;
+        throw new BadRequestException(
+          `产品 ${product.name} 未绑定主物料，无法发货`,
+        );
       }
-
-      const orderedQuantity = orderedQuantityByProductId.get(product.id) ?? 0;
-      const alreadyShippedQuantity =
-        shippedQuantityByProductId.get(product.id) ?? 0;
-      const remainingQuantity = Math.max(
-        0,
-        roundDecimal(orderedQuantity - alreadyShippedQuantity),
-      );
-
-      if (remainingQuantity <= 0) {
-        skippedLines.push({
-          productId: product.id,
-          requestedQuantity,
-          reason: '该订单项已全部发货',
-        });
-        continue;
+      if (
+        !product.material ||
+        (product.material.companyId !== null &&
+          product.material.companyId !== companyId)
+      ) {
+        throw new BadRequestException('产品关联物料不存在或不属于当前公司');
       }
-
-      const quantityRequestedThisRound = roundDecimal(
-        Math.min(requestedQuantity, remainingQuantity),
+      const shared =
+        (balance.productIdsByMaterial.get(product.materialId)?.size ?? 0) > 1;
+      const alreadyShipped = shared
+        ? 0
+        : (shippedByMaterial.get(product.materialId) ?? 0);
+      const remaining = this.round4(
+        (orderedByProduct.get(product.id) ?? 0) - alreadyShipped,
       );
-
-      const stockPlan = await this.resolveShipmentAllocations(
+      if (remaining <= 0) {
+        throw new BadRequestException(`产品 ${product.name} 已全部发货`);
+      }
+      if (!payload.allowPartial && requestedQuantity > remaining) {
+        throw new BadRequestException(
+          `产品 ${product.name} 请求发货 ${requestedQuantity}，订单剩余可发 ${remaining}`,
+        );
+      }
+      const quantityRequestedThisRound = this.round4(
+        Math.min(requestedQuantity, remaining),
+      );
+      const plan = await this.resolveShipmentAllocations(
+        tx,
         companyId,
         product.materialId,
         quantityRequestedThisRound,
         payload.sourceLocationId,
         payload.batchNo,
       );
-
-      if (!stockPlan.allocations.length || stockPlan.allocatedQuantity <= 0) {
-        skippedLines.push({
-          productId: product.id,
-          requestedQuantity,
-          reason: '当前库存不足，最大可发货量为 0',
-        });
-        continue;
-      }
-
-      try {
-        const lineTransactions = await this.prisma.$transaction(async (tx) => {
-          const nextTransactions: Array<{
-            sourceLocationId: string;
-            batchNo: string;
-            quantity: number;
-            transactionId: string;
-            referenceNo: string;
-          }> = [];
-
-          for (const allocation of stockPlan.allocations) {
-            const transaction = await this.executeStockMove(tx, {
-              companyId,
-              sourceLocationId: allocation.sourceLocationId,
-              materialId: product.materialId as string,
-              quantity: allocation.quantity,
-              batchNo: allocation.batchNo,
-              referenceNo,
-              note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
-              operatorId: operatorId || 'SYSTEM',
-            });
-
-            nextTransactions.push({
-              sourceLocationId: allocation.sourceLocationId,
-              batchNo: transaction.batchNo ?? allocation.batchNo,
-              quantity: allocation.quantity,
-              transactionId: transaction.id,
-              referenceNo: transaction.referenceNo ?? referenceNo,
-            });
-          }
-
-          return nextTransactions;
-        });
-
-        const quantityToShip = roundDecimal(
-          lineTransactions.reduce(
-            (sum, allocation) => sum + Number(allocation.quantity ?? 0),
-            0,
-          ),
+      if (
+        !payload.allowPartial &&
+        plan.allocatedQuantity < quantityRequestedThisRound
+      ) {
+        throw new BadRequestException(
+          `库存不足：产品 ${product.name} 请求发货 ${requestedQuantity}，当前可发 ${plan.allocatedQuantity}；如需部分发货请显式设置 allowPartial=true`,
         );
-
-        for (const allocation of lineTransactions) {
-          await this.eventQueueService.publish({
-            eventName: 'inventory.stock_depleted',
-            idempotencyKey: `stock_depleted:${allocation.transactionId}`,
-            companyId,
-            payload: {
-              companyId,
-              idempotencyKey: `stock_depleted:${allocation.transactionId}`,
-              transactionId: allocation.transactionId,
-              referenceNo: allocation.referenceNo,
-              materialId: product.materialId,
-              quantity: allocation.quantity,
-              operatorId: operatorId || 'SYSTEM',
-            },
-          });
-        }
-
-        postedLines.push({
-          productId: product.id,
+      }
+      if (plan.allocatedQuantity <= 0) {
+        throw new BadRequestException('当前库存不足，最大可发货量为 0');
+      }
+      const allocations: (typeof postedLines)[number]['allocations'] = [];
+      for (const allocation of plan.allocations) {
+        const transaction = await this.executeStockMove(tx, {
+          companyId,
+          sourceLocationId: allocation.sourceLocationId,
           materialId: product.materialId,
-          requestedQuantity,
-          quantity: quantityToShip,
-          remainingQuantity: roundDecimal(
-            Math.max(0, quantityRequestedThisRound - quantityToShip),
-          ),
-          sourceLocationId:
-            lineTransactions[0]?.sourceLocationId ??
-            payload.sourceLocationId ??
-            '',
-          batchNo: lineTransactions[0]?.batchNo ?? payload.batchNo ?? '',
-          transactionId: lineTransactions[0]?.transactionId ?? '',
-          allocations: lineTransactions,
+          quantity: allocation.quantity,
+          batchNo: allocation.batchNo,
+          referenceNo,
+          note: payload.note ?? `销售订单自动出库：${order.orderNo}`,
+          operatorId: operatorId || 'SYSTEM',
         });
-
-        const currentShipped = shippedQuantityByProductId.get(product.id) ?? 0;
-        shippedQuantityByProductId.set(
-          product.id,
-          roundDecimal(currentShipped + quantityToShip),
+        const event = await this.queueStockDepletedInTransaction(
+          tx,
+          companyId,
+          transaction,
+          operatorId,
         );
-      } catch (error) {
-        if (!payload.allowPartial) {
-          throw error;
-        }
-        skippedLines.push({
-          productId: product.id,
-          requestedQuantity,
-          reason: error instanceof Error ? error.message : String(error),
+        if (event?.id) queuedEventIds.push(event.id);
+        allocations.push({
+          sourceLocationId: allocation.sourceLocationId,
+          batchNo: transaction.batchNo ?? allocation.batchNo,
+          quantity: allocation.quantity,
+          transactionId: transaction.id,
         });
       }
+      const quantity = this.round4(
+        allocations.reduce((sum, allocation) => sum + allocation.quantity, 0),
+      );
+      shippedByMaterial.set(
+        product.materialId,
+        this.round4(
+          (shippedByMaterial.get(product.materialId) ?? 0) + quantity,
+        ),
+      );
+      postedLines.push({
+        productId: product.id,
+        materialId: product.materialId,
+        requestedQuantity,
+        quantity,
+        remainingQuantity: this.round4(quantityRequestedThisRound - quantity),
+        sourceLocationId: allocations[0].sourceLocationId,
+        batchNo: allocations[0].batchNo,
+        transactionId: allocations[0].transactionId,
+        allocations,
+      });
     }
 
-    const totalShipped = roundDecimal(
-      [...shippedQuantityByProductId.values()].reduce(
-        (sum, quantity) => sum + Number(quantity ?? 0),
-        0,
-      ),
+    const totalShipped = this.round4(
+      [...shippedByMaterial.values()].reduce((sum, qty) => sum + qty, 0),
     );
-
-    if (!postedLines.length) {
-      return {
-        orderId: order.id,
-        orderNo: order.orderNo,
-        totalOrdered,
-        totalShipped,
-        status: order.status,
-        postingStatus: 'NO_STOCK_POSTED',
-        postedLines,
-        skippedLines,
-        message: '本次未找到可发货库存，订单状态保持不变',
-      };
-    }
-
-    const nextStatus =
-      totalShipped >= totalOrdered ? 'SHIPPED' : 'PARTIAL_SHIPPED';
-
-    await this.prisma.order.update({
-      where: { id: order.id },
-      data: { status: nextStatus },
-    });
-
+    const status =
+      totalShipped >= balance.totalOrdered ? 'SHIPPED' : 'PARTIAL_SHIPPED';
+    await tx.order.update({ where: { id: order.id }, data: { status } });
     return {
       orderId: order.id,
       orderNo: order.orderNo,
-      totalOrdered,
+      totalOrdered: balance.totalOrdered,
       totalShipped,
-      status: nextStatus,
-      postingStatus: 'POSTED',
+      status,
       postedLines,
-      skippedLines,
-      message:
-        nextStatus === 'SHIPPED'
-          ? '销售订单自动过账完成，订单状态已更新为 SHIPPED'
-          : '销售订单部分发货完成，订单状态已更新为 PARTIAL_SHIPPED',
+      queuedEventIds,
     };
   }
 
@@ -906,137 +857,213 @@ export class InventoryService {
     operatorId?: string,
     options?: { rollbackStatus?: boolean },
   ) {
-    const order = await this.prisma.order.findFirst({
-      where: { id: orderId, companyId },
-      select: { id: true, orderNo: true },
-    });
+    const result = await this.withShipmentTransaction(async (tx) => {
+      const order = await tx.order.findFirst({
+        where: { id: orderId, companyId },
+        select: { id: true, orderNo: true },
+      });
 
-    if (!order) {
-      throw new NotFoundException('销售订单不存在或无权限访问');
-    }
+      if (!order) {
+        throw new NotFoundException('销售订单不存在或无权限访问');
+      }
 
-    const shipmentReferenceNo = `SALE-SHIP-${order.orderNo}`;
-    const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
+      const shipmentReferenceNo = `SALE-SHIP-${order.orderNo}`;
+      const reverseReferencePrefix = `SALE-SHIP-REV-${order.orderNo}`;
 
-    const result = await this.prisma.$transaction(
-      async (tx) => {
-        const latestReturn = await tx.inventoryReturnDocument.findFirst({
-          where: {
-            companyId,
-            returnType: 'SALES',
-            sourceDocumentId: order.id,
-          },
-          select: { referenceNo: true, postedAt: true },
-          orderBy: { postedAt: 'desc' },
-        });
-
-        const shippedMoves = await tx.inventoryTransaction.findMany({
+      const latestReturn = await tx.inventoryReturnDocument.findFirst({
+        where: {
+          companyId,
+          returnType: 'SALES',
+          sourceDocumentId: order.id,
+        },
+        select: { referenceNo: true, postedAt: true },
+        orderBy: { postedAt: 'desc' },
+      });
+      if (latestReturn) {
+        const ambiguousMoves = await tx.inventoryTransaction.count({
           where: {
             companyId,
             referenceNo: shipmentReferenceNo,
             type: 'OUTBOUND',
-            ...(latestReturn
-              ? { createdAt: { gt: latestReturn.postedAt } }
-              : {}),
-          },
-          select: {
-            materialId: true,
-            quantity: true,
-            sourceLocationId: true,
-            batchNo: true,
-          },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        if (!shippedMoves.length && latestReturn) {
-          const returnDocument = await this.findReturnDocumentByReference(
-            companyId,
-            latestReturn.referenceNo,
-            tx,
-          );
-          return { alreadyReversed: true as const, returnDocument };
-        }
-
-        if (!shippedMoves.length) {
-          throw new BadRequestException('未找到可冲销的销售出库流水');
-        }
-
-        const reversalCount = await tx.inventoryReturnDocument.count({
-          where: {
-            companyId,
-            returnType: 'SALES',
-            sourceDocumentId: order.id,
+            createdAt: latestReturn.postedAt,
           },
         });
-        const reverseReferenceNo =
-          reversalCount === 0
-            ? reverseReferencePrefix
-            : `${reverseReferencePrefix}-${reversalCount + 1}`;
-
-        const reversedLines: Array<{
-          materialId: string;
-          quantity: number;
-          transactionId: string;
-          locationId?: string | null;
-          batchNo?: string | null;
-        }> = [];
-
-        for (const move of shippedMoves) {
-          const transaction = await this.createStockMoveInTransaction(
-            tx,
-            companyId,
-            {
-              materialId: move.materialId,
-              quantity: Number(move.quantity),
-              destLocationId:
-                payload.destLocationId ?? move.sourceLocationId ?? undefined,
-              batchNo: payload.batchNo ?? move.batchNo ?? undefined,
-              referenceNo: reverseReferenceNo,
-              documentType: 'SALE_ORDER_REVERSE',
-              documentId: order.id,
-              note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
-            },
-            operatorId,
+        if (ambiguousMoves > 0) {
+          throw new BadRequestException(
+            '出库与最近销售冲销处于同一毫秒，无法确定冲销边界，请核对原始出库与退货单后重试',
           );
-
-          reversedLines.push({
-            materialId: move.materialId,
-            quantity: Number(move.quantity),
-            transactionId: transaction.id,
-            locationId: transaction.destLocationId ?? null,
-            batchNo: transaction.batchNo ?? null,
-          });
         }
+      }
 
-        if (options?.rollbackStatus !== false) {
-          await tx.order.update({
-            where: { id: order.id },
-            data: { status: 'IN_PRODUCTION' },
-          });
-        }
+      const shippedMoves = await tx.inventoryTransaction.findMany({
+        where: {
+          companyId,
+          referenceNo: shipmentReferenceNo,
+          type: 'OUTBOUND',
+          ...(latestReturn ? { createdAt: { gt: latestReturn.postedAt } } : {}),
+        },
+        select: {
+          materialId: true,
+          quantity: true,
+          sourceLocationId: true,
+          batchNo: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+      const { shippedByMaterial } = await this.loadNetShipmentQuantities(
+        tx,
+        companyId,
+        order,
+      );
+      const selectedByMaterial = new Map<string, number>();
+      for (const move of shippedMoves) {
+        selectedByMaterial.set(
+          move.materialId,
+          this.round4(
+            (selectedByMaterial.get(move.materialId) ?? 0) +
+              Number(move.quantity),
+          ),
+        );
+      }
+      const materialIds = new Set([
+        ...shippedByMaterial.keys(),
+        ...selectedByMaterial.keys(),
+      ]);
+      if (
+        [...materialIds].some(
+          (materialId) =>
+            (shippedByMaterial.get(materialId) ?? 0) !==
+            (selectedByMaterial.get(materialId) ?? 0),
+        )
+      ) {
+        throw new BadRequestException(
+          '销售出库与冲销的数量边界不一致，无法安全确定待冲销流水，请核对原始出库与退货单后重试',
+        );
+      }
 
-        const returnDocument = await this.createReturnDocument(
-          {
-            companyId,
-            returnType: 'SALES',
-            sourceDocumentId: order.id,
-            sourceDocumentNo: order.orderNo,
-            referenceNo: reverseReferenceNo,
-            note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
-            operatorId,
-            lines: reversedLines,
-          },
+      if (!shippedMoves.length && latestReturn) {
+        const returnDocument = await this.findReturnDocumentByReference(
+          companyId,
+          latestReturn.referenceNo,
           tx,
         );
+        return { order, alreadyReversed: true as const, returnDocument };
+      }
 
-        return {
-          alreadyReversed: false as const,
-          reversedLines,
-          returnDocument,
-        };
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+      if (!shippedMoves.length) {
+        throw new BadRequestException('未找到可冲销的销售出库流水');
+      }
+
+      const reversalCount = await tx.inventoryReturnDocument.count({
+        where: {
+          companyId,
+          returnType: 'SALES',
+          sourceDocumentId: order.id,
+        },
+      });
+      let reverseReferenceNo =
+        reversalCount === 0
+          ? reverseReferencePrefix
+          : `${reverseReferencePrefix}-${reversalCount + 1}`;
+      const referenceOwner = await tx.inventoryReturnDocument.findUnique({
+        where: {
+          companyId_referenceNo: { companyId, referenceNo: reverseReferenceNo },
+        },
+        select: { sourceDocumentId: true },
+      });
+      if (referenceOwner) {
+        reverseReferenceNo = `${reverseReferencePrefix}-${order.id}-${reversalCount + 1}`;
+        const fallbackOwner = await tx.inventoryReturnDocument.findUnique({
+          where: {
+            companyId_referenceNo: {
+              companyId,
+              referenceNo: reverseReferenceNo,
+            },
+          },
+          select: { id: true },
+        });
+        if (fallbackOwner)
+          throw new ConflictException(
+            '销售冲销单号已被使用，请核对退货单后重试',
+          );
+      }
+
+      const reversedLines: Array<{
+        materialId: string;
+        quantity: number;
+        transactionId: string;
+        locationId?: string | null;
+        batchNo?: string | null;
+      }> = [];
+
+      for (const move of shippedMoves) {
+        const material = await tx.material.findUnique({
+          where: { id: move.materialId },
+          select: { companyId: true },
+        });
+        if (
+          !material ||
+          (material.companyId !== null && material.companyId !== companyId)
+        ) {
+          throw new BadRequestException(
+            '销售出库流水关联物料不存在或不属于当前公司',
+          );
+        }
+        const transaction = await this.createStockMoveInTransaction(
+          tx,
+          companyId,
+          {
+            materialId: move.materialId,
+            quantity: Number(move.quantity),
+            destLocationId:
+              payload.destLocationId ?? move.sourceLocationId ?? undefined,
+            batchNo: payload.batchNo ?? move.batchNo ?? undefined,
+            referenceNo: reverseReferenceNo,
+            documentType: 'SALE_ORDER_REVERSE',
+            documentId: order.id,
+            note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+          },
+          operatorId,
+        );
+
+        reversedLines.push({
+          materialId: move.materialId,
+          quantity: Number(move.quantity),
+          transactionId: transaction.id,
+          locationId: transaction.destLocationId ?? null,
+          batchNo: transaction.batchNo ?? null,
+        });
+      }
+
+      if (options?.rollbackStatus !== false) {
+        await tx.order.update({
+          where: { id: order.id },
+          data: { status: 'IN_PRODUCTION' },
+        });
+      }
+
+      const returnDocument = await this.createReturnDocument(
+        {
+          companyId,
+          returnType: 'SALES',
+          sourceDocumentId: order.id,
+          sourceDocumentNo: order.orderNo,
+          referenceNo: reverseReferenceNo,
+          note: payload.note ?? `销售订单冲销回库：${order.orderNo}`,
+          operatorId,
+          lines: reversedLines,
+        },
+        tx,
+      );
+
+      return {
+        order,
+        alreadyReversed: false as const,
+        reversedLines,
+        returnDocument,
+      };
+    });
+    const { order } = result;
 
     if (result.alreadyReversed) {
       return {
@@ -1351,13 +1378,14 @@ export class InventoryService {
   }
 
   private async resolveShipmentAllocations(
+    tx: Prisma.TransactionClient,
     companyId: string,
     materialId: string,
     requestedQuantity: number,
     sourceLocationId?: string,
     batchNo?: string,
   ) {
-    const candidates = await this.prisma.stockQuant.findMany({
+    const candidates = await tx.stockQuant.findMany({
       where: {
         materialId,
         quantity: { gt: 0 },
@@ -1385,18 +1413,18 @@ export class InventoryService {
       locationName: string | null;
     }> = [];
 
-    let remaining = roundDecimal(requestedQuantity);
+    let remaining = this.round4(requestedQuantity);
     for (const candidate of candidates) {
       if (remaining <= 0) {
         break;
       }
 
-      const availableQuantity = roundDecimal(Number(candidate.quantity ?? 0));
+      const availableQuantity = this.round4(Number(candidate.quantity ?? 0));
       if (availableQuantity <= 0) {
         continue;
       }
 
-      const quantity = roundDecimal(Math.min(remaining, availableQuantity));
+      const quantity = this.round4(Math.min(remaining, availableQuantity));
       if (quantity <= 0) {
         continue;
       }
@@ -1407,18 +1435,18 @@ export class InventoryService {
         quantity,
         locationName: candidate.location?.name ?? null,
       });
-      remaining = roundDecimal(remaining - quantity);
+      remaining = this.round4(remaining - quantity);
     }
 
-    const allocatedQuantity = roundDecimal(
+    const allocatedQuantity = this.round4(
       allocations.reduce((sum, item) => sum + item.quantity, 0),
     );
 
     return {
       allocations,
-      requestedQuantity: roundDecimal(requestedQuantity),
+      requestedQuantity: this.round4(requestedQuantity),
       allocatedQuantity,
-      remainingQuantity: roundDecimal(
+      remainingQuantity: this.round4(
         Math.max(0, requestedQuantity - allocatedQuantity),
       ),
     };

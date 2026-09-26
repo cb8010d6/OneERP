@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { StockQueryService } from './stock-query.service';
+import { Prisma } from '@prisma/client';
 
 type MockPrisma = {
   product: {
@@ -44,13 +45,16 @@ type MockPrisma = {
 };
 
 type MockTx = {
+  product: { findMany: jest.Mock };
   order: {
+    findFirst: jest.Mock;
     update: jest.Mock;
   };
   stockLocation: {
     findFirst: jest.Mock;
   };
   material: {
+    findUnique: jest.Mock;
     findFirst: jest.Mock;
   };
   materialCost: {
@@ -72,6 +76,7 @@ type MockTx = {
   };
   inventoryReturnDocument: {
     findFirst: jest.Mock;
+    findMany: jest.Mock;
     findUnique: jest.Mock;
     count: jest.Mock;
     upsert: jest.Mock;
@@ -120,13 +125,16 @@ describe('InventoryService', () => {
   };
 
   const tx: MockTx = {
+    product: { findMany: prisma.product.findMany },
     order: {
+      findFirst: prisma.order.findFirst,
       update: jest.fn(),
     },
     stockLocation: {
       findFirst: jest.fn(),
     },
     material: {
+      findUnique: jest.fn(),
       findFirst: jest.fn(),
     },
     materialCost: {
@@ -148,6 +156,7 @@ describe('InventoryService', () => {
     },
     inventoryReturnDocument: {
       findFirst: jest.fn(),
+      findMany: jest.fn(),
       findUnique: jest.fn(),
       count: jest.fn(),
       upsert: jest.fn(),
@@ -177,11 +186,22 @@ describe('InventoryService', () => {
     prisma.$transaction.mockImplementation(
       (callback: (trx: MockTx) => unknown) => callback(tx),
     );
+    tx.stockQuant.findMany.mockImplementation(
+      (query: unknown) => prisma.stockQuant.findMany(query) as unknown,
+    );
+    tx.inventoryTransaction.findMany.mockImplementation(
+      (query: unknown) =>
+        prisma.inventoryTransaction.findMany(query) as unknown,
+    );
     tx.stockQuant.aggregate.mockResolvedValue({ _sum: { quantity: 10 } });
     tx.stockQuant.count.mockResolvedValue(1);
     tx.inventoryReturnDocument.findFirst.mockResolvedValue(null);
+    tx.inventoryReturnDocument.findMany.mockResolvedValue([]);
+    tx.inventoryReturnDocument.findUnique.mockResolvedValue(null);
+    tx.inventoryTransaction.count.mockResolvedValue(0);
     tx.inventoryReturnDocument.count.mockResolvedValue(0);
     tx.material.findFirst.mockResolvedValue({ unitPrice: 10 });
+    tx.material.findUnique.mockResolvedValue({ companyId: 'c1' });
     tx.materialCost.findUnique.mockResolvedValue(null);
     eventQueueService.enqueueInTransaction.mockResolvedValue({ id: 'event-1' });
     eventQueueService.dispatchById.mockResolvedValue({
@@ -220,6 +240,51 @@ describe('InventoryService', () => {
     });
     expect(tx.stockQuant.updateMany).not.toHaveBeenCalled();
     expect(eventQueueService.publish).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    'rejects duplicate shipment products before transactions (partial=%s)',
+    async (allowPartial) => {
+      await expect(
+        service.postSaleOrderShipment('c1', 'o1', {
+          allowPartial,
+          items: [
+            { productId: 'p1', shipQuantity: 1 },
+            { productId: 'p1', shipQuantity: 1 },
+          ],
+        }),
+      ).rejects.toThrow('重复');
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(eventQueueService.enqueueInTransaction).not.toHaveBeenCalled();
+    },
+  );
+
+  it('bounds serialization retries and returns a conflict instead of replaying indefinitely', async () => {
+    prisma.$transaction.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('serialization failure', {
+        code: 'P2034',
+        clientVersion: 'test',
+      }),
+    );
+    await expect(
+      service.postSaleOrderShipment('c1', 'o1', {
+        items: [{ productId: 'p1', shipQuantity: 1 }],
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(eventQueueService.dispatchById).not.toHaveBeenCalled();
+  });
+
+  it('does not retry ordinary validation failures', async () => {
+    prisma.$transaction.mockRejectedValueOnce(
+      new BadRequestException('invalid shipment'),
+    );
+    await expect(
+      service.postSaleOrderShipment('c1', 'o1', {
+        items: [{ productId: 'p1', shipQuantity: 1 }],
+      }),
+    ).rejects.toThrow('invalid shipment');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('throws when sale order is missing on reverse posting', async () => {
@@ -551,18 +616,35 @@ describe('InventoryService', () => {
     prisma.order.findFirst.mockResolvedValue({
       id: 'o1',
       orderNo: 'ORD-001',
+      status: 'PARTIAL_SHIPPED',
       items: [
         { productId: 'p1', quantity: 5 },
         { productId: 'p2', quantity: 3 },
       ],
     });
     prisma.product.findMany.mockResolvedValue([
-      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
-      { id: 'p2', materialId: 'm2', name: 'Case', sku: 'SKU-002' },
+      {
+        id: 'p1',
+        materialId: 'm1',
+        material: { companyId: 'c1' },
+        name: 'Phone',
+        sku: 'SKU-001',
+      },
+      {
+        id: 'p2',
+        materialId: 'm2',
+        material: { companyId: 'c1' },
+        name: 'Case',
+        sku: 'SKU-002',
+      },
     ]);
-    prisma.inventoryTransaction.findMany.mockResolvedValue([
-      { materialId: 'm1', quantity: 2 },
-    ]);
+    prisma.inventoryTransaction.findMany
+      .mockResolvedValueOnce([{ materialId: 'm1', quantity: 2 }])
+      .mockResolvedValueOnce([{ materialId: 'm1', quantity: 4 }])
+      .mockResolvedValue([
+        { materialId: 'm1', quantity: 4 },
+        { materialId: 'm2', quantity: 3 },
+      ]);
     prisma.stockQuant.findMany.mockImplementation(
       ({ where }: { where: { materialId: string } }) => {
         if (where.materialId === 'm1') {
@@ -667,18 +749,20 @@ describe('InventoryService', () => {
         quantity: 3,
       }),
     );
-    expect(prisma.order.update).toHaveBeenCalledWith({
+    expect(tx.order.update).toHaveBeenCalledWith({
       where: { id: 'o1' },
       data: { status: 'PARTIAL_SHIPPED' },
     });
-    expect(eventQueueService.publish).toHaveBeenCalledTimes(3);
-    expect(eventQueueService.publish).toHaveBeenCalledWith(
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledTimes(3);
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledWith(
+      tx,
       expect.objectContaining({
         eventName: 'inventory.stock_depleted',
         payload: expect.objectContaining({ materialId: 'm1', quantity: 1 }),
       }),
     );
-    expect(eventQueueService.publish).toHaveBeenCalledWith(
+    expect(eventQueueService.enqueueInTransaction).toHaveBeenCalledWith(
+      tx,
       expect.objectContaining({
         eventName: 'inventory.stock_depleted',
         payload: expect.objectContaining({ materialId: 'm2', quantity: 3 }),
@@ -687,6 +771,9 @@ describe('InventoryService', () => {
   });
 
   it('allows reposting after a full sales shipment reversal', async () => {
+    tx.inventoryReturnDocument.findMany.mockResolvedValue([
+      { sourceDocumentId: 'o1', lines: [{ inventoryMoveId: 'reversal-1' }] },
+    ]);
     prisma.order.findFirst.mockResolvedValue({
       id: 'o1',
       orderNo: 'ORD-RESHIP',
@@ -694,13 +781,20 @@ describe('InventoryService', () => {
       items: [{ productId: 'p1', quantity: 2 }],
     });
     prisma.product.findMany.mockResolvedValue([
-      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
+      {
+        id: 'p1',
+        materialId: 'm1',
+        material: { companyId: 'c1' },
+        name: 'Phone',
+        sku: 'SKU-001',
+      },
     ]);
     prisma.inventoryTransaction.findMany.mockResolvedValue([
       {
         materialId: 'm1',
         quantity: 2,
         type: 'INBOUND',
+        id: 'reversal-1',
         referenceNo: 'SALE-SHIP-REV-ORD-RESHIP',
       },
       {
@@ -756,7 +850,13 @@ describe('InventoryService', () => {
       items: [{ productId: 'p1', quantity: 5 }],
     });
     prisma.product.findMany.mockResolvedValue([
-      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
+      {
+        id: 'p1',
+        materialId: 'm1',
+        material: { companyId: 'c1' },
+        name: 'Phone',
+        sku: 'SKU-001',
+      },
     ]);
     prisma.inventoryTransaction.findMany.mockResolvedValue([]);
     prisma.stockQuant.findMany.mockResolvedValue([
@@ -780,7 +880,9 @@ describe('InventoryService', () => {
       ),
     ).rejects.toThrow('库存不足');
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
     expect(prisma.order.update).not.toHaveBeenCalled();
     expect(eventQueueService.publish).not.toHaveBeenCalled();
   });
@@ -796,8 +898,20 @@ describe('InventoryService', () => {
       ],
     });
     prisma.product.findMany.mockResolvedValue([
-      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
-      { id: 'p2', materialId: 'm2', name: 'Case', sku: 'SKU-002' },
+      {
+        id: 'p1',
+        materialId: 'm1',
+        material: { companyId: 'c1' },
+        name: 'Phone',
+        sku: 'SKU-001',
+      },
+      {
+        id: 'p2',
+        materialId: 'm2',
+        material: { companyId: 'c1' },
+        name: 'Case',
+        sku: 'SKU-002',
+      },
     ]);
     prisma.inventoryTransaction.findMany.mockResolvedValue([]);
     prisma.stockQuant.findMany.mockImplementation(
@@ -855,7 +969,13 @@ describe('InventoryService', () => {
       items: [{ productId: 'p1', quantity: 2 }],
     });
     prisma.product.findMany.mockResolvedValue([
-      { id: 'p1', materialId: 'm1', name: 'Phone', sku: 'SKU-001' },
+      {
+        id: 'p1',
+        materialId: 'm1',
+        material: { companyId: 'c1' },
+        name: 'Phone',
+        sku: 'SKU-001',
+      },
     ]);
     prisma.inventoryTransaction.findMany.mockResolvedValue([]);
     prisma.stockQuant.findMany.mockResolvedValue([]);

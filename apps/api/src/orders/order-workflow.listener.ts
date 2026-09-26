@@ -67,9 +67,16 @@ export class OrderWorkflowListener {
       throw new Error(`销售订单不存在或无权限访问：${payload.recordId}`);
     }
 
-    return order.items.map((item) => ({
-      productId: item.productId,
-      shipQuantity: Number(item.quantity ?? 0),
+    const quantities = new Map<string, number>();
+    for (const item of order.items) {
+      quantities.set(
+        item.productId,
+        (quantities.get(item.productId) ?? 0) + Number(item.quantity ?? 0),
+      );
+    }
+    return [...quantities].map(([productId, shipQuantity]) => ({
+      productId,
+      shipQuantity,
     }));
   }
 
