@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import {
   Factory,
@@ -45,8 +45,10 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
-  const [rightOpen, setRightOpen] = useState(true);
+  const [rightOpen, setRightOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const mobileNavRef = useRef<HTMLElement>(null);
+  const mobileNavTriggerRef = useRef<HTMLButtonElement>(null);
   const {
     user,
     token,
@@ -147,6 +149,44 @@ export default function DashboardLayout({
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const drawer = mobileNavRef.current;
+    const trigger = mobileNavTriggerRef.current;
+    if (!drawer) return;
+    const focusable = () => Array.from(drawer.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
+    ));
+    focusable()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setMobileNavOpen(false);
+      }
+      if (event.key !== 'Tab') return;
+      const items = focusable();
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    const onResize = () => {
+      if (window.innerWidth >= 1024) setMobileNavOpen(false);
+    };
+    drawer.addEventListener('keydown', onKeyDown);
+    window.addEventListener('resize', onResize);
+    return () => {
+      drawer.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('resize', onResize);
+      trigger?.focus();
+    };
+  }, [mobileNavOpen]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -272,6 +312,7 @@ export default function DashboardLayout({
           {t('currentCompany')}
         </label>
         <select
+          aria-label={t('currentCompany')}
           className="w-full bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5"
           value={currentCompanyId || ''}
           onChange={handleCompanyChange}
@@ -284,7 +325,7 @@ export default function DashboardLayout({
         </select>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+      <nav aria-label={t('primaryNavigation')} className="flex-1 p-4 space-y-1 overflow-y-auto">
         {visibleNavItems.map((item) => {
           const isActive =
             pathname === item.href ||
@@ -293,6 +334,8 @@ export default function DashboardLayout({
           return (
             <button
               key={item.href}
+              type="button"
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => handleNavigate(item.href)}
               className={`w-full flex items-center px-3 py-2.5 text-sm font-medium rounded-lg transition-colors ${
                 isActive
@@ -327,6 +370,9 @@ export default function DashboardLayout({
             </div>
           </div>
           <button
+            type="button"
+            aria-label={t('signOut')}
+            title={t('signOut')}
             onClick={handleLogout}
             className="p-2 text-gray-400 hover:text-red-500 transition-colors rounded-lg hover:bg-gray-100"
           >
@@ -339,7 +385,7 @@ export default function DashboardLayout({
 
   return (
     <div className="flex h-dvh overflow-hidden bg-gray-50">
-      <aside className="hidden w-64 shrink-0 bg-white border-r border-gray-200 lg:flex lg:flex-col">
+      <aside inert={mobileNavOpen} className="hidden w-60 shrink-0 bg-white border-r border-gray-200 lg:flex lg:flex-col">
         {sidebarContent}
       </aside>
 
@@ -348,14 +394,15 @@ export default function DashboardLayout({
           <button
             type="button"
             className="absolute inset-0 bg-slate-900/40"
-            aria-label="关闭导航"
+            aria-label={t('closeNavigation')}
+            tabIndex={-1}
             onClick={() => setMobileNavOpen(false)}
           />
-          <aside className="relative flex h-full w-[min(82vw,320px)] flex-col bg-white shadow-xl">
+          <aside ref={mobileNavRef} id="mobile-navigation" role="dialog" aria-modal="true" aria-label={t('primaryNavigation')} className="relative flex h-full w-[min(82vw,320px)] flex-col bg-white shadow-xl">
             <button
               type="button"
               className="absolute right-3 top-3 rounded-md p-2 text-gray-500 hover:bg-gray-100"
-              aria-label="关闭导航"
+              aria-label={t('closeNavigation')}
               onClick={() => setMobileNavOpen(false)}
             >
               <X className="h-5 w-5" />
@@ -366,12 +413,15 @@ export default function DashboardLayout({
       ) : null}
 
       {/* Main Content */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="relative h-14 sm:h-16 bg-white border-b border-gray-200 flex items-center gap-2 px-3 shadow-sm sm:px-6 lg:px-8">
+      <main inert={mobileNavOpen} className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="h-14 shrink-0 sm:h-16 bg-white border-b border-gray-200 flex items-center gap-2 px-3 sm:px-6 lg:px-8">
           <button
+            ref={mobileNavTriggerRef}
             type="button"
             className="rounded-md p-2 text-gray-600 hover:bg-gray-100 lg:hidden"
-            aria-label="打开导航"
+            aria-label={t('openNavigation')}
+            aria-expanded={mobileNavOpen}
+            aria-controls={mobileNavOpen ? 'mobile-navigation' : undefined}
             onClick={() => setMobileNavOpen(true)}
           >
             <Menu className="h-5 w-5" />
@@ -379,7 +429,7 @@ export default function DashboardLayout({
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-gray-800 sm:text-lg">
             {currentRoute?.label || t('navOverview')}
           </h2>
-          <div className="absolute left-1/2 hidden -translate-x-1/2 md:block">
+          <div className="hidden min-w-0 shrink md:block">
             <CommandPalette key={`${user.id}:${currentCompanyId}`} />
           </div>
           <select
@@ -387,7 +437,7 @@ export default function DashboardLayout({
             onChange={(event) =>
               setLanguage(event.target.value as 'zh-CN' | 'en-US')
             }
-            className="mr-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600"
+            className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-600"
             aria-label="Language"
           >
             <option value="zh-CN">{t('languageChinese')}</option>
@@ -395,11 +445,15 @@ export default function DashboardLayout({
           </select>
           <button
             type="button"
-            className="hidden rounded-md p-1.5 text-gray-500 hover:bg-gray-100 xl:inline-flex"
+            className={`hidden shrink-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-xs hover:bg-gray-100 xl:inline-flex ${rightOpen ? 'bg-blue-50 text-blue-700' : 'text-gray-500'}`}
             onClick={() => setRightOpen((prev) => !prev)}
             title={t('toggleSidePanel')}
+            aria-label={t('toggleSidePanel')}
+            aria-expanded={rightOpen}
+            aria-controls={rightOpen ? 'workspace-tools' : undefined}
           >
             <PanelRight className="h-4 w-4" />
+            <span>{t('workspaceTools')}</span>
           </button>
         </header>
         <WorkspaceTabs />
@@ -412,7 +466,7 @@ export default function DashboardLayout({
           </div>
 
           {rightOpen ? (
-            <aside className="hidden w-72 border-l border-gray-200 bg-white p-4 xl:block">
+            <aside id="workspace-tools" className="hidden w-64 shrink-0 overflow-y-auto border-l border-gray-200 bg-white p-4 xl:block">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-700">
                 {t('productivityPanel')}
               </h3>
@@ -429,7 +483,7 @@ export default function DashboardLayout({
                   <div className="font-medium text-gray-800">
                     {t('multiTabs')}
                   </div>
-                  <div>
+                  <div className="break-all">
                     {t('currentTab')}: {activePath || '/dashboard'}
                   </div>
                   <div className="mt-1">{t('multiTabsHint')}</div>
