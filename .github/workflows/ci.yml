@@ -286,15 +286,62 @@ jobs:
           fi
           docker rm --force oneerp-http-minio >/dev/null 2>&1 || true
 
+  # Real Chromium, built Web UI, synthetic API only; not real-user acceptance.
+  browser-workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_API_BASE_URL: /api/proxy
+      # Fail closed if a browser API fixture is accidentally omitted.
+      API_BASE_URL: http://127.0.0.1:9
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            e2e/package-lock.json
+      - name: Install isolated Web and browser-test dependencies
+        run: npm ci --prefix apps/web && npm ci --prefix e2e
+      - name: Audit isolated browser-test dependencies
+        run: npm --prefix e2e run audit:security
+      - name: Install official matching Chromium and system dependencies
+        working-directory: e2e
+        timeout-minutes: 10
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Build Web from reviewed source
+        run: npm --prefix apps/web run build
+      - name: Run synthetic Chromium workspace regression
+        run: npm --prefix e2e test
+      - name: Upload synthetic browser report and screenshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: synthetic-browser-workspace-report
+          path: |
+            e2e/playwright-report/
+            e2e/test-results/
+          if-no-files-found: warn
+          retention-days: 7
+
   # Retain the existing required check name and require ALL independent jobs.
   validate:
     if: always()
-    needs: [security-audit, validation-tests, http-journey]
+    needs: [security-audit, validation-tests, http-journey, browser-workspace]
     runs-on: ubuntu-latest
     steps:
-      - name: Require security, validation and HTTP acceptance success
+      - name: Require security, validation, HTTP and browser acceptance success
         env:
           SECURITY_RESULT: ${{ needs.security-audit.result }}
           VALIDATION_RESULT: ${{ needs.validation-tests.result }}
           HTTP_RESULT: ${{ needs.http-journey.result }}
-        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success && test "$HTTP_RESULT" = success
+          BROWSER_RESULT: ${{ needs.browser-workspace.result }}
+        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success && test "$HTTP_RESULT" = success && test "$BROWSER_RESULT" = success

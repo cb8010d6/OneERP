@@ -1,0 +1,14 @@
+{
+  "name": "oneerp-browser-regression",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:list": "playwright test --list",
+    "audit:security": "npm audit --audit-level=high"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
