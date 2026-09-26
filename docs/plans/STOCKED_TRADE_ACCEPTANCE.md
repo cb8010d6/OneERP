@@ -35,7 +35,7 @@ Every observed receipt, shipment and reversal movement must have a nonempty ID. 
 
 ## Disposable environment and execution safeguards
 
-The intended runner is an independent CI job with PostgreSQL 15, Redis 7 and the repository's pinned MinIO image. Run Prisma generation/migrations and the normal production initializer against the disposable database, build the API, start the actual API process, and wait for `/api/health` with a bounded deadline and child-process liveness check.
+The intended runner is an independent CI job with PostgreSQL 15, Redis 7 and a job-local MinIO image built from the same pinned release's official source (details below). Run Prisma generation/migrations and the normal production initializer against the disposable database, build the API, start the actual API process, and wait for `/api/health` with a bounded deadline and child-process liveness check.
 
 Required bootstrap configuration includes `DATABASE_URL`, `JWT_SECRET`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` and `CORS_ORIGINS`. Test configuration also supplies the API port, Redis/MinIO connection settings, a unique synthetic company name, initializer credentials and `AI_WRITE_ENABLED=false`. No external AI provider is used.
 
@@ -62,11 +62,24 @@ Set `STOCKED_TRADE_ACCEPTANCE_REPORT` or pass `--report <path>` to persist the J
 | --- | --- | --- |
 | Source/endpoint and final implementation review | PASS for CI execution | Payloads and expected states match current DTOs/services; corrected health assertion, exact movement counts, per-receipt quantities, immutable shipment/reversal field comparisons and report provenance reviewed |
 | Script focused tests | PASS — 16 tests including fixture subtests | `node --test scripts/stocked-trade-acceptance.test.mjs`: opt-in/required inputs, loopback URL restrictions, CLI/numeric validation, stalled-body deadline, HTTP-error redaction, movement IDs and immutable fields. The full CLI fixture accepts an unchanged baseline and rejects shipment/reversal tampering and missing movement IDs. Small local HTTP fixtures are not the OneERP application |
-| Authenticated OneERP HTTP run | BLOCKED before API startup | CI run `36240843119` at `bb591ee` failed pulling the pinned `minio/minio` image with an explicit access-denied error. No business step ran; registry/authentication changes await direction. No assertion or required gate was relaxed |
-| Prior exact-head CI validation | PASS at `bb591ee` | The same run passed 705 regular tests and 33 PostgreSQL regressions, migrations, risk preflight, builds and security audit. This evidence predates the additional immutable-movement fixture tests and does not establish HTTP business acceptance |
+| Authenticated OneERP HTTP run | PASS — 13/13 steps at `df902be` | [CI run 36250668125](https://github.com/cb8010d6/OneERP/actions/runs/36250668125), job `108427969780`, built and verified the fixed-source MinIO image, started the actual API and passed every journey step. Sanitized report artifact `10909430130` was uploaded. Earlier registry-denied attempts did not execute business steps; no assertion or required gate was relaxed |
+| Exact-head CI validation | PASS at `df902be` | The same run passed 716 regular tests (18 scripts, 602 API, 96 Web) and 33 PostgreSQL regressions, migrations, risk preflight, builds, security audit and the aggregate required check. The stacked UI branch has separate additional tests; this row records this exact commit only |
 | Browser walkthrough | Not run | UI rendering, form usability and accessibility are outside this API check |
 | Production UAT/deployment | Not run | This job neither deploys nor approves real inventory/financial use |
 
 A successful report should identify the source revision, run time, selected synthetic company, each step outcome, relevant document IDs and quantity/state observations. Report HTTP status and sanitized diagnostics on failure, never request credentials, authorization headers or login/refresh payloads. A failed assertion or request must return a nonzero exit status and must not be described as passed acceptance.
 
 The aggregate required CI check must continue requiring the independent security audit. HTTP acceptance passing does not waive a security failure or the existing production-readiness gates.
+
+## CI-only MinIO source provenance
+
+`scripts/ci/minio.Dockerfile` builds only the disposable HTTP job's MinIO server. Docker Hub and Quay MinIO image pulls were unavailable; this path does not retry them, use `minio/mc`, change registry credentials, push an image, or alter production Compose/deployment configuration.
+
+- Official source: [minio/minio release tag](https://github.com/minio/minio/tree/RELEASE.2024-01-18T22-51-28Z), retained at `RELEASE.2024-01-18T22-51-28Z`.
+- Verified tag peel: annotated tag `5a337e33b13b7a2195d10bd6d30173b6397bae61` points to full commit [`19387cafab76133c2e7642de4aac8c81b9f4f8c7`](https://github.com/minio/minio/commit/19387cafab76133c2e7642de4aac8c81b9f4f8c7). The Docker build independently checks that tag-to-commit mapping and detached HEAD, failing if it changes. This is a source identity check, not a claim of signature verification.
+- Builder: official `golang:1.21.6-bookworm`, pinned to manifest-list digest `sha256:3efef61ff1d99c8a90845100e2a7e934b4a5d11b639075dc605ff53c141044fc`, with automatic Go toolchain switching disabled. This pins the release's Go compiler version and satisfies upstream `go.mod`'s `go 1.19` requirement. Build concurrency is capped at two to bound runner memory use.
+- Build: upstream's `kqueue` tag, `CGO_ENABLED=0`, `-trimpath` and `buildscripts/gen-ldflags.go`, with the published release timestamp supplied explicitly. Go module checksum verification and read-only module resolution are required; `go.mod`/`go.sum` must remain unchanged. The binary's reported release and full commit are checked before the runtime image is produced.
+- Runtime: scratch plus server binary, CA certificates, upstream LICENSE/NOTICE/CREDITS and writable temporary/data directories, running as an unprivileged numeric user. No client tool or shell is included. The server binds to runner loopback only, the existing bounded health check remains mandatory, and existing `always()` cleanup removes its container. The local image is not published.
+- Execution budget: HTTP job timeout increases from 20 to 30 minutes to allow source compilation; no business assertion, dependency gate, security audit or aggregate required check is changed.
+
+Local Docker/Go execution is unavailable in the editing environment. The exact-head GitHub CI run above supplies the actual image build, binary release/commit check, MinIO startup and authenticated business acceptance evidence. This synthetic CI result does not certify production security, operator/browser usability or restore readiness. Production image availability is tracked separately in [issue #35](https://github.com/cb8010d6/OneERP/issues/35); production Compose files remain unchanged.

@@ -125,7 +125,7 @@ jobs:
   # Exercise the public HTTP boundary against disposable, job-local services.
   http-journey:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:15-alpine
@@ -190,14 +190,22 @@ jobs:
           echo "::add-mask::$journey_password"
           echo "::add-mask::$journey_jwt"
           printf 'INIT_ADMIN_PASSWORD=%s\nJWT_SECRET=%s\n' "$journey_password" "$journey_jwt" >> "$GITHUB_ENV"
+      - name: Build verified MinIO source for disposable CI only
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --progress=plain --file scripts/ci/minio.Dockerfile \
+            --tag oneerp-ci-minio:RELEASE.2024-01-18T22-51-28Z scripts/ci
+          docker run --rm --pull=never \
+            oneerp-ci-minio:RELEASE.2024-01-18T22-51-28Z --version
       - name: Start disposable MinIO
         shell: bash
         run: |
           set -euo pipefail
-          docker run --detach --name oneerp-http-minio --publish 9000:9000 \
+          docker run --detach --pull=never --name oneerp-http-minio --publish 127.0.0.1:9000:9000 \
             --env MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
             --env MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
-            minio/minio:RELEASE.2024-01-18T22-51-28Z server /data
+            oneerp-ci-minio:RELEASE.2024-01-18T22-51-28Z server /data
           for attempt in $(seq 1 30); do
             if curl --fail --silent --output /dev/null --max-time 2 http://127.0.0.1:9000/minio/health/live; then
               exit 0
