@@ -19,6 +19,7 @@ export class MetadataService {
         label: '订单',
         description: '销售/生产订单主数据。',
         companyScoped: true,
+        allowGenericWrite: false,
         fields: [
           { name: 'orderNo', label: '订单号', type: 'string' },
           {
@@ -430,6 +431,7 @@ export class MetadataService {
         label: '库存量',
         description: '库存量与批次管理视图。',
         companyScoped: true,
+        allowGenericWrite: false,
         fields: [
           {
             name: 'locationId',
@@ -473,6 +475,7 @@ export class MetadataService {
         label: '工单',
         description: '制造执行工单。',
         companyScoped: true,
+        allowGenericWrite: false,
         fields: [
           { name: 'workOrderNo', label: '工单号', type: 'string' },
           {
@@ -532,6 +535,7 @@ export class MetadataService {
         label: '发票',
         description: '财务发票与回款管理。',
         companyScoped: true,
+        allowGenericWrite: false,
         fields: [
           { name: 'invoiceNo', label: '发票号', type: 'string' },
           {
@@ -606,6 +610,7 @@ export class MetadataService {
         label: '文件',
         description: '企业文档与图纸档案记录。',
         companyScoped: true,
+        allowGenericWrite: false,
         fields: [
           { name: 'fileName', label: '文件名', type: 'string' },
           { name: 'mimeType', label: '类型', type: 'string' },
@@ -651,6 +656,7 @@ export class MetadataService {
         label: '员工账号关系',
         description: '当前企业下员工与角色关系。',
         companyScoped: true,
+        allowGenericWrite: false,
         fields: [
           {
             name: 'userId',

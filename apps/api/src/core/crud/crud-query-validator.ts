@@ -9,6 +9,11 @@ export interface DmmfFieldMeta {
   type: string;
   isList: boolean;
   relationName?: string;
+  isRequired?: boolean;
+  isId?: boolean;
+  isUnique?: boolean;
+  relationFromFields?: string[];
+  relationToFields?: string[];
 }
 
 export interface DmmfModelMeta {
@@ -156,7 +161,10 @@ function sanitizeRelationArgs(
         resolve,
         depth + 1,
       );
-    } else if (key === 'where' || key === 'cursor') {
+    } else if (key === 'cursor') {
+      // A foreign cursor can change pagination even when output rows are scoped.
+      throw new BadRequestException('关联查询不支持 cursor');
+    } else if (key === 'where') {
       result[key] = sanitizeFilter(asObject(value, key), model, resolve);
     } else if (key === 'orderBy') {
       result[key] = sanitizeOrderBy(value as OrderBy, model);
@@ -320,7 +328,16 @@ export function assertScalarWriteData(
   companyId?: string,
 ): void {
   const model = requireModel(modelMeta);
+  const foreignKeys = new Set(
+    model.fields.flatMap((field) => field.relationFromFields ?? []),
+  );
   for (const key of Object.keys(asObject(data, 'data'))) {
+    if (
+      foreignKeys.has(key) &&
+      data[key] !== null &&
+      typeof data[key] !== 'string'
+    )
+      throw new ForbiddenException('关联标识必须使用字符串或空值');
     if (
       key === 'id' ||
       (key === 'companyId' &&

@@ -25,6 +25,9 @@ function createMockDelegate() {
     findMany: jest.fn().mockResolvedValue([]),
     count: jest.fn().mockResolvedValue(0),
     findFirst: jest.fn().mockResolvedValue(null),
+    findUnique: jest
+      .fn()
+      .mockResolvedValue({ id: 'reference', companyId: 'c1' }),
     create: jest.fn().mockResolvedValue({ id: 'new-id' }),
     update: jest.fn().mockResolvedValue({ id: 'updated-id' }),
     delete: jest.fn().mockResolvedValue({ id: 'deleted-id' }),
@@ -34,7 +37,8 @@ function createMockDelegate() {
 function createMockPrisma(
   modelDelegate: ReturnType<typeof createMockDelegate>,
 ) {
-  return {
+  const prisma = {
+    $transaction: jest.fn(),
     ...Object.fromEntries(
       Object.keys(runtimeDataModel.models).map((name) => [
         name.charAt(0).toLowerCase() + name.slice(1),
@@ -43,6 +47,10 @@ function createMockPrisma(
     ),
     _runtimeDataModel: runtimeDataModel,
   };
+  prisma.$transaction.mockImplementation(
+    (callback: (tx: unknown) => Promise<unknown>) => callback(prisma),
+  );
+  return prisma;
 }
 
 function createMockMetadataService(
@@ -101,26 +109,26 @@ describe('CrudService – 租户隔离: list()', () => {
     );
   });
 
-  it('不传 companyId 时不注入', async () => {
+  it('缺少 companyId 时必须拒绝', async () => {
     const { service, delegate } = buildService();
 
-    await service.list('partner', {});
-
-    expect(delegate.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: {} }),
+    await expect(service.list('partner', {})).rejects.toBeInstanceOf(
+      ForbiddenException,
     );
+    expect(delegate.findMany).not.toHaveBeenCalled();
   });
 
-  it('filter 中包含不同 companyId 应抛 ForbiddenException', async () => {
-    const { service } = buildService();
+  it('filter 中不同 companyId 不能覆盖当前租户', async () => {
+    const { service, delegate } = buildService();
 
-    await expect(
-      service.list(
-        'partner',
-        { filter: JSON.stringify({ companyId: 'c2' }) },
-        'c1',
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
+    await service.list(
+      'partner',
+      { filter: JSON.stringify({ companyId: 'c2' }) },
+      'c1',
+    );
+    expect(delegate.count).toHaveBeenCalledWith({
+      where: { AND: [{ companyId: 'c1' }, { companyId: 'c2' }] },
+    });
   });
 });
 
@@ -452,7 +460,7 @@ describe('CrudService – sensitive resource boundary with generated Prisma meta
     };
     await service.list('product', { include: JSON.stringify(include) }, 'c1');
     expect(delegate.findMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ where: { companyId: 'c1' }, include }),
+      expect.objectContaining({ include }),
     );
     await service.list(
       'order',
@@ -468,7 +476,9 @@ describe('CrudService – sensitive resource boundary with generated Prisma meta
     );
     expect(delegate.findMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
-        where: { companyId: 'c1', partner: { is: { name: 'customer' } } },
+        where: expect.objectContaining({
+          AND: expect.any(Array) as unknown,
+        }) as unknown,
       }),
     );
   });
@@ -480,7 +490,20 @@ describe('CrudService – sensitive resource boundary with generated Prisma meta
     };
     await service.list('order', { include: JSON.stringify(include) }, 'c1');
     expect(delegate.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ include }),
+      expect.objectContaining({
+        include: {
+          _count: {
+            select: {
+              items: {
+                where: {
+                  order: { is: { companyId: 'c1' } },
+                  quantity: { gt: 0 },
+                },
+              },
+            },
+          },
+        },
+      }),
     );
   });
 
@@ -599,5 +622,242 @@ describe('CrudService – sensitive resource boundary with generated Prisma meta
       BadRequestException,
     );
     expect(delegate.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('CrudService – explicit ownership and final transaction boundary', () => {
+  it.each([
+    ['bomLine', 'bom'],
+    ['journalEntryLine', 'journalEntry'],
+    ['stockQuant', 'location'],
+    ['orderItem', 'order'],
+    ['purchaseOrderLine', 'purchaseOrder'],
+    ['purchaseReceiptLine', 'receipt'],
+    ['inventoryReturnLine', 'returnDocument'],
+  ])(
+    'scopes %s through its registered parent without UI metadata',
+    async (name, parent) => {
+      const { service, delegate, metadata } = buildService({
+        companyScopedModels: new Set(),
+      });
+      await service.list(name, {}, 'c1');
+      expect(delegate.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { [parent]: { is: { companyId: 'c1' } } },
+        }),
+      );
+      expect(delegate.count).toHaveBeenCalledWith({
+        where: { [parent]: { is: { companyId: 'c1' } } },
+      });
+      expect(metadata.isCompanyScoped).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    'invoice',
+    'workOrder',
+    'stockQuant',
+    'fileRecord',
+    'journalEntry',
+    'journalEntryLine',
+    'journal',
+    'inventoryTransaction',
+  ])('rejects lifecycle writes to %s', async (name) => {
+    const { service, delegate } = buildService();
+    await expect(service.create(name, {}, 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(service.update(name, 'id', {}, 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    await expect(service.remove(name, 'id', 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(delegate.findFirst).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'documentSequence',
+    'customFieldDefinition',
+    'workflow',
+    'workflowState',
+    'workflowTransition',
+  ])('does not expose unsupported/control model %s', async (name) => {
+    const { service, delegate } = buildService();
+    await expect(service.list(name, {}, 'c1')).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+    expect(delegate.findMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['product', 'categoryId'],
+    ['product', 'materialId'],
+    ['stockLocation', 'warehouseId'],
+    ['stockLocation', 'parentId'],
+    ['productCategory', 'parentId'],
+    ['bom', 'productId'],
+    ['bomLine', 'bomId'],
+    ['bomLine', 'materialId'],
+    ['taxCode', 'accountId'],
+    ['account', 'parentId'],
+  ])(
+    'rejects foreign scalar %s.%s on create/update after hooks',
+    async (name, field) => {
+      const { service, delegate, hooks } = buildService();
+      delegate.findFirst.mockResolvedValue({ id: 'id', companyId: 'c1' });
+      delegate.findUnique.mockResolvedValue({ id: 'foreign', companyId: 'c2' });
+      hooks.execute.mockImplementation((event, ctx) =>
+        Promise.resolve(
+          ['beforeInsert', 'beforeUpdate'].includes(event)
+            ? { ...ctx, data: { ...ctx.data, [field]: 'foreign' } }
+            : ctx,
+        ),
+      );
+      await expect(service.create(name, {}, 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(service.update(name, 'id', {}, 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(delegate.create).not.toHaveBeenCalled();
+      expect(delegate.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['product', 'bomLine'])(
+    'preserves shared Material reference on %s but scopes root Material reads',
+    async (name) => {
+      const { service, delegate } = buildService();
+      delegate.findUnique.mockResolvedValue({ id: 'global', companyId: null });
+      await service.create(name, { materialId: 'global' }, 'c1');
+      expect(delegate.findUnique).toHaveBeenCalledWith({
+        where: { id: 'global' },
+      });
+      expect(delegate.create).toHaveBeenCalled();
+      await service.list('material', {}, 'c1');
+      expect(delegate.count).toHaveBeenLastCalledWith({
+        where: { companyId: 'c1' },
+      });
+    },
+  );
+
+  it('preserves nullable references and ordinary JSON without accepting FK operation envelopes', async () => {
+    const { service, delegate } = buildService();
+    await service.create(
+      'product',
+      {
+        materialId: null,
+        categoryId: null,
+        customAttributes: { set: 'plain JSON' },
+      },
+      'c1',
+    );
+    expect(delegate.findUnique).not.toHaveBeenCalled();
+    delegate.create.mockClear();
+    await expect(
+      service.create('product', { materialId: { set: 'foreign' } }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(delegate.create).not.toHaveBeenCalled();
+  });
+
+  it('uses the transaction client for final FK checks and mutation, including unchanged corrupt references', async () => {
+    const { service, prisma, delegate } = buildService();
+    const txDelegate = createMockDelegate();
+    const tx = createMockPrisma(txDelegate);
+    delegate.findFirst.mockResolvedValue({
+      id: 'p1',
+      companyId: 'c1',
+      materialId: 'safe',
+    });
+    txDelegate.findFirst.mockResolvedValue({
+      id: 'p1',
+      companyId: 'c1',
+      materialId: 'foreign',
+    });
+    txDelegate.findUnique.mockResolvedValue({ id: 'foreign', companyId: 'c2' });
+    prisma.$transaction.mockImplementation(
+      (callback: (client: unknown) => Promise<unknown>) => callback(tx),
+    );
+    await expect(
+      service.update('product', 'p1', { name: 'update' }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(txDelegate.findUnique).toHaveBeenCalledWith({
+      where: { id: 'foreign' },
+    });
+    expect(delegate.findUnique).not.toHaveBeenCalled();
+    expect(delegate.update).not.toHaveBeenCalled();
+    expect(txDelegate.update).not.toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'Serializable',
+    });
+  });
+
+  it('rechecks ownership after hooks and carries child scope to final update/delete', async () => {
+    const { service, prisma, delegate } = buildService();
+    const txDelegate = createMockDelegate();
+    const tx = createMockPrisma(txDelegate);
+    delegate.findFirst.mockResolvedValue({ id: 'line', bomId: 'bom' });
+    txDelegate.findFirst.mockResolvedValue({ id: 'line', bomId: 'bom' });
+    prisma.$transaction.mockImplementation(
+      (callback: (client: unknown) => Promise<unknown>) => callback(tx),
+    );
+    const where = { id: 'line', bom: { is: { companyId: 'c1' } } };
+    await service.update('bomLine', 'line', { quantity: 2 }, 'c1');
+    expect(txDelegate.update).toHaveBeenCalledWith({
+      where,
+      data: { quantity: 2 },
+    });
+    await service.remove('bomLine', 'line', 'c1');
+    expect(txDelegate.delete).toHaveBeenCalledWith({ where });
+    txDelegate.findFirst.mockResolvedValue(null);
+    txDelegate.update.mockClear();
+    txDelegate.delete.mockClear();
+    await expect(
+      service.update('bomLine', 'line', {}, 'c1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    await expect(
+      service.remove('bomLine', 'line', 'c1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(txDelegate.update).not.toHaveBeenCalled();
+    expect(txDelegate.delete).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a failed transaction or emit success audit/after hooks', async () => {
+    const { service, prisma, audit, hooks } = buildService();
+    const failure = new Error('transaction conflict');
+    prisma.$transaction.mockRejectedValue(failure);
+    await expect(
+      service.create('partner', { name: 'customer' }, 'c1'),
+    ).rejects.toBe(failure);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(audit.logCrudAction).not.toHaveBeenCalled();
+    expect(hooks.execute).not.toHaveBeenCalledWith(
+      'afterInsert',
+      expect.anything(),
+    );
+  });
+
+  it('refuses a referenced master delete and retains unscoped inverse guards in the final deletion', async () => {
+    const { service, delegate } = buildService();
+    const owned = { id: 'category', companyId: 'c1' };
+    delegate.findFirst
+      .mockResolvedValueOnce(owned)
+      .mockResolvedValueOnce(owned)
+      .mockResolvedValueOnce(null);
+    await expect(
+      service.remove('productCategory', 'category', 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(delegate.delete).not.toHaveBeenCalled();
+    delegate.findFirst.mockResolvedValue(owned);
+    await service.remove('productCategory', 'category', 'c1');
+    expect(delegate.delete).toHaveBeenCalledWith({
+      where: {
+        id: 'category',
+        companyId: 'c1',
+        children: { none: {} },
+        products: { none: {} },
+      },
+    });
   });
 });

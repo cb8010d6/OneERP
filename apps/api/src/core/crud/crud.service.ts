@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MetadataService } from '../metadata/metadata.service';
 import { AuditService } from '../audit/audit.service';
@@ -23,7 +24,19 @@ import {
   sanitizeSelect,
   assertScalarWriteData,
 } from './crud-query-validator';
-import { assertGenericModelAllowed } from './crud-access-policy';
+import {
+  assertGenericModelAllowed,
+  assertGenericWriteAllowed,
+  getResourcePolicy,
+} from './crud-access-policy';
+import {
+  andWhere,
+  assertOwnedReferences,
+  ownershipWhere,
+  requireCompanyId,
+  scopeResourceQuery,
+  unreferencedWhere,
+} from './crud-ownership';
 import { TenantContext } from '../tenant/tenant-context';
 
 interface DynamicModelDelegate {
@@ -55,6 +68,7 @@ export class CrudService {
     limit: number;
     totalPages: number;
   }> {
+    companyId = this.resolveCompanyId(companyId);
     const normalizedModelName = this.normalizeModelName(modelName);
     const model = this.resolveModel(normalizedModelName);
     const modelMeta = this.getDmmfModelMeta(normalizedModelName);
@@ -62,11 +76,7 @@ export class CrudService {
       parseJsonParam<Record<string, unknown>>(query.filter) ?? {};
     const resolveMeta = (name: string) => this.getDmmfModelMeta(name);
     const filter = sanitizeFilter(rawFilter, modelMeta, resolveMeta);
-    const where = this.applyCompanyScope(
-      normalizedModelName,
-      { ...filter },
-      companyId,
-    );
+    const where = { ...filter };
     await this.applyKeywordSearch(
       normalizedModelName,
       where,
@@ -92,9 +102,14 @@ export class CrudService {
     const { page = 1, limit = 20 } = query;
     const { skip, take } = paginate(page, limit);
 
+    const scoped = scopeResourceQuery(modelMeta, companyId, resolveMeta, {
+      where,
+      select,
+      include,
+    });
     const [data, total] = await Promise.all([
-      model.findMany({ where, select, include, orderBy, skip, take }),
-      model.count({ where }),
+      model.findMany({ ...scoped, orderBy, skip, take }),
+      model.count({ where: scoped.where }),
     ]);
 
     return {
@@ -112,13 +127,10 @@ export class CrudService {
     query: ResourceQueryDto,
     companyId?: string,
   ): Promise<unknown> {
+    companyId = this.resolveCompanyId(companyId);
     const normalizedModelName = this.normalizeModelName(modelName);
     const model = this.resolveModel(normalizedModelName);
-    const where = this.applyCompanyScope(
-      normalizedModelName,
-      { id },
-      companyId,
-    );
+    const where = { id };
 
     const findOneModelMeta = this.getDmmfModelMeta(normalizedModelName);
     const resolveMeta = (name: string) => this.getDmmfModelMeta(name);
@@ -133,7 +145,13 @@ export class CrudService {
       : parseJsonParam<Record<string, unknown>>(query.include);
     const include = sanitizeInclude(rawInclude, findOneModelMeta, resolveMeta);
 
-    const record = await model.findFirst({ where, select, include });
+    const scoped = scopeResourceQuery(
+      findOneModelMeta,
+      companyId,
+      resolveMeta,
+      { where, select, include },
+    );
+    const record = await model.findFirst(scoped);
     if (!record) {
       throw new NotFoundException(`${modelName} 不存在或无权访问`);
     }
@@ -145,9 +163,10 @@ export class CrudService {
     data: Record<string, unknown>,
     companyId?: string,
   ): Promise<unknown> {
+    companyId = this.resolveCompanyId(companyId);
     const normalizedModelName = this.normalizeModelName(modelName);
     this.assertSpecializedModelWriteAllowed(normalizedModelName);
-    const model = this.resolveModel(normalizedModelName);
+    this.resolveModel(normalizedModelName);
     assertScalarWriteData(
       data,
       this.getDmmfModelMeta(normalizedModelName),
@@ -184,7 +203,21 @@ export class CrudService {
       this.getDmmfModelMeta(normalizedModelName),
       companyId,
     );
-    const created = await model.create({ data: writeData });
+    const created = await this.prisma.$transaction(
+      async (tx) => {
+        await assertOwnedReferences(
+          tx,
+          this.getDmmfModelMeta(normalizedModelName),
+          writeData,
+          companyId,
+          (name) => this.getDmmfModelMeta(name),
+        );
+        return this.resolveModel(normalizedModelName, tx).create({
+          data: writeData,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
     await this.auditService.logCrudAction({
       modelName: normalizedModelName,
       recordId: this.extractRecordId(created),
@@ -208,6 +241,7 @@ export class CrudService {
     data: Record<string, unknown>,
     companyId?: string,
   ): Promise<unknown> {
+    companyId = this.resolveCompanyId(companyId);
     const normalizedModelName = this.normalizeModelName(modelName);
     this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
@@ -259,10 +293,23 @@ export class CrudService {
       this.getDmmfModelMeta(normalizedModelName),
       companyId,
     );
-    const updated = await model.update({
-      where,
-      data: writeData,
-    });
+    const updated = await this.prisma.$transaction(
+      async (tx) => {
+        const writeModel = this.resolveModel(normalizedModelName, tx);
+        const current = await writeModel.findFirst({ where });
+        if (!current)
+          throw new NotFoundException(`${modelName} 不存在或无权访问`);
+        await assertOwnedReferences(
+          tx,
+          this.getDmmfModelMeta(normalizedModelName),
+          { ...(current as Record<string, unknown>), ...writeData },
+          companyId,
+          (name) => this.getDmmfModelMeta(name),
+        );
+        return writeModel.update({ where, data: writeData });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
     await this.auditService.logCrudAction({
       modelName: normalizedModelName,
       recordId: id,
@@ -286,6 +333,7 @@ export class CrudService {
     id: string,
     companyId?: string,
   ): Promise<unknown> {
+    companyId = this.resolveCompanyId(companyId);
     const normalizedModelName = this.normalizeModelName(modelName);
     this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
@@ -309,7 +357,32 @@ export class CrudService {
     };
 
     ctx = await this.crudHooksService.execute('beforeDelete', ctx);
-    const removed = await model.delete({ where: { id } });
+    const removed = await this.prisma.$transaction(
+      async (tx) => {
+        const writeModel = this.resolveModel(normalizedModelName, tx);
+        const current = await writeModel.findFirst({ where });
+        if (!current)
+          throw new NotFoundException(`${modelName} 不存在或无权访问`);
+        const deleteWhere = andWhere(
+          where,
+          unreferencedWhere(
+            this.getDmmfModelMeta(normalizedModelName),
+            (name) => this.getDmmfModelMeta(name),
+          ),
+        );
+        if (
+          !(await writeModel.findFirst({
+            where: deleteWhere,
+            select: { id: true },
+          }))
+        )
+          throw new ForbiddenException(
+            '此资源已被引用，请通过专用流程清理依赖后再删除',
+          );
+        return writeModel.delete({ where: deleteWhere });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
     await this.auditService.logCrudAction({
       modelName: normalizedModelName,
       recordId: id,
@@ -326,14 +399,15 @@ export class CrudService {
     return ctx.result ?? removed;
   }
 
-  private resolveModel(modelName: string): DynamicModelDelegate {
-    assertGenericModelAllowed(modelName);
+  private resolveModel(
+    modelName: string,
+    client: unknown = this.prisma,
+  ): DynamicModelDelegate {
     if (!this.getDmmfModelMeta(modelName)) {
       throw new BadRequestException(`未知模型: ${modelName}`);
     }
-    const candidate = (this.prisma as unknown as Record<string, unknown>)[
-      modelName
-    ];
+    assertGenericModelAllowed(modelName);
+    const candidate = (client as Record<string, unknown>)[modelName];
 
     if (!this.isDynamicModelDelegate(candidate)) {
       throw new BadRequestException(`未知模型: ${modelName}`);
@@ -347,15 +421,14 @@ export class CrudService {
     where: Record<string, unknown>,
     companyId?: string,
   ): Record<string, unknown> {
-    if (!companyId) return where;
-    if (!this.metadataService.isCompanyScoped(modelName)) return where;
-    if (Object.prototype.hasOwnProperty.call(where, 'companyId')) {
-      if (where.companyId !== companyId) {
-        throw new ForbiddenException('companyId 与当前租户上下文不一致');
-      }
-      return where;
-    }
-    return { ...where, companyId };
+    const meta = this.getDmmfModelMeta(modelName);
+    if (!meta) throw new BadRequestException('无法验证资源所有权元数据');
+    return andWhere(
+      where,
+      ownershipWhere(meta, requireCompanyId(companyId), (name) =>
+        this.getDmmfModelMeta(name),
+      ),
+    );
   }
 
   private applyCompanyIdToData(
@@ -363,15 +436,21 @@ export class CrudService {
     data: Record<string, unknown>,
     companyId?: string,
   ): Record<string, unknown> {
-    if (!companyId) return data;
-    if (!this.metadataService.isCompanyScoped(modelName)) return data;
-    if (Object.prototype.hasOwnProperty.call(data, 'companyId')) {
-      if (data.companyId !== companyId) {
-        throw new ForbiddenException('companyId 与当前租户上下文不一致');
-      }
-      return data;
-    }
-    return { ...data, companyId };
+    const tenant = requireCompanyId(companyId);
+    const meta = this.getDmmfModelMeta(modelName);
+    if (!meta) throw new BadRequestException('无法验证资源所有权元数据');
+    ownershipWhere(meta, tenant, (name) => this.getDmmfModelMeta(name));
+    assertScalarWriteData(data, meta, tenant);
+    return getResourcePolicy(modelName).owner === 'company'
+      ? { ...data, companyId: tenant }
+      : data;
+  }
+
+  private resolveCompanyId(companyId?: string): string {
+    const context = TenantContext.getCompanyId();
+    if (context && companyId && context !== companyId)
+      throw new ForbiddenException('companyId 与当前租户上下文不一致');
+    return requireCompanyId(companyId ?? context);
   }
 
   private async applyKeywordSearch(
@@ -402,16 +481,9 @@ export class CrudService {
       );
 
     if (!searchFields.length) return;
-    const existingOr = where.OR;
-    if (Array.isArray(existingOr)) {
-      const existingFilters = existingOr.filter(
-        (item): item is Record<string, unknown> =>
-          typeof item === 'object' && item !== null,
-      );
-      where.OR = [...existingFilters, ...searchFields];
-      return;
-    }
-    where.OR = searchFields;
+    const existing = { ...where };
+    for (const key of Object.keys(where)) delete where[key];
+    Object.assign(where, andWhere(existing, { OR: searchFields }));
   }
 
   private normalizeModelName(modelName: string) {
@@ -483,21 +555,7 @@ export class CrudService {
   }
 
   private assertSpecializedModelWriteAllowed(modelName: string) {
-    if (modelName === 'order') {
-      throw new ForbiddenException('订单请通过订单专用接口维护');
-    }
-    if (modelName === 'orderItem') {
-      throw new ForbiddenException('订单明细请通过订单专用接口维护');
-    }
-    if (
-      modelName === 'purchaseOrder' ||
-      modelName === 'purchaseOrderLine' ||
-      modelName === 'purchaseReceipt' ||
-      modelName === 'purchaseReceiptLine' ||
-      modelName === 'purchaseInvoice'
-    ) {
-      throw new ForbiddenException('采购单据请通过采购专用接口维护');
-    }
+    assertGenericWriteAllowed(modelName);
   }
 
   private readStatus(record: unknown): string | undefined {
@@ -514,6 +572,8 @@ export class CrudService {
   }
 
   private getDmmfModelMeta(modelName: string) {
-    return getDmmfModel(this.prisma, modelName);
+    const model = getDmmfModel(this.prisma, modelName);
+    if (!model) throw new BadRequestException(`未知模型: ${modelName}`);
+    return model;
   }
 }
