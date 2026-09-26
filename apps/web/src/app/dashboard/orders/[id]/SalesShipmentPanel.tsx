@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, Truck } from "lucide-react";
 import toast from "react-hot-toast";
 import api from "@/lib/api";
+import {
+  aggregateShipmentQuantitiesByProduct,
+  roundShipmentQuantity,
+} from "@/lib/order-fulfillment-evidence";
 
 type OrderItem = {
   id: string;
@@ -84,17 +88,22 @@ export function SalesShipmentPanel({
 
   const requestedTotal = useMemo(
     () =>
-      items.reduce((sum, item) => sum + Number(quantities[item.id] ?? 0), 0),
+      roundShipmentQuantity(
+        items.reduce((sum, item) => sum + Number(quantities[item.id] ?? 0), 0),
+      ),
     [items, quantities],
   );
 
   const submit = async () => {
-    const shipmentItems = items
+    const selectedLineQuantities = items
       .map((item) => ({
         productId: item.productId,
         shipQuantity: Number(quantities[item.id] ?? 0),
       }))
       .filter((item) => item.shipQuantity > 0);
+    const shipmentItems = aggregateShipmentQuantitiesByProduct(
+      selectedLineQuantities,
+    );
     if (!shipmentItems.length) {
       toast.error("至少填写一条大于 0 的发货数量");
       return;
@@ -208,7 +217,7 @@ export function SalesShipmentPanel({
                 aria-label={`产品 ${item.productId} 发货数量`}
                 type="number"
                 min="0"
-                step="1"
+                step="0.0001"
                 value={quantities[item.id] ?? 0}
                 onChange={(event) =>
                   setQuantities((current) => ({

@@ -15,14 +15,23 @@ revision. CI follows the [official Playwright GitHub Actions guidance](https://p
 - Inline commit/cancel; company switching clears lab edits and unfinished input.
 - Production customer list cannot create inline editors when it is read-only.
 - Workspace tab activation, duplicate prevention and active-tab close fallback.
+- Order detail evidence: partial shipment (ordered 10, net shipped 6, remaining
+  4), readable material name/SKU/unit, mobile shipment-callback rereads and removal
+  of stale coverage after an availability-read failure. Screenshots capture the
+  synthetic partial, refreshed and failed-read cards.
 
 Each test has an isolated browser context with a synthetic, unsigned JWT-shaped
 localStorage identity and two synthetic companies. **Authentication is mocked**;
 this suite does not validate login, authorization enforcement, API persistence,
 real user UAT or production readiness. Existing HTTP/PostgreSQL tests and manual
 business sign-off remain necessary. Every API request must match an explicit
-GET fixture with a synthetic company header. Unknown APIs, writes and external
-network requests are aborted and fail the test; browser exceptions also fail.
+GET fixture with a synthetic company header. Order-evidence tests additionally
+allow exactly one explicitly armed shipment POST for a fixed synthetic order;
+the entire payload is asserted and its response is fulfilled **inside the
+browser route fixture**, never forwarded to a backend. This verifies the UI
+callback and refresh behavior, not actual shipment posting or stock mutation.
+All other writes, unknown APIs and external network requests are aborted and
+fail the test; browser exceptions also fail.
 No production host, API keys, passwords or repository secrets are used. The
 server binds only to loopback, with API fallback pointed at an unused local port.
 

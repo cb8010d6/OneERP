@@ -28,6 +28,7 @@ type OrderRow = {
     unmappedLineCount: number;
     totalShortageQty: number;
   };
+  fulfillmentEvidence?: unknown;
 };
 
 function result(
@@ -59,6 +60,35 @@ function order(orderNo: string): OrderRow {
       unmappedLineCount: 0,
       totalShortageQty: 0,
     },
+  };
+}
+
+function fulfillmentEvidence(
+  assessment: string,
+  groupAssessments: string[] = [],
+) {
+  return {
+    assessment,
+    issues: [],
+    materialDemandGroups: groupAssessments.map((groupAssessment, index) => ({
+      materialId: `material-${index}`,
+      materialName: `Material ${index}`,
+      materialSku: `SKU-${index}`,
+      materialUnit: 'pcs',
+      orderItemIds: [`item-${index}`],
+      productIds: [`product-${index}`],
+      orderedQty: 1000,
+      netShippedQty: 0,
+      remainingQty: 1000,
+      onHandQty: 0,
+      openWorkOrderQty: 0,
+      onHandGapQty: 1000,
+      projectedGapQty: 1000,
+      assessment: groupAssessment,
+      issues: [],
+    })),
+    stockBasis: 'UNRESERVED_SNAPSHOT',
+    workOrderBasis: 'UNFINISHED_NOT_ETA',
   };
 }
 
@@ -132,6 +162,52 @@ describe('OrdersPage pagination and requests', () => {
     expect(
       await screen.findByRole('button', { name: '打开订单 SO-RETRY' }),
     ).toBeInTheDocument();
+  });
+
+  it('does not use legacy READY or shortage totals when evidence is missing', async () => {
+    mockedApi.get.mockResolvedValue({
+      data: result([order('SO-LEGACY')], 1, 1),
+    } as never);
+
+    render(<OrdersPage />);
+
+    expect(await screen.findByRole('button', { name: '打开订单 SO-LEGACY' })).toBeInTheDocument();
+    expect(screen.getAllByText('评估未知')).toHaveLength(2);
+    expect(screen.getByText('数据复核 / 未知订单').parentElement).toHaveTextContent('1');
+    expect(screen.queryByText('现货可交')).not.toBeInTheDocument();
+    expect(screen.queryByText('生产覆盖')).not.toBeInTheDocument();
+  });
+
+  it('counts additive assessments and problem material groups without summing quantities', async () => {
+    const row = {
+      ...order('SO-EVIDENCE'),
+      fulfillmentEvidence: fulfillmentEvidence('SHORTAGE', [
+        'SHORTAGE',
+        'ON_HAND_COVERAGE',
+      ]),
+    };
+    mockedApi.get.mockResolvedValue({
+      data: result([row], 1, 1),
+    } as never);
+
+    render(<OrdersPage />);
+
+    expect(await screen.findByRole('button', { name: '打开订单 SO-EVIDENCE' })).toBeInTheDocument();
+    expect(screen.getByText('缺口评估订单').parentElement).toHaveTextContent('1');
+    expect(screen.getAllByText('缺口或复核物料组').some((label) =>
+      label.parentElement?.textContent?.includes('1'),
+    )).toBe(true);
+    expect(screen.queryByText('1000')).not.toBeInTheDocument();
+  });
+
+  it('does not present failed list or stale page assessments as zero counts', async () => {
+    mockedApi.get.mockRejectedValue(new Error('offline'));
+
+    render(<OrdersPage />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('订单列表加载失败');
+    expect(screen.getByText('数据复核 / 未知订单').parentElement).toHaveTextContent('—');
+    expect(screen.getByText('本页订单数').parentElement).toHaveTextContent('—');
   });
 
   it('ignores a response from an older search after the new search succeeds', async () => {

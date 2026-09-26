@@ -1,5 +1,7 @@
 # OneERP 项目图谱与当前上下文
 
+> 2026-09-26 更新入口：先读 [ERP 第四轮迭代交接](./ERP_ITERATION_4_HANDOFF.md) 了解后续 PR、精确验证证据和剩余边界。下文的 2026-07-10 图谱、提交及测试数字是历史快照，不代表当前集成 head。图谱文件未随 Git 保存；工具或产物缺失时应明确记录，不能声称已更新图谱。
+
 **生成时间**: 2026-07-10
 **分支**: `refactor/remaining-tasks`
 **来源**: Graphify-Labs / safishamsi 的 PyPI 包 `graphifyy` 0.9.6 已安装，Codex skill 已配置。当前仓库已生成代码结构图谱，输出位于本地 `graphify-out/`，该目录不进入 Git。

@@ -58,6 +58,47 @@ describe('fulfillment evidence (material-level, never an allocation)', () => {
     });
   });
 
+  it.each(['c1', null, 'foreign', undefined])(
+    'only exposes verified local/global material metadata (%s)',
+    (materialCompanyId) => {
+      const product = {
+        materialId: 'm1',
+        materialCompanyId,
+        materialName: 'Finished widget',
+        materialSku: 'FG-001',
+        materialUnit: 'kg',
+      };
+      const group = buildFulfillmentEvidence(
+        'c1',
+        order,
+        new Map([['p1', product]]),
+        new Map(),
+        [],
+        new Map(),
+      ).materialDemandGroups[0];
+      const visible = materialCompanyId === 'c1' || materialCompanyId === null;
+      expect(group).toMatchObject({
+        materialId: 'm1',
+        materialName: visible ? 'Finished widget' : null,
+        materialSku: visible ? 'FG-001' : null,
+        materialUnit: visible ? 'kg' : null,
+      });
+      const unmapped = buildFulfillmentEvidence(
+        'c1',
+        order,
+        new Map([['p1', { ...product, materialId: null }]]),
+        new Map(),
+        [],
+        new Map(),
+      ).materialDemandGroups[0];
+      expect(unmapped).toMatchObject({
+        materialName: null,
+        materialSku: null,
+        materialUnit: null,
+      });
+    },
+  );
+
   it('distinguishes unknown unmapped supply from known zero mapped supply', () => {
     const unmappedOrder = {
       ...order,

@@ -516,14 +516,22 @@ export class OrdersService {
               sku: true,
               name: true,
               materialId: true,
-              material: { select: { companyId: true } },
+              material: {
+                select: { companyId: true, name: true, sku: true, unit: true },
+              },
             },
           })
         : [];
     const productMap = new Map(
       products.map((product) => [
         product.id,
-        { ...product, materialCompanyId: product.material?.companyId },
+        {
+          ...product,
+          materialCompanyId: product.material?.companyId,
+          materialName: product.material?.name,
+          materialSku: product.material?.sku,
+          materialUnit: product.material?.unit,
+        },
       ]),
     );
     const materialIds = [
@@ -648,13 +656,21 @@ export class OrdersService {
         sku: true,
         name: true,
         materialId: true,
-        material: { select: { companyId: true } },
+        material: {
+          select: { companyId: true, name: true, sku: true, unit: true },
+        },
       },
     });
     const productMap = new Map(
       products.map((product) => [
         product.id,
-        { ...product, materialCompanyId: product.material?.companyId },
+        {
+          ...product,
+          materialCompanyId: product.material?.companyId,
+          materialName: product.material?.name,
+          materialSku: product.material?.sku,
+          materialUnit: product.material?.unit,
+        },
       ]),
     );
 
