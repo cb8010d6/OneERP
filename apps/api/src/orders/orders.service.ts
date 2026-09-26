@@ -9,6 +9,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { PaginationDto } from '../core/dto/pagination.dto';
 import { EventQueueService } from '../core/events/event-queue.service';
 import { roundDecimal } from '../core/utils/decimal';
+import {
+  buildFulfillmentEvidence,
+  FulfillmentEvidence,
+} from './order-fulfillment-evidence';
 
 interface CreateOrderItemInput {
   productId: string;
@@ -71,6 +75,7 @@ export interface OrderFulfillmentAvailabilityLine {
 }
 
 export interface OrderFulfillmentAvailabilityResult {
+  fulfillmentEvidence: FulfillmentEvidence;
   orderId: string;
   orderNo: string;
   status: string;
@@ -480,7 +485,7 @@ export class OrdersService {
             },
           },
           workOrders: {
-            where: { status: { in: ['PENDING', 'IN_PROGRESS'] } },
+            where: { companyId, status: { in: ['PENDING', 'IN_PROGRESS'] } },
             select: {
               productId: true,
               plannedQty: true,
@@ -497,7 +502,9 @@ export class OrdersService {
 
     const productIds = [
       ...new Set(
-        data.flatMap((order) => order.items.map((item) => item.productId)),
+        data.flatMap((order) =>
+          [...order.items, ...order.workOrders].map((item) => item.productId),
+        ),
       ),
     ];
     const products =
@@ -509,11 +516,15 @@ export class OrdersService {
               sku: true,
               name: true,
               materialId: true,
+              material: { select: { companyId: true } },
             },
           })
         : [];
     const productMap = new Map(
-      products.map((product) => [product.id, product]),
+      products.map((product) => [
+        product.id,
+        { ...product, materialCompanyId: product.material?.companyId },
+      ]),
     );
     const materialIds = [
       ...new Set(
@@ -540,6 +551,10 @@ export class OrdersService {
           })
         : [];
     const onHandByMaterial = this.sumOnHandByMaterial(quants);
+    const { ledger, reversalOwners } = await this.loadFulfillmentLedger(
+      companyId,
+      data,
+    );
 
     return {
       data: data.map((order) => {
@@ -552,6 +567,14 @@ export class OrdersService {
         return {
           ...order,
           fulfillmentSummary: this.summarizeFulfillment(lines),
+          fulfillmentEvidence: buildFulfillmentEvidence(
+            companyId,
+            order,
+            productMap,
+            onHandByMaterial,
+            ledger,
+            reversalOwners,
+          ),
         };
       }),
       total,
@@ -599,7 +622,7 @@ export class OrdersService {
           },
         },
         workOrders: {
-          where: { status: { in: ['PENDING', 'IN_PROGRESS'] } },
+          where: { companyId, status: { in: ['PENDING', 'IN_PROGRESS'] } },
           select: {
             productId: true,
             plannedQty: true,
@@ -613,7 +636,11 @@ export class OrdersService {
       throw new NotFoundException('该订单不存在或您无权查看');
     }
 
-    const productIds = [...new Set(order.items.map((item) => item.productId))];
+    const productIds = [
+      ...new Set(
+        [...order.items, ...order.workOrders].map((item) => item.productId),
+      ),
+    ];
     const products = await this.prisma.product.findMany({
       where: { id: { in: productIds }, companyId, isActive: true },
       select: {
@@ -621,10 +648,14 @@ export class OrdersService {
         sku: true,
         name: true,
         materialId: true,
+        material: { select: { companyId: true } },
       },
     });
     const productMap = new Map(
-      products.map((product) => [product.id, product]),
+      products.map((product) => [
+        product.id,
+        { ...product, materialCompanyId: product.material?.companyId },
+      ]),
     );
 
     const materialIds = [
@@ -661,6 +692,10 @@ export class OrdersService {
       onHandByMaterial,
     );
     const summary = this.summarizeFulfillment(lines);
+    const { ledger, reversalOwners } = await this.loadFulfillmentLedger(
+      companyId,
+      [order],
+    );
 
     return {
       orderId: order.id,
@@ -669,7 +704,75 @@ export class OrdersService {
       expectedDate: order.expectedDate?.toISOString() ?? null,
       overallStatus: summary.overallStatus,
       lines,
+      fulfillmentEvidence: buildFulfillmentEvidence(
+        companyId,
+        order,
+        productMap,
+        onHandByMaterial,
+        ledger,
+        reversalOwners,
+      ),
     };
+  }
+
+  private async loadFulfillmentLedger(
+    companyId: string,
+    orders: Array<{ orderNo: string }>,
+  ) {
+    const ledger = orders.length
+      ? await this.prisma.inventoryTransaction.findMany({
+          where: {
+            companyId,
+            OR: orders.flatMap(({ orderNo }) => [
+              { type: 'OUTBOUND', referenceNo: `SALE-SHIP-${orderNo}` },
+              { type: 'INBOUND', referenceNo: `SALE-SHIP-REV-${orderNo}` },
+              {
+                type: 'INBOUND',
+                referenceNo: { startsWith: `SALE-SHIP-REV-${orderNo}-` },
+              },
+            ]),
+          },
+          select: {
+            id: true,
+            companyId: true,
+            materialId: true,
+            referenceNo: true,
+            type: true,
+            quantity: true,
+          },
+        })
+      : [];
+    const moveIds = ledger
+      .filter((row) => row.type === 'INBOUND')
+      .map((row) => row.id);
+    const documents = moveIds.length
+      ? await this.prisma.inventoryReturnDocument.findMany({
+          where: {
+            companyId,
+            returnType: 'SALES',
+            status: 'POSTED',
+            lines: { some: { inventoryMoveId: { in: moveIds } } },
+          },
+          select: {
+            sourceDocumentId: true,
+            lines: { select: { inventoryMoveId: true } },
+          },
+        })
+      : [];
+    const reversalOwners = new Map<string, string | null>();
+    for (const document of documents) {
+      for (const line of document.lines) {
+        if (!line.inventoryMoveId) continue;
+        const previous = reversalOwners.get(line.inventoryMoveId);
+        reversalOwners.set(
+          line.inventoryMoveId,
+          previous !== undefined && previous !== document.sourceDocumentId
+            ? null
+            : document.sourceDocumentId,
+        );
+      }
+    }
+    return { ledger, reversalOwners };
   }
 
   private sumOnHandByMaterial(
@@ -680,7 +783,13 @@ export class OrdersService {
       const current = onHandByMaterial.get(quant.materialId) ?? 0;
       onHandByMaterial.set(
         quant.materialId,
-        roundDecimal(current + Number(quant.quantity ?? 0)),
+        !Number.isFinite(current) ||
+          quant.quantity === null ||
+          quant.quantity === undefined ||
+          !Number.isFinite(Number(quant.quantity)) ||
+          Number(quant.quantity) < 0
+          ? Number.NaN
+          : roundDecimal(current + Number(quant.quantity), 4),
       );
     }
     return onHandByMaterial;
@@ -721,6 +830,9 @@ export class OrdersService {
       const product = productMap.get(item.productId);
       const orderedQty = roundDecimal(Number(item.quantity ?? 0));
       const materialId = product?.materialId ?? null;
+      const invalidStock =
+        materialId !== null &&
+        !Number.isFinite(onHandByMaterial.get(materialId) ?? 0);
       const onHandQty = materialId
         ? roundDecimal(onHandByMaterial.get(materialId) ?? 0)
         : 0;
@@ -729,13 +841,14 @@ export class OrdersService {
       );
       const projectedQty = roundDecimal(onHandQty + inProductionQty);
       const shortageQty = roundDecimal(Math.max(0, orderedQty - projectedQty));
-      const status: OrderFulfillmentStatus = !materialId
-        ? 'UNMAPPED'
-        : onHandQty >= orderedQty
-          ? 'READY'
-          : shortageQty <= 0
-            ? 'COVERED_BY_PRODUCTION'
-            : 'SHORTAGE';
+      const status: OrderFulfillmentStatus =
+        !materialId || invalidStock
+          ? 'UNMAPPED'
+          : onHandQty >= orderedQty
+            ? 'READY'
+            : shortageQty <= 0
+              ? 'COVERED_BY_PRODUCTION'
+              : 'SHORTAGE';
 
       return {
         orderItemId: item.id,
