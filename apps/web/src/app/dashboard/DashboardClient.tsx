@@ -8,6 +8,7 @@ import { Badge, Button, EmptyState, Sheet, Skeleton, StatCard } from '../../comp
 import { Chat2DashPanel } from '../../components/ai/Chat2DashPanel';
 import { useI18n, type TranslationKey } from '../../lib/i18n';
 import { formatCurrency } from '../../lib/format';
+import { OperatorGuide } from '../../components/onboarding/OperatorGuide';
 
 interface DashboardStats {
   totalOrders: number;
@@ -84,6 +85,8 @@ export default function DashboardClient() {
           {t('dashboardOpenChat2Dash')}
         </Button>
       </div>
+
+      <OperatorGuide />
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard icon={ShoppingBag} label={t('dashboardTotalOrders')} value={stats.totalOrders} tone="blue" loading={loading} />

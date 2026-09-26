@@ -751,6 +751,27 @@ export class MetadataService {
       },
     ],
     [
+      'stockLocation',
+      {
+        model: 'stockLocation',
+        label: '库位',
+        description: '创建收货和发货使用的内部库位；仓库分组可后续配置。',
+        companyScoped: true,
+        fields: [
+          { name: 'name', label: '库位名称', type: 'string', required: true },
+          { name: 'code', label: '库位编码', type: 'string', required: true },
+        ],
+        views: {
+          form: { fields: ['name', 'code'] },
+          list: {
+            columns: ['name', 'code'],
+            defaultSort: { name: 'asc' },
+            searchFields: ['name', 'code'],
+          },
+        },
+      },
+    ],
+    [
       'material',
       {
         model: 'material',
@@ -760,7 +781,7 @@ export class MetadataService {
         fields: [
           { name: 'sku', label: 'SKU', type: 'string', required: true },
           { name: 'name', label: '名称', type: 'string', required: true },
-          { name: 'category', label: '分类', type: 'string' },
+          { name: 'category', label: '分类', type: 'string', required: true },
           { name: 'unit', label: '计量单位', type: 'string' },
           { name: 'minStock', label: '最小库存', type: 'number' },
           { name: 'unitPrice', label: '标准成本', type: 'number' },
@@ -787,7 +808,7 @@ export class MetadataService {
               'minStock',
               'unitPrice',
             ],
-            defaultSort: { createdAt: 'desc' },
+            defaultSort: { name: 'asc' },
             searchFields: ['sku', 'name', 'category'],
           },
           kanban: {
