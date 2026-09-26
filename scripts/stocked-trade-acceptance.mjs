@@ -112,6 +112,33 @@ export function asNumber(value, label) {
   return parsed;
 }
 
+export function snapshotStockMovement(transaction, label) {
+  const snapshot = {};
+  for (const field of ['id', 'type', 'referenceNo', 'materialId']) {
+    assertCondition(
+      typeof transaction?.[field] === 'string' && transaction[field].trim(),
+      `${label} ${field} was missing or invalid`,
+    );
+    snapshot[field] = transaction[field];
+  }
+  // Prisma Decimal quantities arrive as strings; compare their numeric value,
+  // without rounding away a change to the recorded movement.
+  snapshot.quantity = asNumber(transaction.quantity, `${label} quantity`);
+  for (const field of ['sourceLocationId', 'destLocationId', 'batchNo']) {
+    const value = transaction[field] ?? null;
+    assertCondition(value === null || typeof value === 'string', `${label} ${field} was invalid`);
+    snapshot[field] = value;
+  }
+  return snapshot;
+}
+
+export function assertStockMovementUnchanged(transaction, expected, label) {
+  const actual = snapshotStockMovement(transaction, label);
+  for (const [field, value] of Object.entries(expected)) {
+    assertCondition(actual[field] === value, `${label} changed ${field}`);
+  }
+}
+
 function roundQuantity(value) {
   return Math.round((Number(value) + Number.EPSILON) * 10_000) / 10_000;
 }
@@ -499,6 +526,8 @@ async function runJourney(config, recorder, context) {
     };
   });
 
+  let shipmentMovement;
+  let reversalMovement;
   await recorder.run('ship-sales-order-and-check-stock', async () => {
     const shipment = await api.post(`/inventory/posting/sale-order/${encodeURIComponent(salesOrder.id)}/ship`, {
       sourceLocationId: masterData.location.id,
@@ -518,6 +547,7 @@ async function runJourney(config, recorder, context) {
     assertCondition(transactions.length === 1, `Expected one sales shipment transaction, found ${transactions.length}`);
     const transaction = transactions[0];
     assertCondition(roundQuantity(asNumber(transaction.quantity, 'Sales shipment quantity')) === 6, 'Sales shipment transaction quantity was not 6');
+    shipmentMovement = snapshotStockMovement(transaction, 'Sales shipment movement');
     context.records.shipmentTransactionId = transaction.id;
     return {
       detail: `status=${order.status} shippedQty=6 stockQty=${qty}`,
@@ -542,10 +572,11 @@ async function runJourney(config, recorder, context) {
     assertCondition(reversal?.returnDocument?.id, 'Shipment reversal did not return a return document id');
     assertCondition(Array.isArray(reversal?.reversedLines) && reversal.reversedLines.length === 1, 'Shipment reversal did not return one reversed line');
     assertCondition(outboundTransactions.length === 1, 'Original shipment transaction was missing or duplicated after reversal');
-    assertCondition(outboundTransactions[0].id === context.records.shipmentTransactionId, 'Reversal changed the original shipment transaction');
+    assertStockMovementUnchanged(outboundTransactions[0], shipmentMovement, 'Original shipment after reversal');
     assertCondition(reversalTransactions.length === 1, `Expected one reversal transaction, found ${reversalTransactions.length}`);
     const transaction = reversalTransactions[0];
     assertCondition(roundQuantity(asNumber(transaction.quantity, 'Reversal quantity')) === 6, 'Reversal transaction quantity was not 6');
+    reversalMovement = snapshotStockMovement(transaction, 'Reversal movement');
     context.records.returnDocumentId = reversal.returnDocument.id;
     context.records.reversalTransactionId = transaction.id;
     return {
@@ -576,9 +607,9 @@ async function runJourney(config, recorder, context) {
     assertCondition(Array.isArray(replay?.reversedLines) && replay.reversedLines.length === 0, 'Replay created additional reversed lines');
     assertCondition(qty === 10, `Reversal replay changed stock quantity to ${qty}`);
     assertCondition(outboundTransactions.length === 1, 'Replay changed or duplicated the original shipment transaction');
-    assertCondition(outboundTransactions[0].id === context.records.shipmentTransactionId, 'Replay changed the original shipment transaction');
+    assertStockMovementUnchanged(outboundTransactions[0], shipmentMovement, 'Original shipment after replay');
     assertCondition(reversalTransactions.length === 1, `Replay left ${reversalTransactions.length} reversal transactions; expected exactly one`);
-    assertCondition(reversalTransactions[0].id === context.records.reversalTransactionId, 'Reversal replay created a second reversal transaction');
+    assertStockMovementUnchanged(reversalTransactions[0], reversalMovement, 'Reversal movement after replay');
     return {
       detail: `sameReturnDocument=true additionalMoves=0 stockQty=${qty}`,
       data: { returnDocumentId: replay.returnDocument.id, stockQty: qty, additionalMoves: 0 },
@@ -594,6 +625,7 @@ async function runJourney(config, recorder, context) {
     );
     assertCondition(transactionSets.every((items) => items.length === 1), 'One or more receipt transactions were missing or duplicated');
     const transactions = transactionSets.map((items) => items[0]);
+    assertCondition(transactions.every((item) => typeof item.id === 'string' && item.id.trim()), 'A receipt transaction id was missing or invalid');
     const receiptQuantities = transactions.map((item) => roundQuantity(asNumber(item.quantity, 'Receipt quantity')));
     assertCondition(receiptQuantities[0] === 4, `First receipt quantity was ${receiptQuantities[0]}, expected 4`);
     assertCondition(receiptQuantities[1] === 6, `Second receipt quantity was ${receiptQuantities[1]}, expected 6`);

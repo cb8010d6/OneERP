@@ -31,6 +31,8 @@ Current application behavior sets the order to `IN_PRODUCTION` after sales shipm
 
 Stock evidence comes from `/inventory/realtime-ledger`, matched by the created material and location, with transaction references checked through `/inventory/transactions`. The transaction endpoint is a recent-records view; a fresh synthetic database keeps the journey within that view. This check is not intended to scan an arbitrary existing tenant.
 
+Every observed receipt, shipment and reversal movement must have a nonempty ID. The original shipment's ID, type, reference, material, quantity, source/destination locations and batch are captured at shipment and compared after reversal and replay; the reversal's same fields are compared after replay. Quantities are compared numerically so equivalent Decimal strings and JSON numbers agree, without rounding away a change.
+
 ## Disposable environment and execution safeguards
 
 The intended runner is an independent CI job with PostgreSQL 15, Redis 7 and the repository's pinned MinIO image. Run Prisma generation/migrations and the normal production initializer against the disposable database, build the API, start the actual API process, and wait for `/api/health` with a bounded deadline and child-process liveness check.
@@ -58,9 +60,10 @@ Set `STOCKED_TRADE_ACCEPTANCE_REPORT` or pass `--report <path>` to persist the J
 
 | Verification layer | Recorded result | What it establishes |
 | --- | --- | --- |
-| Source/endpoint and final implementation review | PASS for CI execution | Payloads and expected states match current DTOs/services; corrected health assertion, exact movement counts, per-receipt quantities, preserved original shipment and report provenance reviewed |
-| Script focused tests | PASS — 5 tests | Independently rerun `node --test scripts/stocked-trade-acceptance.test.mjs`: opt-in/required inputs, loopback URL restrictions, CLI/numeric validation, stalled-body deadline and HTTP-error redaction. Small local HTTP fixtures are not the OneERP application |
-| Authenticated OneERP HTTP run | Awaiting first CI result | No local application-services run claimed. Record success only after the actual API and disposable services complete every journey step |
+| Source/endpoint and final implementation review | PASS for CI execution | Payloads and expected states match current DTOs/services; corrected health assertion, exact movement counts, per-receipt quantities, immutable shipment/reversal field comparisons and report provenance reviewed |
+| Script focused tests | PASS — 16 tests including fixture subtests | `node --test scripts/stocked-trade-acceptance.test.mjs`: opt-in/required inputs, loopback URL restrictions, CLI/numeric validation, stalled-body deadline, HTTP-error redaction, movement IDs and immutable fields. The full CLI fixture accepts an unchanged baseline and rejects shipment/reversal tampering and missing movement IDs. Small local HTTP fixtures are not the OneERP application |
+| Authenticated OneERP HTTP run | BLOCKED before API startup | CI run `36240843119` at `bb591ee` failed pulling the pinned `minio/minio` image with an explicit access-denied error. No business step ran; registry/authentication changes await direction. No assertion or required gate was relaxed |
+| Prior exact-head CI validation | PASS at `bb591ee` | The same run passed 705 regular tests and 33 PostgreSQL regressions, migrations, risk preflight, builds and security audit. This evidence predates the additional immutable-movement fixture tests and does not establish HTTP business acceptance |
 | Browser walkthrough | Not run | UI rendering, form usability and accessibility are outside this API check |
 | Production UAT/deployment | Not run | This job neither deploys nor approves real inventory/financial use |
 
