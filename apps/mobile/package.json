@@ -11,13 +11,13 @@
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "axios": "^1.18.0",
-    "expo": "~55.0.28",
+    "expo": "~55.0.31",
     "expo-barcode-scanner": "^13.0.1",
-    "expo-camera": "~55.0.21",
+    "expo-camera": "~55.0.23",
     "expo-status-bar": "~55.0.6",
     "lucide-react-native": "^1.25.0",
     "react": "19.2.0",
-    "react-native": "0.83.6"
+    "react-native": "0.83.10"
   },
   "overrides": {
     "@xmldom/xmldom": "0.8.15",
