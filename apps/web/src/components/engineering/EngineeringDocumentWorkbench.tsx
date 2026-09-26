@@ -25,7 +25,9 @@ import {
   Skeleton,
   StatCard,
 } from "@/components/ui";
+import { ReasonDialog } from "@/components/ui/ReasonDialog";
 import api from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import { useAuthStore } from "@/store/authStore";
 
 interface EngineeringRevision {
@@ -124,6 +126,7 @@ const ecoDecisionLabels: Record<EcoDecision, string> = {
 };
 
 export function EngineeringDocumentWorkbench() {
+  const { t } = useI18n();
   const currentCompanyId = useAuthStore((state) => state.currentCompanyId);
   const companies = useAuthStore((state) => state.companies);
   const permissions = useMemo(
@@ -153,6 +156,8 @@ export function EngineeringDocumentWorkbench() {
   const [reviewTarget, setReviewTarget] = useState<EngineeringRevision | null>(
     null,
   );
+  const [rejectionTarget, setRejectionTarget] =
+    useState<EngineeringChangeOrder | null>(null);
   const [title, setTitle] = useState("");
   const [documentType, setDocumentType] = useState("DRAWING");
   const [externalNo, setExternalNo] = useState("");
@@ -405,27 +410,36 @@ export function EngineeringDocumentWorkbench() {
     }
   };
 
-  const decideEco = async (
-    eco: EngineeringChangeOrder,
-    decision: "APPROVE" | "REJECT",
-  ) => {
-    const comment =
-      decision === "REJECT"
-        ? window.prompt("请输入驳回原因")?.trim()
-        : undefined;
-    if (decision === "REJECT" && !comment) return;
+  const decideEco = async (eco: EngineeringChangeOrder) => {
     setBusyKey(`${eco.id}:decision`);
     try {
       await api.post(`/engineering-change-orders/${eco.id}/decision`, {
-        decision,
-        comment,
+        decision: "APPROVE",
+        comment: undefined,
       });
-      toast.success(
-        decision === "APPROVE" ? "工程变更已批准并应用" : "工程变更已驳回",
-      );
+      toast.success("工程变更已批准并应用");
       await loadDocuments();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "工程变更审批失败");
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const rejectEco = async (
+    eco: EngineeringChangeOrder,
+    comment: string,
+  ) => {
+    if (busyKey === `${eco.id}:decision`) return;
+    setBusyKey(`${eco.id}:decision`);
+    try {
+      await api.post(`/engineering-change-orders/${eco.id}/decision`, {
+        decision: "REJECT",
+        comment,
+      });
+      toast.success("工程变更已驳回");
+      setRejectionTarget(null);
+      await loadDocuments();
     } finally {
       setBusyKey(null);
     }
@@ -569,14 +583,14 @@ export function EngineeringDocumentWorkbench() {
                       size="sm"
                       variant="danger"
                       disabled={busyKey === `${eco.id}:decision`}
-                      onClick={() => void decideEco(eco, "REJECT")}
+                      onClick={() => setRejectionTarget(eco)}
                     >
                       驳回
                     </Button>
                     <Button
                       size="sm"
                       loading={busyKey === `${eco.id}:decision`}
-                      onClick={() => void decideEco(eco, "APPROVE")}
+                      onClick={() => void decideEco(eco)}
                     >
                       批准并应用
                     </Button>
@@ -889,6 +903,20 @@ export function EngineeringDocumentWorkbench() {
           </div>
         </div>
       </Sheet>
+      <ReasonDialog
+        open={rejectionTarget !== null}
+        title={t("engineeringEcoRejectDialogTitle")}
+        description={t("engineeringEcoRejectDialogDescription")}
+        label={t("engineeringEcoRejectReasonLabel")}
+        confirmLabel={t("engineeringEcoRejectConfirm")}
+        errorFallback={t("engineeringEcoRejectFailed")}
+        onClose={() => setRejectionTarget(null)}
+        onSubmit={(comment) =>
+          rejectionTarget
+            ? rejectEco(rejectionTarget, comment)
+            : Promise.resolve()
+        }
+      />
     </div>
   );
 }

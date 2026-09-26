@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EngineeringDocumentWorkbench } from "../EngineeringDocumentWorkbench";
 import { useAuthStore } from "@/store/authStore";
@@ -251,6 +251,106 @@ describe("EngineeringDocumentWorkbench", () => {
         "/engineering-change-orders/eco-1/submit",
         {},
       );
+    });
+  });
+
+  it("requires an ECO rejection reason, keeps it on failure, and retries the same decision", async () => {
+    useAuthStore.setState({
+      companies: [
+        {
+          id: "company-1",
+          name: "测试公司",
+          role: "EngineeringApprover",
+          permissions: [
+            "engineeringDocument:read",
+            "engineeringDocument:approve",
+          ],
+        },
+      ],
+    });
+    const eco = {
+      id: "eco-1",
+      ecoNo: "ECO-001",
+      status: "PENDING_APPROVAL",
+      reason: "客户要求调整尺寸",
+      impactAssessment: "影响一张在制工单",
+      materialDisposition: "旧料隔离",
+      engineeringDocument: {
+        id: "document-1",
+        documentNo: "ED-P1001-000001",
+        title: "总装图",
+      },
+      sourceRevision: { id: "revision-old", revisionNo: 1 },
+      targetRevision: { id: "revision-new", revisionNo: 2 },
+      creator: { id: "approver-1", name: "审批员" },
+      impacts: [],
+    };
+    mockGet.mockImplementation((url: string) =>
+      Promise.resolve({ data: url === "/engineering-change-orders" ? [eco] : [] }),
+    );
+    mockPost
+      .mockReset()
+      .mockRejectedValueOnce({
+        response: { data: { message: "审批服务网络中断" } },
+      })
+      .mockResolvedValueOnce({ data: { status: "REJECTED" } });
+
+    const user = userEvent.setup();
+    render(<EngineeringDocumentWorkbench />);
+
+    await user.click(await screen.findByRole("button", { name: "驳回" }));
+    let dialog = await screen.findByRole("dialog", {
+      name: "驳回工程变更",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+    expect(
+      mockPost.mock.calls.filter(([url]) =>
+        String(url).includes("/engineering-change-orders/eco-1/decision"),
+      ),
+    ).toHaveLength(0);
+
+    await user.click(await screen.findByRole("button", { name: "驳回" }));
+    dialog = await screen.findByRole("dialog", {
+      name: "驳回工程变更",
+    });
+    const reasonField = within(dialog).getByRole("textbox", {
+      name: "驳回原因",
+    });
+    await user.type(reasonField, "   ");
+    await user.click(
+      within(dialog).getByRole("button", { name: "确认驳回" }),
+    );
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("请填写原因");
+    expect(mockPost).not.toHaveBeenCalled();
+
+    await user.clear(reasonField);
+    await user.type(reasonField, "  工艺版本不适用  ");
+    await user.click(
+      within(dialog).getByRole("button", { name: "确认驳回" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "审批服务网络中断",
+    );
+    expect(reasonField).toHaveValue("工艺版本不适用");
+    await user.click(
+      within(dialog).getByRole("button", { name: "确认驳回" }),
+    );
+
+    await waitFor(() => {
+      expect(mockPost).toHaveBeenCalledTimes(2);
+      expect(mockPost).toHaveBeenNthCalledWith(
+        1,
+        "/engineering-change-orders/eco-1/decision",
+        { decision: "REJECT", comment: "工艺版本不适用" },
+      );
+      expect(mockPost).toHaveBeenNthCalledWith(
+        2,
+        "/engineering-change-orders/eco-1/decision",
+        { decision: "REJECT", comment: "工艺版本不适用" },
+      );
+      expect(
+        screen.queryByRole("dialog", { name: "驳回工程变更" }),
+      ).not.toBeInTheDocument();
     });
   });
 });
