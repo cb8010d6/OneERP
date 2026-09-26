@@ -151,14 +151,16 @@ export default function DashboardLayout({
   useEffect(() => {
     if (!mounted) return;
 
+    let cancelled = false;
     if (token && user && currentCompanyId && isJwtTokenLikelyValid(token)) {
       void refreshPermissions().catch(() => {
-        router.push('/login');
+        if (!cancelled) router.push('/login');
       });
-      return;
+      return () => {
+        cancelled = true;
+      };
     }
 
-    let cancelled = false;
     restoreSession().then((restored) => {
       if (cancelled) return;
       if (!restored) {
@@ -247,7 +249,6 @@ export default function DashboardLayout({
 
   const handleCompanyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setCurrentCompany(e.target.value);
-    void refreshPermissions();
   };
 
   if (!mounted) {
@@ -379,7 +380,7 @@ export default function DashboardLayout({
             {currentRoute?.label || t('navOverview')}
           </h2>
           <div className="absolute left-1/2 hidden -translate-x-1/2 md:block">
-            <CommandPalette />
+            <CommandPalette key={`${user.id}:${currentCompanyId}`} />
           </div>
           <select
             value={language}
@@ -403,7 +404,10 @@ export default function DashboardLayout({
         </header>
         <WorkspaceTabs />
         <div className="flex min-h-0 flex-1">
-          <div className="min-w-0 flex-1 overflow-auto p-3 sm:p-5 lg:p-8">
+          <div
+            key={`${user.id}:${currentCompanyId}`}
+            className="min-w-0 flex-1 overflow-auto p-3 sm:p-5 lg:p-8"
+          >
             {children}
           </div>
 

@@ -97,6 +97,17 @@ describe('authStore', () => {
     });
   });
 
+  it('rejects an unknown company and removes persisted company when memberships are empty', () => {
+    useAuthStore
+      .getState()
+      .setAuth('token', { id: 'u1' }, [{ id: 'c1', name: 'A', role: 'owner' }]);
+    useAuthStore.getState().setCurrentCompany('unknown');
+    expect(useAuthStore.getState().currentCompanyId).toBe('c1');
+    useAuthStore.getState().setAuth('token', { id: 'u1' }, []);
+    expect(useAuthStore.getState().currentCompanyId).toBeNull();
+    expect(localStorageMock.getItem('currentCompanyId')).toBeNull();
+  });
+
   describe('logout', () => {
     it('同步清除所有状态和 localStorage', async () => {
       const { setAuth, logout } = useAuthStore.getState();
@@ -167,6 +178,68 @@ describe('authStore', () => {
     });
   });
 
+  describe('permission refresh context', () => {
+    it.each([200, 403])(
+      'ignores delayed company A response with status %s after switching to B',
+      async (status) => {
+        useAuthStore.getState().setAuth('token', { id: 'u1' }, [
+          { id: 'c1', name: 'A', role: 'owner' },
+          { id: 'c2', name: 'B', role: 'member' },
+        ]);
+        let complete!: (response: unknown) => void;
+        global.fetch = jest.fn(
+          () =>
+            new Promise((resolve) => {
+              complete = resolve;
+            }),
+        ) as jest.Mock;
+        const request = useAuthStore.getState().refreshPermissions();
+        useAuthStore.getState().setCurrentCompany('c2');
+        complete({
+          status,
+          ok: status === 200,
+          json: async () => ({ permissions: ['ALL'] }),
+        });
+        await request;
+        expect(useAuthStore.getState().currentCompanyId).toBe('c2');
+        expect(useAuthStore.getState().token).toBe('token');
+        expect(
+          useAuthStore.getState().companies[0].permissions,
+        ).toBeUndefined();
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it('does not resurrect a logged-out session from a pending restore', async () => {
+      document.cookie = 'csrf=valid';
+      let complete!: (response: unknown) => void;
+      let started!: () => void;
+      const requested = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      global.fetch = jest.fn((url: string) => {
+        if (url.endsWith('/auth/logout')) return Promise.resolve({ ok: true });
+        started();
+        return new Promise((resolve) => {
+          complete = resolve;
+        });
+      }) as jest.Mock;
+      const restored = useAuthStore.getState().restoreSession();
+      await requested;
+      await useAuthStore.getState().logout();
+      complete({
+        ok: true,
+        json: async () => ({
+          accessToken: 'fresh',
+          user: { id: 'u1' },
+          companies: [],
+        }),
+      });
+      expect(await restored).toBe(false);
+      expect(useAuthStore.getState().token).toBeNull();
+    });
+  });
+
   describe('restoreSession', () => {
     const makeExpiredToken = () => {
       const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
@@ -181,7 +254,9 @@ describe('authStore', () => {
     };
 
     const freshUser = { id: 'u1', email: 'a@b.com', name: 'Alice' };
-    const freshCompanies = [{ id: 'c1', name: 'Corp A', role: 'owner', permissions: ['ALL'] }];
+    const freshCompanies = [
+      { id: 'c1', name: 'Corp A', role: 'owner', permissions: ['ALL'] },
+    ];
     const freshToken =
       'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
 

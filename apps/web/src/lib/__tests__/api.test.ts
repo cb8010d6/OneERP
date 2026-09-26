@@ -118,8 +118,12 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/v1/resource/test').then(() => {
-      expect(requireCapturedConfig(capturedConfig).headers.Authorization).toContain('Bearer ');
-      expect(requireCapturedConfig(capturedConfig).headers['x-company-id']).toBe('c1');
+      expect(
+        requireCapturedConfig(capturedConfig).headers.Authorization,
+      ).toContain('Bearer ');
+      expect(
+        requireCapturedConfig(capturedConfig).headers['x-company-id'],
+      ).toBe('c1');
     });
   });
 
@@ -137,7 +141,9 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/auth/login').then(() => {
-      expect(requireCapturedConfig(capturedConfig).headers['x-company-id']).toBeUndefined();
+      expect(
+        requireCapturedConfig(capturedConfig).headers['x-company-id'],
+      ).toBeUndefined();
     });
   });
 
@@ -173,7 +179,9 @@ describe('api.ts interceptors', () => {
     };
 
     return api.post('/v1/resource/test', {}).then(() => {
-      expect(requireCapturedConfig(capturedConfig).headers['x-csrf-token']).toBe('test-csrf-token');
+      expect(
+        requireCapturedConfig(capturedConfig).headers['x-csrf-token'],
+      ).toBe('test-csrf-token');
     });
   });
 
@@ -192,7 +200,9 @@ describe('api.ts interceptors', () => {
     };
 
     return api.get('/v1/resource/test').then(() => {
-      expect(requireCapturedConfig(capturedConfig).headers['x-csrf-token']).toBeUndefined();
+      expect(
+        requireCapturedConfig(capturedConfig).headers['x-csrf-token'],
+      ).toBeUndefined();
     });
   });
 
@@ -205,7 +215,9 @@ describe('api.ts interceptors', () => {
         toJSON: () => ({}),
       });
 
-    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const consoleError = jest
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
 
     return api
       .get('/v1/resource/test')
@@ -215,5 +227,219 @@ describe('api.ts interceptors', () => {
       .finally(() => {
         consoleError.mockRestore();
       });
+  });
+});
+
+describe('session recovery boundaries', () => {
+  let api: typeof import('../api').default;
+  let axios: typeof import('axios').default;
+  let state: {
+    token: string;
+    user: { id: string };
+    currentCompanyId: string;
+    contextVersion: number;
+    companies: Array<{ id: string }>;
+    setAuth: jest.Mock;
+    logout: jest.Mock;
+    setCurrentCompany: jest.Mock;
+  };
+  beforeEach(async () => {
+    jest.resetModules();
+    jest.clearAllMocks();
+    axios = (await import('axios')).default;
+    api = (await import('../api')).default;
+    state = {
+      token: 'old-token',
+      user: { id: 'u1' },
+      currentCompanyId: 'c1',
+      contextVersion: 1,
+      companies: [{ id: 'c1' }, { id: 'c2' }],
+      setAuth: jest.fn((token: string) => {
+        state.token = token;
+      }),
+      logout: mockLogout,
+      setCurrentCompany: mockSetCurrentCompany,
+    };
+    mockGetState.mockImplementation(() => state);
+    mockGetCsrfTokenFromCookie.mockReturnValue('csrf');
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  it('keeps failed login local without refresh or logout', async () => {
+    const refresh = jest.spyOn(axios, 'post');
+    api.defaults.adapter = (config) =>
+      Promise.reject({
+        config,
+        response: { status: 401, data: { message: 'Invalid credentials' } },
+      });
+    await expect(api.post('/auth/login', {})).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  it('refreshes once and retries a protected request in its original company', async () => {
+    const refresh = jest
+      .spyOn(axios, 'post')
+      .mockResolvedValue({
+        data: {
+          accessToken: 'fresh-token',
+          user: state.user,
+          companies: state.companies,
+        },
+      });
+    const adapter = jest.fn((config: InternalAxiosRequestConfig) => {
+      if (!config._retry)
+        return Promise.reject({ config, response: { status: 401 } });
+      return Promise.resolve({
+        config,
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        data: 'success',
+      });
+    });
+    api.defaults.adapter = adapter;
+    await expect(api.get('/orders')).resolves.toMatchObject({
+      data: 'success',
+    });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(adapter).toHaveBeenCalledTimes(2);
+    expect(adapter.mock.calls[1][0].headers['x-company-id']).toBe('c1');
+    expect(adapter.mock.calls[1][0].headers.Authorization).toBe(
+      'Bearer fresh-token',
+    );
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an old-company mutation after switching during refresh', async () => {
+    let finishRefresh!: (value: unknown) => void;
+    let started!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    jest.spyOn(axios, 'post').mockImplementation(() => {
+      started();
+      return new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    });
+    const adapter = jest.fn((config: InternalAxiosRequestConfig) =>
+      Promise.reject({ config, response: { status: 401 } }),
+    );
+    api.defaults.adapter = adapter;
+    const result = api.post('/orders', { partnerId: 'company-a-partner' });
+    const rejection = expect(result).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+    await refreshStarted;
+    state = {
+      ...state,
+      currentCompanyId: 'c2',
+      contextVersion: state.contextVersion + 1,
+    };
+    finishRefresh({
+      data: {
+        accessToken: 'fresh-token',
+        user: state.user,
+        companies: state.companies,
+      },
+    });
+    await rejection;
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(state.setAuth).toHaveBeenCalledTimes(1);
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  it('shares refresh rotation across a company switch but only replays the current-company request', async () => {
+    let finishRefresh!: (value: unknown) => void;
+    let started!: () => void;
+    const refreshStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const refresh = jest.spyOn(axios, 'post').mockImplementation(() => {
+      started();
+      return new Promise((resolve) => {
+        finishRefresh = resolve;
+      });
+    });
+    let bRequested!: () => void;
+    const bStarted = new Promise<void>((resolve) => {
+      bRequested = resolve;
+    });
+    const adapter = jest.fn((config: InternalAxiosRequestConfig) => {
+      if (config._retry)
+        return Promise.resolve({
+          config,
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          data: 'B',
+        });
+      if (config.headers['x-company-id'] === 'c2') bRequested();
+      return Promise.reject({ config, response: { status: 401 } });
+    });
+    api.defaults.adapter = adapter;
+    const a = expect(api.post('/orders', {})).rejects.toMatchObject({
+      response: { status: 401 },
+    });
+    await refreshStarted;
+    state = { ...state, currentCompanyId: 'c2', contextVersion: 2 };
+    const b = api.get('/orders');
+    await bStarted;
+    // Let the second 401 enter the response interceptor before rotation finishes.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    finishRefresh({
+      data: {
+        accessToken: 'fresh',
+        user: state.user,
+        companies: state.companies,
+      },
+    });
+    await a;
+    await expect(b).resolves.toMatchObject({ data: 'B' });
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(adapter).toHaveBeenCalledTimes(3);
+    expect(
+      adapter.mock.calls.filter(
+        ([config]) => config.headers['x-company-id'] === 'c1',
+      ),
+    ).toHaveLength(1);
+    expect(adapter.mock.calls[2][0].headers['x-company-id']).toBe('c2');
+    expect(mockLogout).not.toHaveBeenCalled();
+  });
+
+  it('rejects a successful old-company response after switching', async () => {
+    let complete!: () => void;
+    let started!: () => void;
+    const requested = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    api.defaults.adapter = (config) =>
+      new Promise((resolve) => {
+        complete = () =>
+          resolve({
+            config,
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            data: ['old record'],
+          });
+        started();
+      });
+    const request = api.get('/orders');
+    const rejection = expect(request).rejects.toMatchObject({
+      code: 'ERR_AUTH_CONTEXT_CHANGED',
+    });
+    await requested;
+    state = {
+      ...state,
+      currentCompanyId: 'c2',
+      contextVersion: state.contextVersion + 1,
+    };
+    complete();
+    await rejection;
+    expect(mockLogout).not.toHaveBeenCalled();
   });
 });

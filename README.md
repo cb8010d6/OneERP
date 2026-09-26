@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-	<a href="#"><img src="https://img.shields.io/badge/monorepo-npm_workspaces-0f766e" alt="Monorepo" /></a>
+	<a href="#"><img src="https://img.shields.io/badge/monorepo-TypeScript-0f766e" alt="Monorepo" /></a>
 	<a href="#"><img src="https://img.shields.io/badge/backend-NestJS_11-e11d48" alt="NestJS" /></a>
 	<a href="#"><img src="https://img.shields.io/badge/frontend-Next.js_16-0f172a" alt="Next.js" /></a>
 	<a href="#"><img src="https://img.shields.io/badge/database-PostgreSQL_+_Prisma-2563eb" alt="PostgreSQL Prisma" /></a>
@@ -68,65 +68,43 @@ English summary: OneERP is an AI-native ERP for manufacturing and supply-chain t
 
 截图补齐前，不应把本仓库描述为“生产就绪”或用于公开获客落地页。
 
-## 5 分钟快速启动
+## 快速体验（Docker）
 
-### 1) 安装依赖
+前置条件：Windows 使用 Docker Desktop 并启用 Docker Compose V2；Linux 使用 Docker Engine 和 Compose 插件。首次构建需要下载容器镜像。想运行源码热更新开发环境，请看 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
-```bash
-npm install
-```
-
-### 2) 启动基础服务（Postgres/Redis）
-
-```bash
-docker compose up -d
-```
-
-### 3) 初始化数据库（在 API 子项目）
-
-```bash
-cd apps/api
-npx prisma generate
-npx prisma migrate dev --name init
-cd ../..
-```
-
-### 4) 启动后端 API
-
-```bash
-cd apps/api
-npm run start:dev
-```
-
-### 5) 启动前端 Web（新终端）
-
-```bash
-cd apps/web
-npm run dev
-```
-
-访问地址：
-
-- Web: http://localhost:3000
-- API: http://localhost:8000/api
-- Swagger: http://localhost:8000/api/docs
-
-## 单机一键部署
-
-适合内测、试运行和生产演练：
+Windows PowerShell：
 
 ```powershell
 .\scripts\quickstart.ps1 -Rebuild
 ```
 
-Linux/macOS:
+Linux：
 
 ```bash
 sh scripts/quickstart.sh --rebuild
 ```
 
-部署说明见 [docs/QUICKSTART_DEPLOY.md](./docs/QUICKSTART_DEPLOY.md)。
-真实库存/财务生产试运行使用 `docker-compose.ha-lite.yml`，并必须完成
+首次运行时，脚本会从 `.env.quickstart` 创建根目录 `.env` 并生成本地密钥。管理员邮箱为 `admin@oneerp.local`；首次登录密码保存在 `.env` 的 `INIT_ADMIN_PASSWORD` 中。请妥善保管 `.env`，不要提交或分享。如果 `.env` 已存在，脚本会保留并校验其中的值。
+
+等待服务就绪并查看一次性迁移结果：
+
+```bash
+docker compose -f docker-compose.easy.yml ps --all
+```
+
+等待 `db`、`redis`、`minio`、`api`、`web` 显示 `healthy`；`migrate` 应显示 `Exited (0)`。如果服务没有就绪，查看日志：
+
+```bash
+docker compose -f docker-compose.easy.yml logs -f api web
+```
+
+按 `Ctrl+C` 只会停止日志跟随，不会停止服务。就绪后访问：
+
+- Web: http://localhost:3000
+- API docs: http://localhost:8000/api/docs
+- MinIO console: http://localhost:9001
+
+更多启动、停止和升级说明见 [docs/QUICKSTART_DEPLOY.md](./docs/QUICKSTART_DEPLOY.md)。真实库存/财务生产试运行使用 `docker-compose.ha-lite.yml`，并必须完成
 [docs/HA_LITE_RUNBOOK.md](./docs/HA_LITE_RUNBOOK.md)、
 [docs/PRODUCTION_READINESS.md](./docs/PRODUCTION_READINESS.md) 和
 [docs/GO_LIVE_CHECKLIST.md](./docs/GO_LIVE_CHECKLIST.md)。
