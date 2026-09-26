@@ -17,6 +17,7 @@ export interface Company {
 }
 
 interface AuthState {
+  contextVersion: number;
   token: string | null;
   user: User | null;
   companies: Company[];
@@ -83,10 +84,9 @@ async function fetchCSRF(): Promise<string> {
   const existing = getCsrfTokenFromCookie();
   if (existing) return existing;
   try {
-    const res = await fetch(
-      `${apiBaseUrl.replace(/\/$/, '')}/auth/csrf`,
-      { credentials: 'include' },
-    );
+    const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/auth/csrf`, {
+      credentials: 'include',
+    });
     if (!res.ok) return '';
     const data = (await res.json()) as { csrfToken?: string };
     return data.csrfToken ?? '';
@@ -101,6 +101,7 @@ function clearLocalAuth() {
   localStorage.removeItem('companies');
   localStorage.removeItem('currentCompanyId');
   useAuthStore.setState({
+    contextVersion: useAuthStore.getState().contextVersion + 1,
     token: null,
     user: null,
     companies: [],
@@ -120,10 +121,7 @@ function loadPersistedAuth() {
 
   const token = localStorage.getItem('token');
   const user = safeParse<User | null>(localStorage.getItem('user'), null);
-  const companies = safeParse<Company[]>(
-    localStorage.getItem('companies'),
-    [],
-  );
+  const companies = safeParse<Company[]>(localStorage.getItem('companies'), []);
   const currentCompanyId = localStorage.getItem('currentCompanyId');
   const hasCurrentCompany =
     !!currentCompanyId && companies.some((c) => c.id === currentCompanyId);
@@ -148,13 +146,15 @@ function loadPersistedAuth() {
 const initial = loadPersistedAuth();
 
 export const useAuthStore = create<AuthState>((set) => ({
+  contextVersion: 0,
   token: initial.token,
   user: initial.user,
   companies: initial.companies,
   currentCompanyId: initial.currentCompanyId,
 
   setAuth: (token, user, companies) => {
-    const previousCompanyId = useAuthStore.getState().currentCompanyId;
+    const previous = useAuthStore.getState();
+    const previousCompanyId = previous.currentCompanyId;
     localStorage.setItem('token', token);
     localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('companies', JSON.stringify(companies));
@@ -168,9 +168,16 @@ export const useAuthStore = create<AuthState>((set) => ({
           : null;
     if (defaultCompanyId) {
       localStorage.setItem('currentCompanyId', defaultCompanyId);
+    } else {
+      localStorage.removeItem('currentCompanyId');
     }
 
     set({
+      contextVersion:
+        previous.contextVersion +
+        (previous.user?.id !== user.id || previousCompanyId !== defaultCompanyId
+          ? 1
+          : 0),
       token,
       user,
       companies,
@@ -179,8 +186,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   setCurrentCompany: (companyId) => {
+    const state = useAuthStore.getState();
+    if (
+      companyId === state.currentCompanyId ||
+      !state.companies.some((company) => company.id === companyId)
+    )
+      return;
     localStorage.setItem('currentCompanyId', companyId);
-    set({ currentCompanyId: companyId });
+    set({
+      currentCompanyId: companyId,
+      contextVersion: state.contextVersion + 1,
+    });
   },
 
   refreshPermissions: async () => {
@@ -199,6 +215,15 @@ export const useAuthStore = create<AuthState>((set) => ({
       },
     );
 
+    const isCurrent = () => {
+      const current = useAuthStore.getState();
+      return (
+        current.contextVersion === state.contextVersion &&
+        current.token === state.token
+      );
+    };
+    if (!isCurrent()) return;
+
     if (response.status === 401 || response.status === 403) {
       await state.logout();
       throw new Error('AUTH_REFRESH_FORBIDDEN');
@@ -209,7 +234,8 @@ export const useAuthStore = create<AuthState>((set) => ({
       role?: { id: string; name: string };
       permissions?: string[];
     };
-    const nextCompanies = state.companies.map((company) =>
+    if (!isCurrent()) return;
+    const nextCompanies = useAuthStore.getState().companies.map((company) =>
       company.id === state.currentCompanyId
         ? {
             ...company,
@@ -223,18 +249,23 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   restoreSession: async () => {
+    const initialState = useAuthStore.getState();
+    const isCurrent = () => {
+      const current = useAuthStore.getState();
+      return (
+        current.contextVersion === initialState.contextVersion &&
+        current.token === initialState.token
+      );
+    };
     const csrf = await fetchCSRF();
-    if (!csrf) return false;
+    if (!csrf || !isCurrent()) return false;
 
     try {
-      const res = await fetch(
-        `${apiBaseUrl.replace(/\/$/, '')}/auth/refresh`,
-        {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'x-csrf-token': csrf },
-        },
-      );
+      const res = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'x-csrf-token': csrf },
+      });
       if (!res.ok) return false;
 
       const data = (await res.json()) as {
@@ -242,7 +273,10 @@ export const useAuthStore = create<AuthState>((set) => ({
         user: User;
         companies: Company[];
       };
-      useAuthStore.getState().setAuth(data.accessToken, data.user, data.companies);
+      if (!isCurrent()) return false;
+      useAuthStore
+        .getState()
+        .setAuth(data.accessToken, data.user, data.companies);
       return true;
     } catch {
       return false;

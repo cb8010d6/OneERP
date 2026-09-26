@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertTriangle, Loader2, PackageCheck, Search } from 'lucide-react';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
+import Pagination from '@/components/Pagination';
 
 type FulfillmentStatus =
   | 'READY'
@@ -29,6 +30,16 @@ type OrderRow = {
     totalShortageQty: number;
   };
 };
+
+interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+const PAGE_SIZE = 50;
 
 const statusOptions = [
   { value: '', label: '全部状态' },
@@ -82,34 +93,78 @@ export default function OrdersPage() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const response = await api.get('/orders', {
-        params: {
-          page: 1,
-          limit: 50,
-          search: search.trim() || undefined,
-          status: status || undefined,
-        },
-      });
-      setOrders((response.data?.data as OrderRow[]) ?? []);
-    } catch {
-      setError('订单列表加载失败');
-      setOrders([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, status]);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: PAGE_SIZE,
+    total: 0,
+    totalPages: 1,
+  });
+  const [retryCount, setRetryCount] = useState(0);
+  const { page, limit, total, totalPages } = pagination;
 
   useEffect(() => {
+    let current = true;
+    setLoading(true);
+    setError('');
     const timer = window.setTimeout(() => {
-      void load();
+      void api
+        .get<PaginatedResponse<OrderRow>>('/orders', {
+          params: {
+            page,
+            limit,
+            search: search.trim() || undefined,
+            status: status || undefined,
+          },
+        })
+        .then((response) => {
+          if (!current) return;
+          const result = response.data;
+          if (result.total > 0 && result.page > result.totalPages) {
+            setPagination({
+              page: result.totalPages,
+              limit: result.limit,
+              total: result.total,
+              totalPages: result.totalPages,
+            });
+            return;
+          }
+          setOrders(result.data);
+          setPagination({
+            page: result.page,
+            limit: result.limit,
+            total: result.total,
+            totalPages: result.totalPages,
+          });
+        })
+        .catch(() => {
+          if (!current) return;
+          setError('订单列表加载失败，请重试。');
+          setOrders([]);
+          setPagination((previous) => ({
+            ...previous,
+            total: 0,
+            totalPages: 1,
+          }));
+        })
+        .finally(() => {
+          if (current) setLoading(false);
+        });
     }, 250);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [limit, page, retryCount, search, status]);
+
+  const changeSearch = (value: string) => {
+    setSearch(value);
+    setPagination((previous) => ({ ...previous, page: 1 }));
+  };
+
+  const changeStatus = (value: string) => {
+    setStatus(value);
+    setPagination((previous) => ({ ...previous, page: 1 }));
+  };
 
   const summary = useMemo(() => {
     return {
@@ -149,22 +204,22 @@ export default function OrdersPage() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <SummaryCard
-          label="订单数"
+          label="本页订单数"
           value={summary.total}
           tone="text-slate-900"
         />
         <SummaryCard
-          label="存在缺口"
+          label="本页存在缺口"
           value={summary.shortage}
           tone="text-red-700"
         />
         <SummaryCard
-          label="缺成品映射"
+          label="本页缺成品映射"
           value={summary.unmapped}
           tone="text-amber-700"
         />
         <SummaryCard
-          label="生产覆盖"
+          label="本页生产覆盖"
           value={summary.covered}
           tone="text-blue-700"
         />
@@ -176,14 +231,14 @@ export default function OrdersPage() {
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <input
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => changeSearch(event.target.value)}
               placeholder="搜索订单号或客户"
               className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-100"
             />
           </label>
           <select
             value={status}
-            onChange={(event) => setStatus(event.target.value)}
+            onChange={(event) => changeStatus(event.target.value)}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-slate-300 focus:ring-2 focus:ring-slate-100"
           >
             {statusOptions.map((option) => (
@@ -195,8 +250,18 @@ export default function OrdersPage() {
         </div>
 
         {error ? (
-          <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
+          <div
+            role="alert"
+            className="flex flex-col gap-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setRetryCount((count) => count + 1)}
+              className="self-start rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 sm:self-auto"
+            >
+              重试
+            </button>
           </div>
         ) : null}
 
@@ -294,7 +359,17 @@ export default function OrdersPage() {
                       className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
                     >
                       <td className="px-4 py-3 font-mono font-semibold text-slate-900">
-                        {order.orderNo}
+                        <button
+                          type="button"
+                          aria-label={`打开订单 ${order.orderNo}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            router.push(`/dashboard/orders/${order.id}`);
+                          }}
+                          className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                        >
+                          {order.orderNo}
+                        </button>
                       </td>
                       <td className="px-4 py-3 text-slate-700">
                         {order.partner?.name || '-'}
@@ -322,13 +397,24 @@ export default function OrdersPage() {
               </tbody>
               </table>
             </div>
-            {orders.length === 0 ? (
+            {orders.length === 0 && !error ? (
               <div className="rounded-lg border border-dashed border-slate-200 p-8 text-center text-sm text-slate-400">
                 暂无订单
               </div>
             ) : null}
           </>
         )}
+
+        {!loading && !error ? (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            onPageChange={(nextPage) =>
+              setPagination((previous) => ({ ...previous, page: nextPage }))
+            }
+          />
+        ) : null}
       </div>
     </div>
   );

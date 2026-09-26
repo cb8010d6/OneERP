@@ -5,11 +5,20 @@ import { resolvePublicApiBaseUrl } from './public-api-base';
 declare module 'axios' {
   export interface InternalAxiosRequestConfig {
     _retry?: boolean;
+    _authContext?: {
+      companyId: string | null;
+      userId: string | undefined;
+      version: number;
+    };
   }
 }
 
 export function readApiError(reason: unknown, fallback: string): string {
-  if (typeof reason !== 'object' || reason === null || !('response' in reason)) {
+  if (
+    typeof reason !== 'object' ||
+    reason === null ||
+    !('response' in reason)
+  ) {
     return fallback;
   }
 
@@ -56,9 +65,14 @@ const api = axios.create({
   withCredentials: true,
 });
 
-let refreshPromise: Promise<string | null> | null = null;
+let pendingRefresh: {
+  token: string | null;
+  userId: string | undefined;
+  promise: Promise<string | null>;
+} | null = null;
 
 async function refreshAccessToken(): Promise<string | null> {
+  const initialState = useAuthStore.getState();
   const csrf = getCsrfTokenFromCookie();
   if (!csrf) return null;
 
@@ -70,10 +84,36 @@ async function refreshAccessToken(): Promise<string | null> {
   const { accessToken, user, companies } = response.data as {
     accessToken: string;
     user: { id: string; email?: string; name?: string };
-    companies: Array<{ id: string; name: string; role: string; permissions?: string[] }>;
+    companies: Array<{
+      id: string;
+      name: string;
+      role: string;
+      permissions?: string[];
+    }>;
   };
-  useAuthStore.getState().setAuth(accessToken, user, companies);
+  const current = useAuthStore.getState();
+  if (
+    current.token !== initialState.token ||
+    current.user?.id !== initialState.user?.id ||
+    (initialState.user && user.id !== initialState.user.id)
+  )
+    return null;
+  current.setAuth(accessToken, user, companies);
   return accessToken;
+}
+
+function isAuthRequest(url?: string) {
+  return /^\/auth(?:\/|\?|$)/.test(url ?? '');
+}
+
+function isCurrentContext(config?: import('axios').InternalAxiosRequestConfig) {
+  if (!config?._authContext) return true;
+  const current = useAuthStore.getState();
+  return (
+    config._authContext.companyId === current.currentCompanyId &&
+    config._authContext.userId === current.user?.id &&
+    config._authContext.version === current.contextVersion
+  );
 }
 
 function navigateToLogin() {
@@ -88,7 +128,16 @@ api.interceptors.request.use(
 
     const state = useAuthStore.getState();
     const token = state.token;
-    const isAuthRequest = config.url?.startsWith('/auth') ?? false;
+    const authRequest = isAuthRequest(config.url);
+    if (!isCurrentContext(config)) {
+      return Promise.reject(
+        new AxiosError(
+          '公司或登录状态已变更，请重新操作。',
+          'ERR_AUTH_CONTEXT_CHANGED',
+          config,
+        ),
+      );
+    }
     let companyId = state.currentCompanyId;
 
     const headers = AxiosHeaders.from(config.headers);
@@ -102,7 +151,7 @@ api.interceptors.request.use(
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    if (!isAuthRequest && companyId) {
+    if (!authRequest && companyId) {
       headers.set('x-company-id', companyId);
     }
 
@@ -114,7 +163,7 @@ api.interceptors.request.use(
       }
     }
 
-    if (!isAuthRequest && (!token || !companyId)) {
+    if (!authRequest && (!token || !companyId)) {
       void useAuthStore.getState().logout().then(navigateToLogin);
       return Promise.reject(
         new AxiosError(
@@ -125,6 +174,13 @@ api.interceptors.request.use(
       );
     }
 
+    if (!authRequest && !config._authContext) {
+      config._authContext = {
+        companyId,
+        userId: state.user?.id,
+        version: useAuthStore.getState().contextVersion,
+      };
+    }
     config.headers = headers;
     return config;
   },
@@ -132,9 +188,26 @@ api.interceptors.request.use(
 );
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (!isCurrentContext(response.config)) {
+      return Promise.reject(
+        new AxiosError(
+          '公司或登录状态已变更，请重新操作。',
+          'ERR_AUTH_CONTEXT_CHANGED',
+          response.config,
+        ),
+      );
+    }
+    return response;
+  },
   async (error) => {
     const originalConfig = error.config;
+    if (
+      isAuthRequest(originalConfig?.url) ||
+      !isCurrentContext(originalConfig)
+    ) {
+      return Promise.reject(error);
+    }
 
     if (error.response?.status === 401) {
       const isRefreshRequest = String(originalConfig?.url ?? '').includes(
@@ -143,9 +216,23 @@ api.interceptors.response.use(
       if (originalConfig && !originalConfig._retry && !isRefreshRequest) {
         originalConfig._retry = true;
         try {
-          refreshPromise = refreshPromise ?? refreshAccessToken();
-          const nextToken = await refreshPromise;
-          refreshPromise = null;
+          const current = useAuthStore.getState();
+          if (
+            !pendingRefresh ||
+            pendingRefresh.token !== current.token ||
+            pendingRefresh.userId !== current.user?.id
+          ) {
+            pendingRefresh = {
+              token: current.token,
+              userId: current.user?.id,
+              promise: refreshAccessToken(),
+            };
+          }
+          const refresh = pendingRefresh;
+          const nextToken = await refresh.promise.finally(() => {
+            if (pendingRefresh === refresh) pendingRefresh = null;
+          });
+          if (!isCurrentContext(originalConfig)) return Promise.reject(error);
           if (nextToken) {
             const headers = AxiosHeaders.from(originalConfig.headers);
             headers.set('Authorization', `Bearer ${nextToken}`);
@@ -153,11 +240,13 @@ api.interceptors.response.use(
             return api.request(originalConfig);
           }
         } catch {
-          refreshPromise = null;
+          // The original failure is returned after session recovery fails.
         }
       }
 
-      void useAuthStore.getState().logout().then(navigateToLogin);
+      if (isCurrentContext(originalConfig)) {
+        void useAuthStore.getState().logout().then(navigateToLogin);
+      }
     }
 
     if (error.response?.status === 403) {

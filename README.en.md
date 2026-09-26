@@ -56,50 +56,9 @@ Real product screenshots are still pending. Before a public launch, add and manu
 
 Until these screenshots are available, this repository should not be marketed as production-ready or used as a public customer landing page.
 
-## Quickstart
+## Try OneERP locally with Docker
 
-Install dependencies:
-
-```bash
-npm install
-```
-
-Start the basic development services:
-
-```bash
-docker compose up -d
-```
-
-Initialize Prisma from the API app:
-
-```bash
-cd apps/api
-npx prisma generate
-npx prisma migrate dev --name init
-cd ../..
-```
-
-Start the API:
-
-```bash
-cd apps/api
-npm run start:dev
-```
-
-Start the Web app in another terminal:
-
-```bash
-cd apps/web
-npm run dev
-```
-
-Default URLs:
-
-- Web: http://localhost:3000
-- API: http://localhost:8000/api
-- Swagger: http://localhost:8000/api/docs
-
-## One-Command Trial Deployment
+Prerequisites: Docker Desktop with Docker Compose V2 on Windows, or Docker Engine with the Compose plugin on Linux. The first run downloads and builds container images. For source hot reload, see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 Windows PowerShell:
 
@@ -107,13 +66,31 @@ Windows PowerShell:
 .\scripts\quickstart.ps1 -Rebuild
 ```
 
-Linux or macOS:
+Linux:
 
 ```bash
 sh scripts/quickstart.sh --rebuild
 ```
 
-If `.env` does not exist, quickstart creates it and generates local secrets. If `.env` already exists, quickstart validates required values before Docker starts.
+On first run, the script creates the repository-root `.env` from `.env.quickstart` and generates local secrets. The admin email is `admin@oneerp.local`; the first-login password is stored in `.env` as `INIT_ADMIN_PASSWORD`. Keep `.env` private and do not commit or share it. If `.env` already exists, the script keeps it and validates its required values.
+
+Wait for the services and check the one-shot migration:
+
+```bash
+docker compose -f docker-compose.easy.yml ps --all
+```
+
+Wait until `db`, `redis`, `minio`, `api`, and `web` show `healthy`; `migrate` should show `Exited (0)`. If a service is not ready, inspect its logs:
+
+```bash
+docker compose -f docker-compose.easy.yml logs -f api web
+```
+
+Press `Ctrl+C` to stop following logs; this leaves the services running. When ready, open:
+
+- Web: http://localhost:3000
+- API docs: http://localhost:8000/api/docs
+- MinIO console: http://localhost:9001
 
 Read the deployment guide:
 

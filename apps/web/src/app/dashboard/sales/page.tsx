@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { SaleOrderDrawer } from '@/components/sales/SaleOrderDrawer';
 import api from '@/lib/api';
 import { formatCurrency } from '@/lib/format';
+import Pagination from '@/components/Pagination';
 import Link from 'next/link';
 import {
   ClipboardList,
@@ -26,12 +27,23 @@ interface SalesOrderListItem {
   };
 }
 
+interface PaginatedResponse<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+const PAGE_SIZE = 100;
+
 const STATUS_OPTIONS = [
   { key: 'ALL', label: '全部' },
   { key: 'DRAFT', label: '草稿待确认' },
   { key: 'PENDING', label: '待处理' },
   { key: 'IN_PRODUCTION', label: '生产中' },
   { key: 'SHIPPED', label: '已发货' },
+  { key: 'CANCELLED', label: '已取消' },
   { key: 'COMPLETED', label: '已完成' },
 ] as const;
 
@@ -49,43 +61,81 @@ export default function SalesModulePage() {
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
   const [orders, setOrders] = useState<SalesOrderListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] =
     useState<(typeof STATUS_OPTIONS)[number]['key']>('ALL');
-
-  const fetchOrders = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.set('page', '1');
-      params.set('limit', '100');
-      if (search.trim()) {
-        params.set('search', search.trim());
-      }
-      if (statusFilter !== 'ALL') {
-        params.set('status', statusFilter);
-      }
-
-      const response = await api.get<{ data: SalesOrderListItem[] }>(
-        `/orders?${params.toString()}`,
-      );
-      setOrders(response.data?.data ?? []);
-    } finally {
-      setLoading(false);
-    }
-  }, [search, statusFilter]);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: PAGE_SIZE,
+    total: 0,
+    totalPages: 1,
+  });
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { page, limit, total, totalPages } = pagination;
 
   useEffect(() => {
-    fetchOrders();
-  }, [fetchOrders]);
+    let current = true;
+    setLoading(true);
+    setError('');
 
-  const totalCount = orders.length;
-  const countByStatus = useMemo(() => {
-    return orders.reduce<Record<string, number>>((acc, item) => {
-      acc[item.status] = (acc[item.status] ?? 0) + 1;
-      return acc;
-    }, {});
-  }, [orders]);
+    void api
+      .get<PaginatedResponse<SalesOrderListItem>>('/orders', {
+        params: {
+          page,
+          limit,
+          search: search.trim() || undefined,
+          status: statusFilter === 'ALL' ? undefined : statusFilter,
+        },
+      })
+      .then((response) => {
+        if (!current) return;
+        const result = response.data;
+        if (result.total > 0 && result.page > result.totalPages) {
+          setPagination({
+            page: result.totalPages,
+            limit: result.limit,
+            total: result.total,
+            totalPages: result.totalPages,
+          });
+          return;
+        }
+        setOrders(result.data);
+        setPagination({
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: result.totalPages,
+        });
+      })
+      .catch(() => {
+        if (!current) return;
+        setError('订单列表加载失败，请重试。');
+        setOrders([]);
+        setPagination((previous) => ({
+          ...previous,
+          total: 0,
+          totalPages: 1,
+        }));
+      })
+      .finally(() => {
+        if (current) setLoading(false);
+      });
+
+    return () => {
+      current = false;
+    };
+  }, [limit, page, refreshKey, search, statusFilter]);
+
+  const changeSearch = (value: string) => {
+    setSearch(value);
+    setPagination((previous) => ({ ...previous, page: 1 }));
+  };
+
+  const changeStatus = (value: (typeof STATUS_OPTIONS)[number]['key']) => {
+    setStatusFilter(value);
+    setPagination((previous) => ({ ...previous, page: 1 }));
+  };
 
   return (
     <div className="h-full space-y-4 bg-slate-50/50 p-3 sm:space-y-6 sm:p-6 lg:p-8">
@@ -96,7 +146,7 @@ export default function SalesModulePage() {
             <span className="min-w-0 truncate">销售订单 (Sales Orders)</span>
           </h1>
           <p className="mt-1 text-sm text-slate-500 sm:text-base">
-            企业级高密度管理，已接入真实后端数据流与状态机。
+            查询客户订单、跟进交付进度，或新建销售订单。
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -123,20 +173,20 @@ export default function SalesModulePage() {
       <div className="overflow-x-auto border-b border-slate-200">
         <div className="flex min-w-max gap-5 text-sm font-medium sm:gap-6">
           {STATUS_OPTIONS.map((item) => {
-            const count =
-              item.key === 'ALL' ? totalCount : (countByStatus[item.key] ?? 0);
             const active = statusFilter === item.key;
             return (
               <button
                 key={item.key}
+                type="button"
+                aria-pressed={active}
                 className={
                   active
                     ? 'shrink-0 border-b-2 border-blue-600 pb-3 text-blue-700'
                     : 'shrink-0 border-b-2 border-transparent pb-3 text-slate-500 hover:text-slate-800'
                 }
-                onClick={() => setStatusFilter(item.key)}
+                onClick={() => changeStatus(item.key)}
               >
-                {item.label} ({count})
+                {item.label}
               </button>
             );
           })}
@@ -150,10 +200,10 @@ export default function SalesModulePage() {
             <input
               type="text"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => changeSearch(e.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
-                  fetchOrders();
+                  setRefreshKey((value) => value + 1);
                 }
               }}
               placeholder="搜索单号、客户..."
@@ -162,11 +212,27 @@ export default function SalesModulePage() {
           </div>
           <button
             className="flex w-full items-center justify-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-800 sm:w-auto sm:py-1.5"
-            onClick={() => fetchOrders()}
+            onClick={() => setRefreshKey((value) => value + 1)}
           >
             <Filter className="h-4 w-4" /> 刷新
           </button>
         </div>
+
+        {error ? (
+          <div
+            role="alert"
+            className="flex flex-col gap-3 border-b border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setRefreshKey((value) => value + 1)}
+              className="self-start rounded-md border border-red-200 bg-white px-3 py-1.5 font-semibold text-red-700 hover:bg-red-100 sm:self-auto"
+            >
+              重试
+            </button>
+          </div>
+        ) : null}
 
         <div className="hidden min-w-full md:block">
           <div className="grid grid-cols-5 px-6 py-3 border-b border-slate-100 bg-slate-50 text-xs font-bold text-slate-600 uppercase tracking-wider">
@@ -180,11 +246,11 @@ export default function SalesModulePage() {
             <div className="px-6 py-12 text-sm text-slate-500 flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" /> 正在加载订单...
             </div>
-          ) : orders.length === 0 ? (
+          ) : orders.length === 0 && !error ? (
             <div className="px-6 py-12 text-sm text-slate-500">
               暂无订单数据，可点击右上角新建订单。
             </div>
-          ) : (
+          ) : !error ? (
             orders.map((order) => (
               <div
                 key={order.id}
@@ -195,7 +261,17 @@ export default function SalesModulePage() {
                 className="grid grid-cols-5 px-6 py-4 border-b last:border-b-0 border-slate-100 hover:bg-slate-50/80 transition cursor-pointer select-none items-center group"
               >
                 <div className="font-bold text-blue-700 group-hover:text-blue-800">
-                  {order.orderNo}
+                  <button
+                    type="button"
+                    aria-label={`打开订单 ${order.orderNo}`}
+                    onClick={() => {
+                      setSelectedOrderId(order.id);
+                      setDrawerOpen(true);
+                    }}
+                    className="rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                  >
+                    {order.orderNo}
+                  </button>
                 </div>
                 <div className="text-slate-900 font-medium">
                   {order.partner?.name || '未命名客户'}
@@ -213,7 +289,7 @@ export default function SalesModulePage() {
                 </div>
               </div>
             ))
-          )}
+          ) : null}
         </div>
 
         <div className="space-y-3 p-3 md:hidden">
@@ -221,11 +297,11 @@ export default function SalesModulePage() {
             <div className="flex items-center gap-2 rounded-lg border border-slate-100 px-4 py-8 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" /> 正在加载订单...
             </div>
-          ) : orders.length === 0 ? (
+          ) : orders.length === 0 && !error ? (
             <div className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-sm text-slate-500">
               暂无订单数据，可点击上方按钮新建订单。
             </div>
-          ) : (
+          ) : !error ? (
             orders.map((order) => (
               <button
                 key={order.id}
@@ -268,13 +344,26 @@ export default function SalesModulePage() {
                 </div>
               </button>
             ))
-          )}
+          ) : null}
         </div>
+
+        {!loading && !error ? (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            total={total}
+            onPageChange={(nextPage) =>
+              setPagination((previous) => ({ ...previous, page: nextPage }))
+            }
+          />
+        ) : null}
       </div>
 
       <div className="flex flex-col gap-1 px-2 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-        <span>桌面端可双击任一订单行打开抽屉；手机端点击订单卡片打开。</span>
-        <span>共 {totalCount} 项记录</span>
+        <span>
+          点击订单号或双击桌面订单行打开抽屉；可用 Tab 定位订单号后按 Enter。手机端点击订单卡片打开。
+        </span>
+        <span>{loading ? '正在加载本页订单...' : `本页 ${orders.length} 项记录`}</span>
       </div>
 
       <SaleOrderDrawer
@@ -282,7 +371,7 @@ export default function SalesModulePage() {
         onClose={() => setDrawerOpen(false)}
         orderId={selectedOrderId}
         onSaved={() => {
-          fetchOrders();
+          setRefreshKey((value) => value + 1);
         }}
       />
     </div>
