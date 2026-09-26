@@ -20,7 +20,10 @@ import {
   sanitizeFilter,
   sanitizeInclude,
   sanitizeOrderBy,
+  sanitizeSelect,
+  assertScalarWriteData,
 } from './crud-query-validator';
+import { assertGenericModelAllowed } from './crud-access-policy';
 import { TenantContext } from '../tenant/tenant-context';
 
 interface DynamicModelDelegate {
@@ -57,7 +60,8 @@ export class CrudService {
     const modelMeta = this.getDmmfModelMeta(normalizedModelName);
     const rawFilter =
       parseJsonParam<Record<string, unknown>>(query.filter) ?? {};
-    const filter = sanitizeFilter(rawFilter, modelMeta);
+    const resolveMeta = (name: string) => this.getDmmfModelMeta(name);
+    const filter = sanitizeFilter(rawFilter, modelMeta, resolveMeta);
     const where = this.applyCompanyScope(
       normalizedModelName,
       { ...filter },
@@ -71,11 +75,15 @@ export class CrudService {
     );
 
     const fields = parseJsonParam(query.fields, { allowCommaList: true });
-    const select = normalizeSelect(fields);
+    const select = sanitizeSelect(
+      normalizeSelect(fields),
+      modelMeta,
+      resolveMeta,
+    );
     const rawInclude = select
       ? undefined
       : parseJsonParam<Record<string, unknown>>(query.include);
-    const include = sanitizeInclude(rawInclude, modelMeta);
+    const include = sanitizeInclude(rawInclude, modelMeta, resolveMeta);
     const schema = await this.getSchemaIfExists(normalizedModelName, companyId);
     const rawOrderBy =
       parseOrderByParam(query.orderBy) ?? schema?.views.list.defaultSort;
@@ -112,13 +120,18 @@ export class CrudService {
       companyId,
     );
 
-    const fields = parseJsonParam(query.fields, { allowCommaList: true });
-    const select = normalizeSelect(fields);
     const findOneModelMeta = this.getDmmfModelMeta(normalizedModelName);
+    const resolveMeta = (name: string) => this.getDmmfModelMeta(name);
+    const fields = parseJsonParam(query.fields, { allowCommaList: true });
+    const select = sanitizeSelect(
+      normalizeSelect(fields),
+      findOneModelMeta,
+      resolveMeta,
+    );
     const rawInclude = select
       ? undefined
       : parseJsonParam<Record<string, unknown>>(query.include);
-    const include = sanitizeInclude(rawInclude, findOneModelMeta);
+    const include = sanitizeInclude(rawInclude, findOneModelMeta, resolveMeta);
 
     const record = await model.findFirst({ where, select, include });
     if (!record) {
@@ -135,6 +148,11 @@ export class CrudService {
     const normalizedModelName = this.normalizeModelName(modelName);
     this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
+    assertScalarWriteData(
+      data,
+      this.getDmmfModelMeta(normalizedModelName),
+      companyId,
+    );
     const payload = this.applyCompanyIdToData(
       normalizedModelName,
       { ...data },
@@ -156,7 +174,17 @@ export class CrudService {
     );
     ctx = await this.crudHooksService.execute('beforeInsert', ctx);
 
-    const created = await model.create({ data: ctx.data ?? payload });
+    const writeData = this.applyCompanyIdToData(
+      normalizedModelName,
+      ctx.data ?? payload,
+      companyId,
+    );
+    assertScalarWriteData(
+      writeData,
+      this.getDmmfModelMeta(normalizedModelName),
+      companyId,
+    );
+    const created = await model.create({ data: writeData });
     await this.auditService.logCrudAction({
       modelName: normalizedModelName,
       recordId: this.extractRecordId(created),
@@ -183,6 +211,16 @@ export class CrudService {
     const normalizedModelName = this.normalizeModelName(modelName);
     this.assertSpecializedModelWriteAllowed(normalizedModelName);
     const model = this.resolveModel(normalizedModelName);
+    assertScalarWriteData(
+      data,
+      this.getDmmfModelMeta(normalizedModelName),
+      companyId,
+    );
+    const payload = this.applyCompanyIdToData(
+      normalizedModelName,
+      { ...data },
+      companyId,
+    );
     const where = this.applyCompanyScope(
       normalizedModelName,
       { id },
@@ -199,7 +237,7 @@ export class CrudService {
       operation: 'update',
       companyId,
       id,
-      data: { ...data },
+      data: payload,
       existing,
     };
 
@@ -211,9 +249,19 @@ export class CrudService {
     );
     ctx = await this.crudHooksService.execute('beforeUpdate', ctx);
 
+    const writeData = this.applyCompanyIdToData(
+      normalizedModelName,
+      ctx.data ?? payload,
+      companyId,
+    );
+    assertScalarWriteData(
+      writeData,
+      this.getDmmfModelMeta(normalizedModelName),
+      companyId,
+    );
     const updated = await model.update({
-      where: { id },
-      data: ctx.data ?? data,
+      where,
+      data: writeData,
     });
     await this.auditService.logCrudAction({
       modelName: normalizedModelName,
@@ -279,6 +327,10 @@ export class CrudService {
   }
 
   private resolveModel(modelName: string): DynamicModelDelegate {
+    assertGenericModelAllowed(modelName);
+    if (!this.getDmmfModelMeta(modelName)) {
+      throw new BadRequestException(`未知模型: ${modelName}`);
+    }
     const candidate = (this.prisma as unknown as Record<string, unknown>)[
       modelName
     ];
@@ -339,9 +391,15 @@ export class CrudService {
     const searchFields = configuredFields
       .map((field) => String(field).trim())
       .filter(Boolean)
-      .map((field) => ({
-        [field]: { contains: search, mode: 'insensitive' as const },
-      }));
+      .map((field) =>
+        sanitizeFilter(
+          {
+            [field]: { contains: search, mode: 'insensitive' as const },
+          },
+          this.getDmmfModelMeta(modelName),
+          (name) => this.getDmmfModelMeta(name),
+        ),
+      );
 
     if (!searchFields.length) return;
     const existingOr = where.OR;

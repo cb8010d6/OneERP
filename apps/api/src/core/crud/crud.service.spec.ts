@@ -3,7 +3,18 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
+import { PrismaClient } from '@prisma/client';
 import { CrudService } from './crud.service';
+import { CrudHookContext } from './crud-hooks.service';
+
+// Constructing the generated client provides real DMMF without a DB connection.
+const metadataClient = new PrismaClient();
+const runtimeDataModel = (
+  metadataClient as unknown as {
+    _runtimeDataModel: { models: Record<string, unknown> };
+  }
+)._runtimeDataModel;
+afterAll(() => metadataClient.$disconnect());
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -24,54 +35,13 @@ function createMockPrisma(
   modelDelegate: ReturnType<typeof createMockDelegate>,
 ) {
   return {
-    order: modelDelegate,
-    partner: modelDelegate,
-    _runtimeDataModel: {
-      models: {
-        order: {
-          name: 'Order',
-          fields: [
-            { name: 'id', kind: 'scalar', type: 'String', isList: false },
-            { name: 'orderNo', kind: 'scalar', type: 'String', isList: false },
-            {
-              name: 'partnerId',
-              kind: 'scalar',
-              type: 'String',
-              isList: false,
-            },
-            {
-              name: 'companyId',
-              kind: 'scalar',
-              type: 'String',
-              isList: false,
-            },
-            { name: 'status', kind: 'scalar', type: 'String', isList: false },
-            {
-              name: 'totalAmount',
-              kind: 'scalar',
-              type: 'Float',
-              isList: false,
-            },
-            { name: 'partner', kind: 'object', type: 'Partner', isList: false },
-            { name: 'items', kind: 'object', type: 'OrderItem', isList: true },
-          ],
-        },
-        partner: {
-          name: 'Partner',
-          fields: [
-            { name: 'id', kind: 'scalar', type: 'String', isList: false },
-            { name: 'name', kind: 'scalar', type: 'String', isList: false },
-            {
-              name: 'companyId',
-              kind: 'scalar',
-              type: 'String',
-              isList: false,
-            },
-            { name: 'company', kind: 'object', type: 'Company', isList: false },
-          ],
-        },
-      },
-    },
+    ...Object.fromEntries(
+      Object.keys(runtimeDataModel.models).map((name) => [
+        name.charAt(0).toLowerCase() + name.slice(1),
+        modelDelegate,
+      ]),
+    ),
+    _runtimeDataModel: runtimeDataModel,
   };
 }
 
@@ -87,7 +57,9 @@ function createMockMetadataService(
 
 function createMockHooksService() {
   return {
-    execute: jest.fn((_e: string, ctx: unknown) => Promise.resolve(ctx)),
+    execute: jest.fn((_e: string, ctx: CrudHookContext) =>
+      Promise.resolve(ctx),
+    ),
   };
 }
 
@@ -107,7 +79,7 @@ function buildService(deps?: { companyScopedModels?: Set<string> }) {
     hooks as never,
     audit as never,
   );
-  return { service, delegate, metadata };
+  return { service, delegate, metadata, prisma, hooks, audit };
 }
 
 // ---------------------------------------------------------------------------
@@ -341,5 +313,291 @@ describe('CrudService – 未知模型', () => {
     await expect(service.list('nonexistent', {}, 'c1')).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+});
+
+describe('CrudService – sensitive resource boundary with generated Prisma metadata', () => {
+  it.each([
+    'user',
+    'role',
+    'userCompanyRole',
+    'userInvitation',
+    'company',
+    'aiProviderSetting',
+    'auditLog',
+    'eventDlq',
+  ])(
+    'rejects every generic operation on %s before database access',
+    async (name) => {
+      const { service, delegate } = buildService();
+      await expect(service.list(name, {}, 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(
+        service.findOne(name, 'id', {}, 'c1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.create(name, {}, 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(service.update(name, 'id', {}, 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(service.remove(name, 'id', 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      for (const method of Object.values(delegate))
+        expect(method).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { include: JSON.stringify({ salesPerson: true }) },
+    {
+      fields: JSON.stringify({
+        salesPerson: { select: { passwordHash: true } },
+      }),
+    },
+    { fields: JSON.stringify(['id', 'salesPerson']) },
+    { include: JSON.stringify({ partner: { include: { company: true } } }) },
+    {
+      include: JSON.stringify({
+        partner: { select: { company: { select: { users: true } } } },
+      }),
+    },
+    { fields: JSON.stringify({ partner: { include: { company: true } } }) },
+    {
+      include: JSON.stringify({
+        partner: { where: { company: { users: { some: {} } } } },
+      }),
+    },
+    {
+      include: JSON.stringify({
+        _count: {
+          select: {
+            items: {
+              where: { order: { salesPerson: { passwordHash: 'probe' } } },
+            },
+          },
+        },
+      }),
+    },
+  ])(
+    'rejects sensitive projection/traversal in list and detail: %j',
+    async (query) => {
+      const { service, delegate } = buildService();
+      await expect(service.list('order', query, 'c1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      await expect(
+        service.findOne('order', 'o1', query, 'c1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(delegate.findMany).not.toHaveBeenCalled();
+      expect(delegate.findFirst).not.toHaveBeenCalled();
+      expect(delegate.count).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { salesPerson: { passwordHash: { startsWith: 'probe' } } },
+    {
+      AND: [
+        {
+          items: {
+            some: {
+              order: { is: { salesPerson: { is: { email: 'probe' } } } },
+            },
+          },
+        },
+      ],
+    },
+    { partner: { isNot: { company: { id: 'other-company' } } } },
+  ])(
+    'rejects relation filters that reveal sensitive records: %j',
+    async (filter) => {
+      const { service, delegate } = buildService();
+      await expect(
+        service.list('order', { filter: JSON.stringify(filter) }, 'c1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(delegate.findMany).not.toHaveBeenCalled();
+      expect(delegate.count).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects sensitive searchFields', async () => {
+    const { service, delegate } = buildService();
+    await expect(
+      service.list(
+        'order',
+        { search: 'probe', searchFields: '["salesPerson"]' },
+        'c1',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(delegate.findMany).not.toHaveBeenCalled();
+  });
+
+  it('preserves partner/product scalar lookups and business relation projections', async () => {
+    const { service, delegate } = buildService({
+      companyScopedModels: new Set(['partner', 'product', 'order']),
+    });
+    await service.list('partner', { fields: 'id,name' }, 'c1');
+    expect(delegate.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { companyId: 'c1' },
+        select: { id: true, name: true },
+      }),
+    );
+    const include = {
+      category: true,
+      material: { select: { id: true, name: true } },
+    };
+    await service.list('product', { include: JSON.stringify(include) }, 'c1');
+    expect(delegate.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { companyId: 'c1' }, include }),
+    );
+    await service.list(
+      'order',
+      {
+        include: JSON.stringify({
+          partner: true,
+          taxCode: true,
+          items: { include: { taxCode: true } },
+        }),
+        filter: JSON.stringify({ partner: { is: { name: 'customer' } } }),
+      },
+      'c1',
+    );
+    expect(delegate.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { companyId: 'c1', partner: { is: { name: 'customer' } } },
+      }),
+    );
+  });
+
+  it('preserves explicit business relation counts and count filters', async () => {
+    const { service, delegate } = buildService();
+    const include = {
+      _count: { select: { items: { where: { quantity: { gt: 0 } } } } },
+    };
+    await service.list('order', { include: JSON.stringify(include) }, 'c1');
+    expect(delegate.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ include }),
+    );
+  });
+
+  it.each([
+    { company: { update: { name: 'changed' } } },
+    {
+      orders: {
+        create: { salesPerson: { update: { passwordHash: 'changed' } } },
+      },
+    },
+    { orders: { updateMany: { where: {}, data: { status: 'APPROVED' } } } },
+    { company: { connect: { id: 'c2' } } },
+    {
+      company: {
+        connectOrCreate: { where: { id: 'c2' }, create: { name: 'new' } },
+      },
+    },
+  ])(
+    'rejects nested generic writes before hooks and database access: %j',
+    async (data) => {
+      const { service, delegate, hooks } = buildService();
+      await expect(
+        service.create('partner', data, 'c1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(
+        service.update('partner', 'p1', data, 'c1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(hooks.execute).not.toHaveBeenCalled();
+      expect(delegate.findFirst).not.toHaveBeenCalled();
+      expect(delegate.create).not.toHaveBeenCalled();
+      expect(delegate.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { companyId: 'c2' },
+    { companyId: { set: 'c2' } },
+    { id: 'other-id' },
+    { id: { set: 'other-id' } },
+  ])('rejects tenant/record identity changes: %j', async (data) => {
+    const { service, delegate } = buildService();
+    await expect(
+      service.update('partner', 'p1', data, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(delegate.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['create', 'update'] as const)(
+    'validates %s data again after hooks',
+    async (operation) => {
+      const { service, delegate, hooks } = buildService();
+      delegate.findFirst.mockResolvedValue({ id: 'p1', companyId: 'c1' });
+      hooks.execute.mockImplementation((_event, ctx) =>
+        Promise.resolve({
+          ...ctx,
+          data: { company: { update: { name: 'changed' } } },
+        }),
+      );
+      const result =
+        operation === 'create'
+          ? service.create('partner', { name: 'safe' }, 'c1')
+          : service.update('partner', 'p1', { name: 'safe' }, 'c1');
+      await expect(result).rejects.toBeInstanceOf(ForbiddenException);
+      expect(delegate.create).not.toHaveBeenCalled();
+      expect(delegate.update).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects tenant reassignment independently of editable UI metadata', async () => {
+    const { service, delegate } = buildService({
+      companyScopedModels: new Set(),
+    });
+    await expect(
+      service.update('partner', 'p1', { companyId: 'c2' }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(delegate.findFirst).not.toHaveBeenCalled();
+    expect(delegate.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects tenant reassignment introduced by a hook', async () => {
+    const { service, delegate, hooks } = buildService({
+      companyScopedModels: new Set(),
+    });
+    delegate.findFirst.mockResolvedValue({ id: 'p1', companyId: 'c1' });
+    hooks.execute.mockImplementation((_event, ctx) =>
+      Promise.resolve({ ...ctx, data: { companyId: 'c2' } }),
+    );
+    await expect(
+      service.update('partner', 'p1', { name: 'safe' }, 'c1'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(delegate.update).not.toHaveBeenCalled();
+  });
+
+  it('preserves scalar reference writes and JSON fields', async () => {
+    const { service, delegate } = buildService({
+      companyScopedModels: new Set(['product']),
+    });
+    delegate.findFirst.mockResolvedValue({ id: 'p1', companyId: 'c1' });
+    const data = {
+      name: 'product',
+      categoryId: 'category-id',
+      materialId: 'material-id',
+      customAttributes: { company: { name: 'plain JSON' } },
+    };
+    await service.update('product', 'p1', data, 'c1');
+    expect(delegate.update).toHaveBeenCalledWith({
+      where: { id: 'p1', companyId: 'c1' },
+      data: { ...data, companyId: 'c1' },
+    });
+  });
+
+  it('fails closed if generated model metadata is unavailable', async () => {
+    const { service, delegate, prisma } = buildService();
+    prisma._runtimeDataModel = { models: {} };
+    await expect(service.list('partner', {}, 'c1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(delegate.findMany).not.toHaveBeenCalled();
   });
 });
