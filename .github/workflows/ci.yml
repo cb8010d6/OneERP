@@ -122,14 +122,171 @@ jobs:
       - name: Validate
         run: npm run validate
 
-  # Retain the existing required check name and require BOTH independent jobs.
+  # Exercise the public HTTP boundary against disposable, job-local services.
+  http-journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: eip_user
+          POSTGRES_PASSWORD: eip_password
+          POSTGRES_DB: eip_http_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U eip_user -d eip_http_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      DATABASE_URL: postgresql://eip_user:eip_password@127.0.0.1:5432/eip_http_test
+      NODE_ENV: test
+      CORS_ORIGINS: http://127.0.0.1:3000
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: '6379'
+      MINIO_ENDPOINT: 127.0.0.1
+      MINIO_PORT: '9000'
+      MINIO_USE_SSL: 'false'
+      MINIO_ACCESS_KEY: http_journey_minio
+      MINIO_SECRET_KEY: disposable_http_journey_minio_password
+      AI_WRITE_ENABLED: 'false'
+      PORT: '8000'
+      API_BASE_URL: http://127.0.0.1:8000/api
+      INIT_ADMIN_EMAIL: http-journey@example.invalid
+      INIT_COMPANY_NAME: OneERP Synthetic HTTP Journey ${{ github.run_id }}-${{ github.run_attempt }}
+      STOCKED_TRADE_ACCEPTANCE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/api/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install API dependencies
+        run: npm ci --prefix apps/api
+      - name: Generate disposable masked credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          journey_password="$(openssl rand -hex 32)"
+          journey_jwt="$(openssl rand -hex 32)"
+          echo "::add-mask::$journey_password"
+          echo "::add-mask::$journey_jwt"
+          printf 'INIT_ADMIN_PASSWORD=%s\nJWT_SECRET=%s\n' "$journey_password" "$journey_jwt" >> "$GITHUB_ENV"
+      - name: Start disposable MinIO
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name oneerp-http-minio --publish 9000:9000 \
+            --env MINIO_ROOT_USER="$MINIO_ACCESS_KEY" \
+            --env MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY" \
+            minio/minio:RELEASE.2024-01-18T22-51-28Z server /data
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --output /dev/null --max-time 2 http://127.0.0.1:9000/minio/health/live; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'Disposable MinIO did not become ready within 120 seconds' >&2
+          exit 1
+      - name: Prepare disposable PostgreSQL and API
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix apps/api run prisma:generate
+          (cd apps/api && npx prisma migrate deploy --schema=./prisma/schema.prisma)
+          npm --prefix apps/api run init:prod
+          npm --prefix apps/api run build
+      - name: Run stocked trade HTTP acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          journey_api_pid=''
+          cleanup_api() {
+            if [ -n "$journey_api_pid" ]; then
+              kill "$journey_api_pid" 2>/dev/null || true
+              wait "$journey_api_pid" 2>/dev/null || true
+            fi
+            rm -f "$RUNNER_TEMP/oneerp-http-api.pid"
+          }
+          trap cleanup_api EXIT INT TERM
+          node apps/api/dist/src/main.js > "$RUNNER_TEMP/oneerp-http-api.log" 2>&1 &
+          journey_api_pid=$!
+          printf '%s\n' "$journey_api_pid" > "$RUNNER_TEMP/oneerp-http-api.pid"
+          journey_ready=false
+          for attempt in $(seq 1 60); do
+            if ! kill -0 "$journey_api_pid" 2>/dev/null; then
+              echo 'HTTP acceptance API exited during startup' >&2
+              exit 1
+            fi
+            if curl --fail --silent --output /dev/null --max-time 2 "$API_BASE_URL/health"; then
+              journey_ready=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$journey_ready" != true ]; then
+            echo 'HTTP acceptance API did not become ready within 240 seconds' >&2
+            exit 1
+          fi
+          export BUSINESS_ACCEPTANCE_ADMIN_EMAIL="$INIT_ADMIN_EMAIL"
+          export BUSINESS_ACCEPTANCE_ADMIN_PASSWORD="$INIT_ADMIN_PASSWORD"
+          export BUSINESS_ACCEPTANCE_COMPANY_NAME="$INIT_COMPANY_NAME"
+          export STOCKED_TRADE_ACCEPTANCE_REPORT="$RUNNER_TEMP/stocked-trade-acceptance-report.json"
+          npm run test:http-journey
+      - name: Upload synthetic HTTP acceptance report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stocked-trade-acceptance-report
+          path: ${{ runner.temp }}/stocked-trade-acceptance-report.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Show API diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          # Registered GitHub masks redact the generated credentials in output.
+          if [ -f "$RUNNER_TEMP/oneerp-http-api.log" ]; then
+            tail -n 200 "$RUNNER_TEMP/oneerp-http-api.log"
+          fi
+      - name: Clean up disposable API and MinIO
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$RUNNER_TEMP/oneerp-http-api.pid" ]; then
+            journey_api_pid="$(cat "$RUNNER_TEMP/oneerp-http-api.pid")"
+            kill "$journey_api_pid" 2>/dev/null || true
+            rm -f "$RUNNER_TEMP/oneerp-http-api.pid"
+          fi
+          docker rm --force oneerp-http-minio >/dev/null 2>&1 || true
+
+  # Retain the existing required check name and require ALL independent jobs.
   validate:
     if: always()
-    needs: [security-audit, validation-tests]
+    needs: [security-audit, validation-tests, http-journey]
     runs-on: ubuntu-latest
     steps:
-      - name: Require security and validation success
+      - name: Require security, validation and HTTP acceptance success
         env:
           SECURITY_RESULT: ${{ needs.security-audit.result }}
           VALIDATION_RESULT: ${{ needs.validation-tests.result }}
-        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success
+          HTTP_RESULT: ${{ needs.http-journey.result }}
+        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success && test "$HTTP_RESULT" = success
