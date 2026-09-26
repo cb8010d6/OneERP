@@ -96,6 +96,8 @@ export function ListEngine({
     onSortChange?.(field, direction);
   }, [onSortChange, sortDirection, sortField]);
 
+  const canSort = !serverSearch || Boolean(onSortChange);
+
   const renderCell = useCallback(
     (row: Record<string, unknown>, column: string) => {
       const field = fieldMap?.[column];
@@ -132,20 +134,31 @@ export function ListEngine({
       return {
         id: column,
         accessorKey: column,
-        meta: { label: field?.label ?? column },
-        header: () => (
-          <button
-            type="button"
-            className="text-left"
-            onClick={() => toggleSort(column)}
-          >
-            {field?.label ?? column}
-          </button>
-        ),
+        meta: {
+          label: field?.label ?? column,
+          sortDirection: sortField === column ? sortDirection : undefined,
+        },
+        header: canSort ? () => {
+          const nextDirection =
+            sortField === column && sortDirection === 'asc' ? 'desc' : 'asc';
+          const directionLabel = nextDirection === 'asc'
+            ? t('listSortAscending')
+            : t('listSortDescending');
+          return (
+            <button
+              type="button"
+              className="text-left"
+              aria-label={`${t('listSortBy')} ${field?.label ?? column} ${directionLabel}`}
+              onClick={() => toggleSort(column)}
+            >
+              {field?.label ?? column}
+            </button>
+          );
+        } : (field?.label ?? column),
         cell: (info) => renderCell(info.row.original, column),
       };
     });
-  }, [columns, renderCell, schema.fields, toggleSort]);
+  }, [canSort, columns, renderCell, schema.fields, sortDirection, sortField, t, toggleSort]);
 
   return (
     <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
@@ -156,6 +169,7 @@ export function ListEngine({
         <div className="relative w-full max-w-sm">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input
+            aria-label={t('listSearchLabel')}
             value={keyword}
             onChange={(event) => {
               const next = event.target.value;

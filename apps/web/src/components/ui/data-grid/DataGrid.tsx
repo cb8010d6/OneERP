@@ -10,15 +10,17 @@ import {
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Columns3, RotateCcw } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AsyncSelect, type AsyncSelectRecord } from '@/components/core/AsyncSelect';
 import type { UiFieldReference } from '@/lib/ui-schema';
+import { useI18n } from '@/lib/i18n';
 
 type DataGridColumnMeta<TData> = {
   label?: string;
   editable?: boolean;
   options?: Array<{ label: string; value: string }>;
   reference?: UiFieldReference;
+  sortDirection?: 'asc' | 'desc';
   onReferenceSelect?: (
     rowId: string,
     columnId: string,
@@ -72,6 +74,8 @@ function getColumnLabel<TData>(
   return typeof columnDef.header === 'string' ? columnDef.header : columnId;
 }
 
+const HEADER_HEIGHT = 40;
+
 export function DataGrid<TData extends { id: string }>({
   columns,
   data,
@@ -82,6 +86,7 @@ export function DataGrid<TData extends { id: string }>({
   height = 460,
   viewId,
 }: DataGridProps<TData>) {
+  const { t } = useI18n();
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     () => readColumnVisibility(viewId),
   );
@@ -133,25 +138,25 @@ export function DataGrid<TData extends { id: string }>({
     count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 40,
+    scrollMargin: HEADER_HEIGHT,
     overscan: 10,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
 
-  const gridTemplate = useMemo(() => {
-    const base = table
-      .getVisibleFlatColumns()
-      .map((column) => {
-        const size = column.getSize();
-        return `${Math.max(size || 140, 120)}px`;
-      });
-
-    if (enableRowSelection) {
-      return ['44px', ...base].join(' ');
-    }
-    return base.join(' ');
-  }, [enableRowSelection, table]);
+  const visibleColumns = table.getVisibleFlatColumns();
+  const columnWidths = visibleColumns.map((column) =>
+    Math.max(column.getSize() || 140, 120),
+  );
+  const gridTemplate = [
+    ...(enableRowSelection ? ['44px'] : []),
+    ...columnWidths.map((width) => `${width}px`),
+  ].join(' ');
+  const gridWidth = columnWidths.reduce(
+    (width, columnWidth) => width + columnWidth,
+    enableRowSelection ? 44 : 0,
+  );
 
   const selectedCount = rows.reduce((acc, row) => acc + (row.getIsSelected() ? 1 : 0), 0);
   const allChecked = rows.length > 0 && selectedCount === rows.length;
@@ -210,60 +215,109 @@ export function DataGrid<TData extends { id: string }>({
       </div>
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <div className="grid border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-600" style={{ gridTemplateColumns: gridTemplate }}>
-          {enableRowSelection ? (
-            <div className="border-r border-gray-200 px-3 py-2 text-center">
-              <input
-                type="checkbox"
-                checked={allChecked}
-                onChange={(event) => {
-                  if (!event.target.checked) {
-                    setRowSelection({});
-                    return;
-                  }
-                  const next: RowSelectionState = {};
-                  rows.forEach((row) => {
-                    next[row.id] = true;
-                  });
-                  setRowSelection(next);
-                }}
-              />
-            </div>
-          ) : null}
-          {table.getHeaderGroups().map((headerGroup) =>
-            headerGroup.headers.map((header) => (
-              <div key={header.id} className="border-r border-gray-200 px-3 py-2 last:border-r-0">
-                {header.isPlaceholder
-                  ? null
-                  : flexRender(header.column.columnDef.header, header.getContext())}
-              </div>
-            )),
-          )}
-        </div>
+        <div
+          ref={parentRef}
+          role="table"
+          className="overflow-auto"
+          style={{ height: height + HEADER_HEIGHT }}
+        >
+          <div
+            role="rowgroup"
+            style={{
+              height: HEADER_HEIGHT + totalSize,
+              position: 'relative',
+              width: gridWidth,
+              minWidth: '100%',
+            }}
+          >
+            <div
+              role="row"
+              className="sticky top-0 z-10 grid h-10 border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-600"
+              style={{ gridTemplateColumns: gridTemplate, width: gridWidth, minWidth: '100%' }}
+            >
+              {enableRowSelection ? (
+                <div role="columnheader" className="border-r border-gray-200 px-3 py-2 text-center">
+                  <input
+                    type="checkbox"
+                    aria-label={t('gridSelectAllRows')}
+                    checked={allChecked}
+                    onClick={(event) => event.stopPropagation()}
+                    onChange={(event) => {
+                      if (!event.target.checked) {
+                        setRowSelection({});
+                        return;
+                      }
+                      const next: RowSelectionState = {};
+                      rows.forEach((row) => {
+                        next[row.id] = true;
+                      });
+                      setRowSelection(next);
+                    }}
+                  />
+                </div>
+              ) : null}
+              {table.getHeaderGroups().map((headerGroup) =>
+                headerGroup.headers.map((header) => {
+                  const meta = header.column.columnDef.meta as
+                    | DataGridColumnMeta<TData>
+                    | undefined;
+                  const ariaSort =
+                    meta?.sortDirection === 'asc'
+                      ? 'ascending'
+                      : meta?.sortDirection === 'desc'
+                        ? 'descending'
+                        : undefined;
 
-        <div ref={parentRef} className="overflow-auto" style={{ height }}>
-          <div style={{ height: totalSize, position: 'relative' }}>
+                  return (
+                    <div
+                      key={header.id}
+                      role="columnheader"
+                      aria-sort={ariaSort}
+                      title={getColumnLabel(header.column.columnDef, header.column.id)}
+                      className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap border-r border-gray-200 px-3 py-2 last:border-r-0"
+                    >
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    </div>
+                  );
+                }),
+              )}
+            </div>
+
+          <div
+            style={{
+              height: totalSize,
+              position: 'absolute',
+              top: HEADER_HEIGHT,
+              width: gridWidth,
+              minWidth: '100%',
+            }}
+          >
             {virtualRows.map((virtualRow) => {
               const row = rows[virtualRow.index];
               return (
                 <div
                   key={row.id}
+                  role="row"
                   className={`grid border-b border-gray-100 text-sm text-gray-700 ${
                     onRowClick ? 'cursor-pointer hover:bg-gray-50' : ''
                   }`}
                   style={{
                     gridTemplateColumns: gridTemplate,
                     position: 'absolute',
-                    transform: `translateY(${virtualRow.start}px)`,
+                    transform: `translateY(${virtualRow.start - HEADER_HEIGHT}px)`,
                     width: '100%',
                   }}
                   onClick={() => onRowClick?.(row.original)}
                 >
                   {enableRowSelection ? (
-                    <div className="border-r border-gray-100 px-3 py-2 text-center">
+                    <div role="cell" className="border-r border-gray-100 px-3 py-2 text-center">
                       <input
                         type="checkbox"
+                        aria-label={`${t('gridSelectRow')} ${virtualRow.index + 1}`}
                         checked={row.getIsSelected()}
+                        onClick={(event) => event.stopPropagation()}
                         onChange={(event) => row.toggleSelected(event.target.checked)}
                       />
                     </div>
@@ -271,14 +325,15 @@ export function DataGrid<TData extends { id: string }>({
                   {row.getVisibleCells().map((cell) => {
                     const columnMeta =
                       ((cell.column.columnDef as { meta?: DataGridColumnMeta<TData> }).meta ?? {});
-                    const isEditing =
-                      editingCell?.rowId === row.original.id && editingCell?.columnId === cell.column.id;
                     const options = columnMeta.options;
                     const reference = columnMeta.reference;
-                    const isEditable = columnMeta.editable !== false;
+                    const isEditable = Boolean(onCellUpdate) && columnMeta.editable !== false;
+                    const isEditing =
+                      isEditable && editingCell?.rowId === row.original.id && editingCell?.columnId === cell.column.id;
                     return (
                       <div
                         key={cell.id}
+                        role="cell"
                         className="border-r border-gray-100 px-3 py-2 last:border-r-0"
                         onDoubleClick={() => {
                           if (!isEditable) return;
@@ -366,6 +421,7 @@ export function DataGrid<TData extends { id: string }>({
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       </div>
