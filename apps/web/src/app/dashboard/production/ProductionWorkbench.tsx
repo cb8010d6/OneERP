@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { ReasonDialog } from "@/components/ui/ReasonDialog";
 
 type WorkOrder = {
   id: string;
@@ -46,6 +47,13 @@ type WorkOrder = {
       createdAt: string;
     } | null;
   }>;
+};
+
+type ProductionReport = NonNullable<WorkOrder["reports"]>[number];
+
+type ReversalAttempt = {
+  idempotencyKey: string;
+  reason: string;
 };
 
 type ReleasedEngineeringDocument = {
@@ -181,7 +189,11 @@ export function ProductionWorkbench() {
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [reversingId, setReversingId] = useState<string | null>(null);
-  const [reversalKeys, setReversalKeys] = useState<Record<string, string>>({});
+  const [reversalTarget, setReversalTarget] =
+    useState<ProductionReport | null>(null);
+  const [reversalAttempts, setReversalAttempts] = useState<
+    Record<string, ReversalAttempt>
+  >({});
   const [generating, setGenerating] = useState(false);
   const [creatingPurchaseOrder, setCreatingPurchaseOrder] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -389,21 +401,25 @@ export function ProductionWorkbench() {
     }
   };
 
-  const reverseReport = async (
-    report: NonNullable<WorkOrder["reports"]>[number],
-  ) => {
-    const reason = window.prompt("请输入报工冲销原因")?.trim();
-    if (!reason) return;
-    const idempotencyKey = reversalKeys[report.id] ?? crypto.randomUUID();
-    setReversalKeys((current) => ({ ...current, [report.id]: idempotencyKey }));
+  const reverseReport = async (report: ProductionReport, reason: string) => {
+    if (reversingId) return;
+    const attempt =
+      reversalAttempts[report.id] ?? {
+        idempotencyKey: crypto.randomUUID(),
+        reason,
+      };
+    setReversalAttempts((current) => ({
+      ...current,
+      [report.id]: attempt,
+    }));
     try {
       setReversingId(report.id);
       setError(null);
       const response = await api.post(
         `/production/reports/${report.id}/reverse`,
         {
-          idempotencyKey,
-          reason,
+          idempotencyKey: attempt.idempotencyKey,
+          reason: attempt.reason,
         },
       );
       setMessage(
@@ -413,19 +429,13 @@ export function ProductionWorkbench() {
               response.data?.inventoryTransactionIds?.length ?? 0,
             )} 笔反向库存流水`,
       );
-      setReversalKeys((current) => {
+      setReversalAttempts((current) => {
         const next = { ...current };
         delete next[report.id];
         return next;
       });
+      setReversalTarget(null);
       await load();
-    } catch (reason) {
-      const message =
-        reason && typeof reason === "object" && "response" in reason
-          ? (reason as { response?: { data?: { message?: string } } }).response
-              ?.data?.message
-          : undefined;
-      setError(message || "报工冲销失败");
     } finally {
       setReversingId(null);
     }
@@ -989,7 +999,10 @@ export function ProductionWorkbench() {
                                 <button
                                   type="button"
                                   disabled={reversingId === report.id}
-                                  onClick={() => void reverseReport(report)}
+                                  onClick={() => {
+                                    setError(null);
+                                    setReversalTarget(report);
+                                  }}
                                   className="shrink-0 rounded border border-red-200 px-2 py-1 text-red-700 hover:bg-red-50 disabled:opacity-50"
                                 >
                                   {reversingId === report.id
@@ -1145,6 +1158,31 @@ export function ProductionWorkbench() {
           </section>
         ))}
       </div>
+      <ReasonDialog
+        open={reversalTarget !== null}
+        title={t("productionReverseDialogTitle")}
+        description={t("productionReverseDialogDescription")}
+        label={t("productionReverseReasonLabel")}
+        confirmLabel={t("productionReverseConfirm")}
+        errorFallback={t("productionReverseFailed")}
+        initialReason={
+          reversalTarget
+            ? reversalAttempts[reversalTarget.id]?.reason ?? ""
+            : ""
+        }
+        reasonLocked={
+          reversalTarget
+            ? Boolean(reversalAttempts[reversalTarget.id])
+            : false
+        }
+        lockedReasonHint={t("productionReverseRetryHint")}
+        onClose={() => setReversalTarget(null)}
+        onSubmit={(reason) =>
+          reversalTarget
+            ? reverseReport(reversalTarget, reason)
+            : Promise.resolve()
+        }
+      />
     </div>
   );
 }

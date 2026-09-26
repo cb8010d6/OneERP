@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProductionWorkbench } from "../ProductionWorkbench";
 
@@ -231,14 +231,58 @@ describe("ProductionWorkbench engineering revisions", () => {
           inventoryTransactionIds: ["r1", "r2"],
         },
       });
-    const prompt = jest.spyOn(window, "prompt").mockReturnValue("数量录入错误");
     const user = userEvent.setup();
     render(<ProductionWorkbench />);
 
     expect(await screen.findByText(/良品 1 · 不良 0/)).toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "冲销" }));
-    expect(await screen.findByText("冲销网络中断")).toBeInTheDocument();
+    let dialog = await screen.findByRole("dialog", { name: "报工冲销" });
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    expect(
+      mockPost.mock.calls.filter(
+        ([path]) => path === "/production/reports/report-1/reverse",
+      ),
+    ).toHaveLength(0);
+
     await user.click(await screen.findByRole("button", { name: "冲销" }));
+    dialog = await screen.findByRole("dialog", { name: "报工冲销" });
+    const reasonField = within(dialog).getByRole("textbox", {
+      name: "冲销原因",
+    });
+    await user.type(reasonField, "   ");
+    await user.click(
+      within(dialog).getByRole("button", { name: "确认冲销" }),
+    );
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("请填写原因");
+    expect(
+      mockPost.mock.calls.filter(
+        ([path]) => path === "/production/reports/report-1/reverse",
+      ),
+    ).toHaveLength(0);
+
+    await user.clear(reasonField);
+    await user.type(reasonField, "  数量录入错误  ");
+    await user.click(
+      within(dialog).getByRole("button", { name: "确认冲销" }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "冲销网络中断",
+    );
+    expect(reasonField).toHaveValue("数量录入错误");
+    expect(reasonField).toHaveAttribute("readonly");
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    await user.click(await screen.findByRole("button", { name: "冲销" }));
+    dialog = await screen.findByRole("dialog", { name: "报工冲销" });
+    const reopenedReasonField = within(dialog).getByRole("textbox", {
+      name: "冲销原因",
+    });
+    expect(reopenedReasonField).toHaveValue("数量录入错误");
+    expect(reopenedReasonField).toHaveAttribute("readonly");
+    await user.click(
+      within(dialog).getByRole("button", { name: "确认冲销" }),
+    );
 
     await waitFor(() => {
       const reversalCalls = mockPost.mock.calls.filter(
@@ -246,10 +290,15 @@ describe("ProductionWorkbench engineering revisions", () => {
       );
       expect(reversalCalls).toHaveLength(2);
       expect(reversalCalls[0]?.[1].reason).toBe("数量录入错误");
+      expect(reversalCalls[1]?.[1].reason).toBe("数量录入错误");
       expect(reversalCalls[1]?.[1].idempotencyKey).toBe(
         reversalCalls[0]?.[1].idempotencyKey,
       );
     });
-    prompt.mockRestore();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("dialog", { name: "报工冲销" }),
+      ).not.toBeInTheDocument();
+    });
   });
 });

@@ -37,6 +37,9 @@ const zh = {
   commonSend: "发送",
   commonConfirm: "确认",
   commonCancel: "取消",
+  reasonDialogRequired: "请填写原因。",
+  reasonDialogTooLong: "原因不能超过 1000 个字符。",
+  reasonDialogSubmitting: "提交中...",
   commonEnabled: "启用",
   commonDisabled: "停用",
   commonNoPermission: "无权限",
@@ -141,6 +144,20 @@ const zh = {
   productionDestLocation: "成品入库库位",
   productionBatchNo: "成品批次",
   productionSubmitReport: "提交报工",
+  productionReverseDialogTitle: "报工冲销",
+  productionReverseDialogDescription:
+    "报工冲销会生成反向库存流水，请说明本次冲销原因。",
+  productionReverseReasonLabel: "冲销原因",
+  productionReverseConfirm: "确认冲销",
+  productionReverseFailed: "报工冲销失败，请检查后重试。",
+  productionReverseRetryHint:
+    "本次请求已有提交记录，重试将沿用原原因和幂等键。",
+  engineeringEcoRejectDialogTitle: "驳回工程变更",
+  engineeringEcoRejectDialogDescription:
+    "驳回将记录在工程变更单的审批记录中，请填写驳回原因。",
+  engineeringEcoRejectReasonLabel: "驳回原因",
+  engineeringEcoRejectConfirm: "确认驳回",
+  engineeringEcoRejectFailed: "工程变更驳回失败，请检查后重试。",
   productionNoOrders: "暂无工单",
   productionMaterialAvailability: "生产物料可用性",
   productionMaterialAvailabilityHint:
@@ -823,6 +840,9 @@ const en: Record<keyof typeof zh, string> = {
   commonSend: "Send",
   commonConfirm: "Confirm",
   commonCancel: "Cancel",
+  reasonDialogRequired: "Enter a reason.",
+  reasonDialogTooLong: "Reason cannot exceed 1,000 characters.",
+  reasonDialogSubmitting: "Submitting...",
   commonEnabled: "Active",
   commonDisabled: "Inactive",
   commonNoPermission: "No permission",
@@ -929,6 +949,21 @@ const en: Record<keyof typeof zh, string> = {
   productionDestLocation: "Finished goods location",
   productionBatchNo: "Finished goods batch",
   productionSubmitReport: "Submit report",
+  productionReverseDialogTitle: "Reverse work report",
+  productionReverseDialogDescription:
+    "Reversing a work report creates reversing inventory transactions. Explain why this report is being reversed.",
+  productionReverseReasonLabel: "Reversal reason",
+  productionReverseConfirm: "Confirm reversal",
+  productionReverseFailed: "Failed to reverse work report. Check and try again.",
+  productionReverseRetryHint:
+    "This request has already been attempted. A retry will reuse the original reason and idempotency key.",
+  engineeringEcoRejectDialogTitle: "Reject engineering change",
+  engineeringEcoRejectDialogDescription:
+    "Rejection is recorded in the engineering change order history. Enter the reason for rejection.",
+  engineeringEcoRejectReasonLabel: "Rejection reason",
+  engineeringEcoRejectConfirm: "Reject change",
+  engineeringEcoRejectFailed:
+    "Failed to reject engineering change. Check and try again.",
   productionNoOrders: "No work orders",
   productionMaterialAvailability: "Material availability",
   productionMaterialAvailabilityHint:
