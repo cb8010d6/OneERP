@@ -1014,6 +1014,7 @@ model InventoryTransaction {
   company        Company        @relation(fields: [companyId], references: [id])
   sourceLocation StockLocation? @relation("StockMoveSourceLocation", fields: [sourceLocationId], references: [id])
   destLocation   StockLocation? @relation("StockMoveDestinationLocation", fields: [destLocationId], references: [id])
+  journalEntries JournalEntry[]
 
   @@index([companyId, materialId])
   @@index([sourceLocationId])
@@ -1532,24 +1533,27 @@ model Journal {
 }
 
 model JournalEntry {
-  id            String             @id @default(uuid())
-  entryNo       String
-  date          DateTime
-  ref           String?
-  description   String?
-  journalId     String
-  companyId     String
-  postingStatus EntryPostingStatus @default(DRAFT)
-  createdBy     String?
-  postedAt      DateTime?
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
+  id                     String             @id @default(uuid())
+  entryNo                String
+  date                   DateTime
+  ref                    String?
+  description            String?
+  journalId              String
+  companyId              String
+  postingStatus          EntryPostingStatus @default(DRAFT)
+  createdBy              String?
+  postedAt               DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+  inventoryTransactionId String?
 
-  journal Journal            @relation(fields: [journalId], references: [id])
-  company Company            @relation(fields: [companyId], references: [id])
-  lines   JournalEntryLine[]
+  journal              Journal               @relation(fields: [journalId], references: [id])
+  company              Company               @relation(fields: [companyId], references: [id])
+  lines                JournalEntryLine[]
+  inventoryTransaction InventoryTransaction? @relation(fields: [inventoryTransactionId], references: [id], onDelete: Restrict)
 
   @@unique([companyId, entryNo])
+  @@unique([companyId, inventoryTransactionId])
   @@index([companyId, journalId, date])
 }
 

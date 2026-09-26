@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateFinanceAccountMappingsDto } from './dto/finance-account-mapping.dto';
 
@@ -198,9 +199,10 @@ export class FinanceAccountMappingService {
     companyId: string,
     key: FinanceAccountMappingKey,
     fallback?: FallbackAccount,
+    client: Prisma.TransactionClient = this.prisma,
   ) {
     const definition = this.definitionFor(key);
-    const mapping = await this.prisma.financeAccountMapping.findUnique({
+    const mapping = await client.financeAccountMapping.findUnique({
       where: { companyId_key: { companyId, key } },
       include: { account: true },
     });
@@ -214,8 +216,8 @@ export class FinanceAccountMappingService {
     }
 
     const account = fallback
-      ? await this.ensureAccount(companyId, fallback)
-      : await this.ensureAccount(companyId, definition.defaultAccount);
+      ? await this.ensureAccount(companyId, fallback, client)
+      : await this.ensureAccount(companyId, definition.defaultAccount, client);
 
     return {
       accountCode: account.code,
@@ -224,9 +226,12 @@ export class FinanceAccountMappingService {
     };
   }
 
-  async ensureDefaultAccounts(companyId: string) {
+  async ensureDefaultAccounts(
+    companyId: string,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
     for (const definition of FINANCE_ACCOUNT_MAPPING_DEFINITIONS) {
-      await this.ensureAccount(companyId, definition.defaultAccount);
+      await this.ensureAccount(companyId, definition.defaultAccount, client);
     }
   }
 
@@ -240,8 +245,12 @@ export class FinanceAccountMappingService {
     return definition;
   }
 
-  private async ensureAccount(companyId: string, account: FallbackAccount) {
-    return this.prisma.account.upsert({
+  private async ensureAccount(
+    companyId: string,
+    account: FallbackAccount,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
+    return client.account.upsert({
       where: { companyId_code: { companyId, code: account.code } },
       update: {
         isActive: true,
