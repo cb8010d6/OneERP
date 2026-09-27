@@ -340,16 +340,48 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # Build actual shipping Docker targets and recover disposable synthetic data.
+  # No registry publication, deployment credentials or production environment.
+  container-rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      ONEERP_CONTAINER_REHEARSAL: '1'
+      CONTAINER_REHEARSAL_REPORT: ${{ runner.temp }}/container-rehearsal-report.json
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build, start and recover isolated application containers
+        run: node scripts/ci/container-rehearsal.mjs
+      - name: Upload sanitized container rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-rehearsal-report
+          path: ${{ runner.temp }}/container-rehearsal-report.json
+          if-no-files-found: error
+          retention-days: 7
+
   # Retain the existing required check name and require ALL independent jobs.
   validate:
     if: always()
-    needs: [security-audit, validation-tests, http-journey, browser-workspace]
+    needs: [security-audit, validation-tests, http-journey, browser-workspace, container-rehearsal]
     runs-on: ubuntu-latest
     steps:
-      - name: Require security, validation, HTTP and browser acceptance success
+      - name: Require security, validation, HTTP, browser and container recovery success
         env:
           SECURITY_RESULT: ${{ needs.security-audit.result }}
           VALIDATION_RESULT: ${{ needs.validation-tests.result }}
           HTTP_RESULT: ${{ needs.http-journey.result }}
           BROWSER_RESULT: ${{ needs.browser-workspace.result }}
-        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success && test "$HTTP_RESULT" = success && test "$BROWSER_RESULT" = success
+          CONTAINER_RESULT: ${{ needs.container-rehearsal.result }}
+        run: test "$SECURITY_RESULT" = success && test "$VALIDATION_RESULT" = success && test "$HTTP_RESULT" = success && test "$BROWSER_RESULT" = success && test "$CONTAINER_RESULT" = success
