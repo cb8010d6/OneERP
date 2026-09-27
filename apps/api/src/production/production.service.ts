@@ -992,9 +992,11 @@ export class ProductionService {
               },
             });
             const newStatus =
-              newActual === 0 && otherActiveReports === 0
-                ? 'PENDING'
-                : 'IN_PROGRESS';
+              newActual >= report.workOrder.plannedQty
+                ? 'COMPLETED'
+                : newActual === 0 && otherActiveReports === 0
+                  ? 'PENDING'
+                  : 'IN_PROGRESS';
             const reversal = await tx.workReportReversal.create({
               data: {
                 workReportId: report.id,
