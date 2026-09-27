@@ -119,6 +119,9 @@ jobs:
 
       # Policy: ``npm run validate`` runs Prisma static checks -> typecheck -> lint -> test -> build.
       # The lint step must NOT use --fix in CI; developers use ``npm run lint:fix`` locally.
+      - name: Require PowerShell for cross-platform restore regression
+        run: command -v pwsh
+
       - name: Validate
         run: npm run validate
 
@@ -166,6 +169,7 @@ jobs:
       INIT_ADMIN_EMAIL: http-journey@example.invalid
       INIT_COMPANY_NAME: OneERP Synthetic HTTP Journey ${{ github.run_id }}-${{ github.run_attempt }}
       STOCKED_TRADE_ACCEPTANCE: '1'
+      MANUFACTURING_ACCEPTANCE: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -222,7 +226,7 @@ jobs:
           (cd apps/api && npx prisma migrate deploy --schema=./prisma/schema.prisma)
           npm --prefix apps/api run init:prod
           npm --prefix apps/api run build
-      - name: Run stocked trade HTTP acceptance
+      - name: Run stocked trade and manufacturing HTTP acceptance
         shell: bash
         run: |
           set -euo pipefail
@@ -258,13 +262,17 @@ jobs:
           export BUSINESS_ACCEPTANCE_ADMIN_PASSWORD="$INIT_ADMIN_PASSWORD"
           export BUSINESS_ACCEPTANCE_COMPANY_NAME="$INIT_COMPANY_NAME"
           export STOCKED_TRADE_ACCEPTANCE_REPORT="$RUNNER_TEMP/stocked-trade-acceptance-report.json"
+          export MANUFACTURING_ACCEPTANCE_REPORT="$RUNNER_TEMP/manufacturing-acceptance-report.json"
           npm run test:http-journey
+          npm run test:http-manufacturing
       - name: Upload synthetic HTTP acceptance report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: stocked-trade-acceptance-report
-          path: ${{ runner.temp }}/stocked-trade-acceptance-report.json
+          name: business-http-acceptance-reports
+          path: |
+            ${{ runner.temp }}/stocked-trade-acceptance-report.json
+            ${{ runner.temp }}/manufacturing-acceptance-report.json
           if-no-files-found: warn
           retention-days: 7
       - name: Show API diagnostics on failure
