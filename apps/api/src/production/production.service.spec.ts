@@ -1117,6 +1117,126 @@ describe('ProductionService', () => {
       });
     });
 
+    it('keeps a completed order completed when reversing an earlier defect-only report', async () => {
+      // A defect-only report can precede the good report that completes the order.
+      tx.workReport.findFirst.mockResolvedValue({
+        ...report,
+        goodQty: 0,
+        defectQty: 1,
+        inventoryTransactionIds: [],
+        workOrder: { ...report.workOrder, actualQty: 2, status: 'COMPLETED' },
+      });
+      tx.workReport.count.mockResolvedValue(1);
+      tx.inventoryTransaction.findMany.mockResolvedValue([]);
+      tx.workReportReversal.create.mockImplementation(({ data }) =>
+        Promise.resolve({ id: 'reversal-defect', ...data }),
+      );
+      const dto = {
+        idempotencyKey: 'reverse-defect',
+        reason: '不良品录入错误',
+      };
+
+      const result = await service.reverseWorkReport('c1', 'wr1', 'u1', dto);
+
+      expect(tx.workOrder.update).toHaveBeenCalledWith({
+        where: { id: 'wo1' },
+        data: { actualQty: 2, status: 'COMPLETED' },
+      });
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: 'Serializable',
+      });
+      expect(result).toMatchObject({
+        id: 'reversal-defect',
+        inventoryTransactionIds: [],
+        idempotentReplay: false,
+      });
+      expect(
+        inventoryService.createStockMoveInTransaction,
+      ).not.toHaveBeenCalled();
+      expect(
+        inventoryService.queueStockDepletedInTransaction,
+      ).not.toHaveBeenCalled();
+      expect(inventoryService.dispatchQueuedEvents).toHaveBeenCalledWith([]);
+      expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+
+      tx.workReportReversal.findUnique.mockResolvedValue(result);
+      await expect(
+        service.reverseWorkReport('c1', 'wr1', 'u1', dto),
+      ).resolves.toMatchObject({
+        id: 'reversal-defect',
+        idempotentReplay: true,
+      });
+      expect(tx.workOrder.update).toHaveBeenCalledTimes(1);
+      expect(tx.workReportReversal.create).toHaveBeenCalledTimes(1);
+      expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      {
+        goodQty: 1,
+        actualQty: 2,
+        otherActiveReports: 1,
+        expectedQty: 1,
+        expectedStatus: 'IN_PROGRESS',
+      },
+      {
+        goodQty: 1,
+        actualQty: 1,
+        otherActiveReports: 1,
+        expectedQty: 0,
+        expectedStatus: 'IN_PROGRESS',
+      },
+      {
+        goodQty: 0,
+        actualQty: 1,
+        otherActiveReports: 1,
+        expectedQty: 1,
+        expectedStatus: 'IN_PROGRESS',
+      },
+      {
+        goodQty: 0,
+        actualQty: 0,
+        otherActiveReports: 0,
+        expectedQty: 0,
+        expectedStatus: 'PENDING',
+      },
+    ])(
+      'derives $expectedStatus from remaining quantity $expectedQty and active reports $otherActiveReports',
+      async ({
+        goodQty,
+        actualQty,
+        otherActiveReports,
+        expectedQty,
+        expectedStatus,
+      }) => {
+        tx.workReport.findFirst.mockResolvedValue({
+          ...report,
+          goodQty,
+          defectQty: goodQty === 0 ? 1 : 0,
+          inventoryTransactionIds:
+            goodQty === 0 ? [] : report.inventoryTransactionIds,
+          workOrder: {
+            ...report.workOrder,
+            actualQty,
+            status: actualQty === 2 ? 'COMPLETED' : 'IN_PROGRESS',
+          },
+        });
+        tx.workReport.count.mockResolvedValue(otherActiveReports);
+        if (goodQty === 0)
+          tx.inventoryTransaction.findMany.mockResolvedValue([]);
+
+        await service.reverseWorkReport('c1', 'wr1', 'u1', {
+          idempotencyKey: 'reverse-status',
+          reason: '数量录入错误',
+        });
+
+        expect(tx.workOrder.update).toHaveBeenCalledWith({
+          where: { id: 'wo1' },
+          data: { actualQty: expectedQty, status: expectedStatus },
+        });
+      },
+    );
+
     it('replays the same reversal idempotency key without new stock moves', async () => {
       const normalized = { workReportId: 'wr1', reason: '数量录入错误' };
       tx.workReportReversal.findUnique.mockResolvedValue({
