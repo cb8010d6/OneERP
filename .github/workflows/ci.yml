@@ -349,7 +349,6 @@ jobs:
       contents: read
     env:
       ONEERP_CONTAINER_REHEARSAL: '1'
-      CONTAINER_REHEARSAL_REPORT: ${{ runner.temp }}/container-rehearsal-report.json
     steps:
       - name: Checkout exact source revision
         uses: actions/checkout@v4
