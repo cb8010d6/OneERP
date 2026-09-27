@@ -12,6 +12,8 @@ GitHub Actions 的 `CI / container-rehearsal` 从 PR head 构建现有 API produ
 
 此演练仅允许 GitHub Actions 的一次性环境，不能把 CI 标志加到生产服务器后运行。临时数据库、归档、凭据和完整容器日志不作为 artifact 发布。
 
+恢复组件独立执行 `pg_dump`、`tar` 和 `psql`，不等于已经验收运维用的 `backup.*`、`restore.*` 脚本。它在合成业务写入结束、事件队列排空后归档；不证明并发写入中的跨存储一致性。恢复 Redis 使用新卷，原有会话与缓存连续性不在本次验收范围。
+
 ## 集成和部署边界
 
 - 保留现有审查栈的提交历史；通过精确 head 验证后，再固定独立的 `release/controlled-trial-*` 分支作为试运行基线。
