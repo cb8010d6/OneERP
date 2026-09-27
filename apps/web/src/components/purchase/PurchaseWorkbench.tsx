@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FilePlus2,
   Loader2,
@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import api from "@/lib/api";
 import { fetchResourceList } from "@/lib/dynamic-resource";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type TranslationKey } from "@/lib/i18n";
 import { useAuthStore } from "@/store/authStore";
 
 type OptionRecord = {
@@ -132,6 +132,39 @@ type ReceiveLine = {
   batchNo: string;
 };
 
+type PurchaseSavingAction =
+  | "order"
+  | "receive"
+  | "invoice"
+  | "invoicePost"
+  | "supplierCredit"
+  | "supplierPayment";
+
+type PurchaseAuthScope = {
+  companyId: string | null;
+  userId: string | null;
+  contextVersion: number;
+};
+
+type PurchaseMutationTicket = {
+  id: number;
+  scope: PurchaseAuthScope;
+  scopeKey: string;
+};
+
+function purchaseAuthScopeKey(scope: PurchaseAuthScope) {
+  return JSON.stringify([scope.companyId, scope.userId, scope.contextVersion]);
+}
+
+function isPurchaseAuthScopeCurrent(scope: PurchaseAuthScope) {
+  const current = useAuthStore.getState();
+  return (
+    current.currentCompanyId === scope.companyId &&
+    (current.user?.id ?? null) === scope.userId &&
+    current.contextVersion === scope.contextVersion
+  );
+}
+
 function readApiError(reason: unknown, fallback: string) {
   if (reason && typeof reason === "object" && "response" in reason) {
     const response = (reason as { response?: { data?: { message?: unknown } } })
@@ -145,6 +178,10 @@ function readApiError(reason: unknown, fallback: string) {
 function numeric(value: string | number | undefined) {
   const next = Number(value ?? 0);
   return Number.isFinite(next) ? next : 0;
+}
+
+function roundPurchaseQuantity(value: number) {
+  return Math.round((value + Number.EPSILON) * 10_000) / 10_000;
 }
 
 function purchaseInvoiceOpenAmount(
@@ -176,19 +213,22 @@ function purchaseMatchStatusLabel(
 
 export function PurchaseWorkbench() {
   const { t } = useI18n();
-  const { currentCompanyId } = useAuthStore();
+  const currentCompanyId = useAuthStore((state) => state.currentCompanyId);
+  const currentUserId = useAuthStore((state) => state.user?.id ?? null);
+  const contextVersion = useAuthStore((state) => state.contextVersion);
+  const currentScope: PurchaseAuthScope = {
+    companyId: currentCompanyId,
+    userId: currentUserId,
+    contextVersion,
+  };
+  const currentScopeKey = purchaseAuthScopeKey(currentScope);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState<
-    | "order"
-    | "receive"
-    | "invoice"
-    | "invoicePost"
-    | "supplierCredit"
-    | "supplierPayment"
-    | null
-  >(null);
+  const [saving, setSaving] = useState<PurchaseSavingAction | null>(null);
   const [message, setMessage] = useState("");
+  const [messageScopeKey, setMessageScopeKey] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [errorScopeKey, setErrorScopeKey] = useState<string | null>(null);
+  const [loadedScopeKey, setLoadedScopeKey] = useState<string | null>(null);
   const [suppliers, setSuppliers] = useState<OptionRecord[]>([]);
   const [materials, setMaterials] = useState<OptionRecord[]>([]);
   const [locations, setLocations] = useState<OptionRecord[]>([]);
@@ -203,6 +243,17 @@ export function PurchaseWorkbench() {
     [],
   );
   const [selectedOrderId, setSelectedOrderId] = useState("");
+  const selectedOrderIdRef = useRef("");
+  const selectedOrderGenerationRef = useRef(0);
+  const loadGenerationRef = useRef(0);
+  const mutationGenerationRef = useRef(0);
+  const mutationLockRef = useRef<number | null>(null);
+  const activeReceiptRef = useRef<{ ticketId: number; orderId: string } | null>(
+    null,
+  );
+  const mountedRef = useRef(false);
+  const previousScopeKeyRef = useRef(currentScopeKey);
+  const appliedReceiveSignatureRef = useRef<string | null>(null);
   const [orderForm, setOrderForm] = useState({
     supplierId: "",
     expectedDate: "",
@@ -212,6 +263,7 @@ export function PurchaseWorkbench() {
     ] as PurchaseOrderFormLine[],
   });
   const [receiveLines, setReceiveLines] = useState<ReceiveLine[]>([]);
+  const [receivingOrderId, setReceivingOrderId] = useState<string | null>(null);
   const [receiveNote, setReceiveNote] = useState("");
   const [invoiceNo, setInvoiceNo] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -251,9 +303,29 @@ export function PurchaseWorkbench() {
   );
 
   const load = useCallback(async () => {
-    if (!currentCompanyId) return;
+    const requestedScope: PurchaseAuthScope = {
+      companyId: currentCompanyId,
+      userId: currentUserId,
+      contextVersion,
+    };
+    const requestedScopeKey = purchaseAuthScopeKey(requestedScope);
+    if (
+      !requestedScope.companyId ||
+      !mountedRef.current ||
+      !isPurchaseAuthScopeCurrent(requestedScope)
+    )
+      return;
+
+    const requestId = ++loadGenerationRef.current;
+    const isCurrentRequest = () =>
+      mountedRef.current &&
+      loadGenerationRef.current === requestId &&
+      isPurchaseAuthScopeCurrent(requestedScope);
+
     setLoading(true);
+    setLoadedScopeKey(null);
     setError("");
+    setErrorScopeKey(requestedScopeKey);
     try {
       const [
         supplierResp,
@@ -275,6 +347,7 @@ export function PurchaseWorkbench() {
       const nextSuppliers = (supplierResp.data as OptionRecord[]).filter(
         (item) => ["SUPPLIER", "BOTH"].includes(String(item.type ?? "")),
       );
+      if (!isCurrentRequest()) return;
       setSuppliers(nextSuppliers);
       setMaterials(materialResp.data as OptionRecord[]);
       setLocations(locationResp.data as OptionRecord[]);
@@ -286,29 +359,128 @@ export function PurchaseWorkbench() {
         ...prev,
         supplierId: prev.supplierId || nextSuppliers[0]?.id || "",
       }));
-      setSelectedOrderId((prev) => prev || orderResp.data[0]?.id || "");
+      const currentSelection = selectedOrderIdRef.current;
+      const nextSelectedOrderId = orderResp.data.some(
+        (order) => order.id === currentSelection,
+      )
+        ? currentSelection
+        : orderResp.data[0]?.id ?? "";
+      if (nextSelectedOrderId !== currentSelection) {
+        selectedOrderIdRef.current = nextSelectedOrderId;
+        selectedOrderGenerationRef.current += 1;
+        setSelectedOrderId(nextSelectedOrderId);
+      }
+      setLoadedScopeKey(requestedScopeKey);
     } catch (reason: unknown) {
+      if (!isCurrentRequest()) return;
       setError(readApiError(reason, t("purchaseLoadFailed")));
+      setErrorScopeKey(requestedScopeKey);
     } finally {
-      setLoading(false);
+      if (isCurrentRequest()) setLoading(false);
     }
-  }, [currentCompanyId, t]);
+  }, [contextVersion, currentCompanyId, currentUserId, t]);
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadGenerationRef.current += 1;
+      mutationLockRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const scopeChanged = previousScopeKeyRef.current !== currentScopeKey;
+    previousScopeKeyRef.current = currentScopeKey;
+    if (scopeChanged) {
+      loadGenerationRef.current += 1;
+      mutationLockRef.current = null;
+      activeReceiptRef.current = null;
+      selectedOrderIdRef.current = "";
+      selectedOrderGenerationRef.current += 1;
+      appliedReceiveSignatureRef.current = null;
+      setLoading(false);
+      setSaving(null);
+      setReceivingOrderId(null);
+      setLoadedScopeKey(null);
+      setError("");
+      setErrorScopeKey(null);
+      setMessage("");
+      setMessageScopeKey(null);
+      setSuppliers([]);
+      setMaterials([]);
+      setLocations([]);
+      setOrders([]);
+      setReturnDocuments([]);
+      setSupplierCreditNotes([]);
+      setSupplierPayments([]);
+      setSelectedOrderId("");
+      setOrderForm({
+        supplierId: "",
+        expectedDate: "",
+        notes: "",
+        items: [{ materialId: "", quantity: 1, unitPrice: 0, note: "" }],
+      });
+      setReceiveLines([]);
+      setReceiveNote("");
+      setInvoiceNo("");
+      setDueDate("");
+      setSupplierCreditAmount("");
+      setSupplierCreditReason("");
+      setSelectedReturnDocumentId("");
+      setSupplierPaymentAmount("");
+      setSupplierPaymentMethod("BANK_TRANSFER");
+      setSupplierPaymentNote("");
+    }
+    if (!currentCompanyId) {
+      setLoading(false);
+      setLoadedScopeKey(null);
+      return undefined;
+    }
     void load();
-  }, [load]);
+    return () => {
+      loadGenerationRef.current += 1;
+    };
+  }, [currentCompanyId, currentScopeKey, load]);
+
+  const receiveSignature = selectedOrder
+    ? JSON.stringify([
+        selectedOrder.id,
+        selectedOrder.items.map((line) => [
+          line.id,
+          line.quantity,
+          line.receivedQty,
+        ]),
+      ])
+    : "";
 
   useEffect(() => {
     if (!selectedOrder) {
+      appliedReceiveSignatureRef.current = null;
       setReceiveLines([]);
       return;
     }
+    if (appliedReceiveSignatureRef.current === receiveSignature) {
+      const validLocationIds = new Set(locations.map((location) => location.id));
+      const fallbackLocationId = locations[0]?.id ?? "";
+      setReceiveLines((prev) =>
+        prev.map((line) =>
+          validLocationIds.has(line.destLocationId)
+            ? line
+            : { ...line, destLocationId: fallbackLocationId },
+        ),
+      );
+      return;
+    }
+    appliedReceiveSignatureRef.current = receiveSignature;
     setReceiveLines(
       selectedOrder.items
         .map((line) => ({
           purchaseOrderLineId: line.id,
           quantity: Math.max(
-            numeric(line.quantity) - numeric(line.receivedQty),
+            roundPurchaseQuantity(
+              numeric(line.quantity) - numeric(line.receivedQty),
+            ),
             0,
           ),
           destLocationId: locations[0]?.id ?? "",
@@ -316,197 +488,304 @@ export function PurchaseWorkbench() {
         }))
         .filter((line) => line.quantity > 0),
     );
-  }, [locations, selectedOrder]);
+  }, [locations, receiveSignature, selectedOrder]);
 
-  const createOrder = async () => {
-    setSaving("order");
-    setError("");
+  const changeSelectedOrder = (nextOrderId: string) => {
+    if (selectedOrderIdRef.current !== nextOrderId) {
+      selectedOrderIdRef.current = nextOrderId;
+      selectedOrderGenerationRef.current += 1;
+    }
+    setSelectedOrderId(nextOrderId);
+  };
+
+  const canUseCurrentPurchaseData = () =>
+    mountedRef.current &&
+    Boolean(currentCompanyId) &&
+    loadedScopeKey === currentScopeKey &&
+    isPurchaseAuthScopeCurrent(currentScope);
+
+  const showActionError = (messageText: string) => {
+    if (!canUseCurrentPurchaseData()) return;
+    setError(messageText);
+    setErrorScopeKey(currentScopeKey);
     setMessage("");
+    setMessageScopeKey(currentScopeKey);
+  };
+
+  const runMutation = async (
+    action: PurchaseSavingAction,
+    fallbackKey: TranslationKey,
+    successKey: TranslationKey,
+    request: () => Promise<unknown>,
+    onSuccess?: () => void,
+    isRelevant?: () => boolean,
+    mutationOrderId?: string,
+  ) => {
+    if (!canUseCurrentPurchaseData() || mutationLockRef.current !== null) return;
+    const ticket: PurchaseMutationTicket = {
+      id: ++mutationGenerationRef.current,
+      scope: currentScope,
+      scopeKey: currentScopeKey,
+    };
+    mutationLockRef.current = ticket.id;
+    if (action === "receive" && mutationOrderId) {
+      activeReceiptRef.current = {
+        ticketId: ticket.id,
+        orderId: mutationOrderId,
+      };
+      setReceivingOrderId(mutationOrderId);
+    }
+    setSaving(action);
+    setError("");
+    setErrorScopeKey(ticket.scopeKey);
+    setMessage("");
+    setMessageScopeKey(ticket.scopeKey);
+
+    const isCurrentMutation = () =>
+      mountedRef.current &&
+      mutationLockRef.current === ticket.id &&
+      isPurchaseAuthScopeCurrent(ticket.scope);
+
     try {
-      await api.post("/purchase/orders", {
-        supplierId: orderForm.supplierId,
-        expectedDate: orderForm.expectedDate || undefined,
-        notes: orderForm.notes || undefined,
-        items: orderForm.items.map((line) => ({
-          materialId: line.materialId,
-          quantity: Number(line.quantity),
-          unitPrice: Number(line.unitPrice),
-          note: line.note || undefined,
-        })),
-      });
-      setMessage(t("purchaseOrderCreated"));
-      setOrderForm((prev) => ({
-        ...prev,
-        notes: "",
-        expectedDate: "",
-        items: [{ materialId: "", quantity: 1, unitPrice: 0, note: "" }],
-      }));
+      await request();
+      if (!isCurrentMutation()) return;
+      if (!isRelevant || isRelevant()) {
+        onSuccess?.();
+        setMessage(t(successKey));
+        setMessageScopeKey(ticket.scopeKey);
+      }
       await load();
     } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseOrderCreateFailed")));
+      if (!isCurrentMutation() || (isRelevant && !isRelevant())) return;
+      setError(readApiError(reason, t(fallbackKey)));
+      setErrorScopeKey(ticket.scopeKey);
     } finally {
-      setSaving(null);
+      if (mutationLockRef.current === ticket.id) {
+        mutationLockRef.current = null;
+        if (mountedRef.current) setSaving(null);
+      }
+      if (activeReceiptRef.current?.ticketId === ticket.id) {
+        activeReceiptRef.current = null;
+        if (mountedRef.current) setReceivingOrderId(null);
+      }
     }
   };
 
-  const receiveOrder = async () => {
-    if (!selectedOrder) return;
-    setSaving("receive");
-    setError("");
-    setMessage("");
-    try {
-      await api.post(`/purchase/orders/${selectedOrder.id}/receive`, {
-        note: receiveNote || undefined,
-        lines: receiveLines
-          .filter((line) => line.quantity > 0)
-          .map((line) => ({
-            purchaseOrderLineId: line.purchaseOrderLineId,
+  const createOrder = () => {
+    if (!canUseCurrentPurchaseData()) return;
+    const submittedForm = orderForm;
+    return runMutation(
+      "order",
+      "purchaseOrderCreateFailed",
+      "purchaseOrderCreated",
+      () =>
+        api.post("/purchase/orders", {
+          supplierId: submittedForm.supplierId,
+          expectedDate: submittedForm.expectedDate || undefined,
+          notes: submittedForm.notes || undefined,
+          items: submittedForm.items.map((line) => ({
+            materialId: line.materialId,
             quantity: Number(line.quantity),
-            destLocationId: line.destLocationId,
-            batchNo: line.batchNo || undefined,
+            unitPrice: Number(line.unitPrice),
+            note: line.note || undefined,
           })),
-      });
-      setMessage(t("purchaseReceived"));
-      setReceiveNote("");
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseReceiveFailed")));
-    } finally {
-      setSaving(null);
-    }
+        }),
+      () =>
+        setOrderForm((prev) =>
+          prev === submittedForm
+            ? {
+                ...prev,
+                notes: "",
+                expectedDate: "",
+                items: [
+                  { materialId: "", quantity: 1, unitPrice: 0, note: "" },
+                ],
+              }
+            : prev,
+        ),
+    );
   };
 
-  const createInvoice = async () => {
-    if (!selectedOrder) return;
-    setSaving("invoice");
-    setError("");
-    setMessage("");
-    try {
-      await api.post(`/purchase/orders/${selectedOrder.id}/invoice`, {
-        invoiceNo: invoiceNo || undefined,
-        dueDate: dueDate || undefined,
-      });
-      setMessage(t("purchaseInvoiceCreated"));
-      setInvoiceNo("");
-      setDueDate("");
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseInvoiceCreateFailed")));
-    } finally {
-      setSaving(null);
-    }
+  const receiveOrder = () => {
+    if (!canUseCurrentPurchaseData() || !selectedOrder) return;
+    const submittedOrderId = selectedOrder.id;
+    const submittedSelectionGeneration = selectedOrderGenerationRef.current;
+    const submittedNote = receiveNote;
+    const submittedLines = receiveLines;
+    return runMutation(
+      "receive",
+      "purchaseReceiveFailed",
+      "purchaseReceived",
+      () =>
+        api.post(`/purchase/orders/${submittedOrderId}/receive`, {
+          note: submittedNote || undefined,
+          lines: submittedLines
+            .filter((line) => line.quantity > 0)
+            .map((line) => ({
+              purchaseOrderLineId: line.purchaseOrderLineId,
+              quantity: Number(line.quantity),
+              destLocationId: line.destLocationId,
+              batchNo: line.batchNo || undefined,
+            })),
+        }),
+      () => {
+        if (
+          selectedOrderGenerationRef.current === submittedSelectionGeneration
+        ) {
+          setReceiveNote((prev) => (prev === submittedNote ? "" : prev));
+        }
+      },
+      () =>
+        selectedOrderGenerationRef.current === submittedSelectionGeneration,
+      submittedOrderId,
+    );
   };
 
-  const postPurchaseInvoice = async () => {
-    if (!selectedPurchaseInvoice) return;
-    setSaving("invoicePost");
-    setError("");
-    setMessage("");
-    try {
-      await api.post(`/purchase/invoices/${selectedPurchaseInvoice.id}/post`);
-      setMessage(t("purchaseInvoicePosted"));
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseInvoicePostFailed")));
-    } finally {
-      setSaving(null);
-    }
+  const createInvoice = () => {
+    if (!canUseCurrentPurchaseData() || !selectedOrder) return;
+    const submittedOrderId = selectedOrder.id;
+    const submittedSelectionGeneration = selectedOrderGenerationRef.current;
+    const submittedInvoiceNo = invoiceNo;
+    const submittedDueDate = dueDate;
+    return runMutation(
+      "invoice",
+      "purchaseInvoiceCreateFailed",
+      "purchaseInvoiceCreated",
+      () =>
+        api.post(`/purchase/orders/${submittedOrderId}/invoice`, {
+          invoiceNo: submittedInvoiceNo || undefined,
+          dueDate: submittedDueDate || undefined,
+        }),
+      () => {
+        if (
+          selectedOrderGenerationRef.current === submittedSelectionGeneration
+        ) {
+          setInvoiceNo((prev) =>
+            prev === submittedInvoiceNo ? "" : prev,
+          );
+          setDueDate((prev) => (prev === submittedDueDate ? "" : prev));
+        }
+      },
+      () => selectedOrderGenerationRef.current === submittedSelectionGeneration,
+    );
   };
 
-  const createSupplierCreditNote = async () => {
-    if (!selectedPurchaseInvoice) return;
+  const postPurchaseInvoice = () => {
+    if (!canUseCurrentPurchaseData() || !selectedPurchaseInvoice) return;
+    const invoiceId = selectedPurchaseInvoice.id;
+    const submittedSelectionGeneration = selectedOrderGenerationRef.current;
+    return runMutation(
+      "invoicePost",
+      "purchaseInvoicePostFailed",
+      "purchaseInvoicePosted",
+      () => api.post(`/purchase/invoices/${invoiceId}/post`),
+      undefined,
+      () => selectedOrderGenerationRef.current === submittedSelectionGeneration,
+    );
+  };
+
+  const createSupplierCreditNote = () => {
+    if (!canUseCurrentPurchaseData() || !selectedPurchaseInvoice) return;
     const amount = Number(supplierCreditAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setError(t("purchaseSupplierCreditAmountInvalid"));
+      showActionError(t("purchaseSupplierCreditAmountInvalid"));
       return;
     }
-    setSaving("supplierCredit");
-    setError("");
-    setMessage("");
-    try {
-      await api.post(
-        `/purchase/invoices/${selectedPurchaseInvoice.id}/supplier-credit-notes`,
-        {
+    const invoiceId = selectedPurchaseInvoice.id;
+    const submittedSelectionGeneration = selectedOrderGenerationRef.current;
+    const submittedAmount = supplierCreditAmount;
+    const submittedReason = supplierCreditReason;
+    const submittedReturnDocumentId = selectedReturnDocumentId;
+    return runMutation(
+      "supplierCredit",
+      "purchaseSupplierCreditCreateFailed",
+      "purchaseSupplierCreditCreated",
+      () =>
+        api.post(`/purchase/invoices/${invoiceId}/supplier-credit-notes`, {
           amount,
-          inventoryReturnDocumentId: selectedReturnDocumentId || undefined,
-          reason: supplierCreditReason || undefined,
-        },
-      );
-      setSupplierCreditAmount("");
-      setSupplierCreditReason("");
-      setSelectedReturnDocumentId("");
-      setMessage(t("purchaseSupplierCreditCreated"));
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseSupplierCreditCreateFailed")));
-    } finally {
-      setSaving(null);
-    }
+          inventoryReturnDocumentId: submittedReturnDocumentId || undefined,
+          reason: submittedReason || undefined,
+        }),
+      () => {
+        if (
+          selectedOrderGenerationRef.current === submittedSelectionGeneration
+        ) {
+          setSupplierCreditAmount((prev) =>
+            prev === submittedAmount ? "" : prev,
+          );
+          setSupplierCreditReason((prev) =>
+            prev === submittedReason ? "" : prev,
+          );
+          setSelectedReturnDocumentId((prev) =>
+            prev === submittedReturnDocumentId ? "" : prev,
+          );
+        }
+      },
+      () => selectedOrderGenerationRef.current === submittedSelectionGeneration,
+    );
   };
 
-  const postSupplierCreditNote = async (id: string) => {
-    setSaving("supplierCredit");
-    setError("");
-    setMessage("");
-    try {
-      await api.post(`/purchase/supplier-credit-notes/${id}/post`);
-      setMessage(t("purchaseSupplierCreditPosted"));
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseSupplierCreditPostFailed")));
-    } finally {
-      setSaving(null);
-    }
-  };
+  const postSupplierCreditNote = (id: string) =>
+    runMutation(
+      "supplierCredit",
+      "purchaseSupplierCreditPostFailed",
+      "purchaseSupplierCreditPosted",
+      () => api.post(`/purchase/supplier-credit-notes/${id}/post`),
+    );
 
-  const createSupplierPayment = async () => {
-    if (!selectedOrder?.supplier?.id || !selectedPurchaseInvoice) return;
+  const createSupplierPayment = () => {
+    if (
+      !canUseCurrentPurchaseData() ||
+      !selectedOrder?.supplier?.id ||
+      !selectedPurchaseInvoice
+    )
+      return;
     const amount = Number(supplierPaymentAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setError(t("purchaseSupplierPaymentAmountInvalid"));
+      showActionError(t("purchaseSupplierPaymentAmountInvalid"));
       return;
     }
-    setSaving("supplierPayment");
-    setError("");
-    setMessage("");
-    try {
-      await api.post("/purchase/supplier-payments", {
-        supplierId: selectedOrder.supplier.id,
-        amount,
-        method: supplierPaymentMethod,
-        note: supplierPaymentNote || undefined,
-        allocations: [
-          {
-            purchaseInvoiceId: selectedPurchaseInvoice.id,
-            amount,
-          },
-        ],
-      });
-      setSupplierPaymentAmount("");
-      setSupplierPaymentNote("");
-      setMessage(t("purchaseSupplierPaymentCreated"));
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseSupplierPaymentCreateFailed")));
-    } finally {
-      setSaving(null);
-    }
+    const supplierId = selectedOrder.supplier.id;
+    const invoiceId = selectedPurchaseInvoice.id;
+    const submittedSelectionGeneration = selectedOrderGenerationRef.current;
+    const submittedAmount = supplierPaymentAmount;
+    const submittedNote = supplierPaymentNote;
+    const submittedMethod = supplierPaymentMethod;
+    return runMutation(
+      "supplierPayment",
+      "purchaseSupplierPaymentCreateFailed",
+      "purchaseSupplierPaymentCreated",
+      () =>
+        api.post("/purchase/supplier-payments", {
+          supplierId,
+          amount,
+          method: submittedMethod,
+          note: submittedNote || undefined,
+          allocations: [{ purchaseInvoiceId: invoiceId, amount }],
+        }),
+      () => {
+        if (
+          selectedOrderGenerationRef.current === submittedSelectionGeneration
+        ) {
+          setSupplierPaymentAmount((prev) =>
+            prev === submittedAmount ? "" : prev,
+          );
+          setSupplierPaymentNote((prev) =>
+            prev === submittedNote ? "" : prev,
+          );
+        }
+      },
+      () => selectedOrderGenerationRef.current === submittedSelectionGeneration,
+    );
   };
 
-  const postSupplierPayment = async (id: string) => {
-    setSaving("supplierPayment");
-    setError("");
-    setMessage("");
-    try {
-      await api.post(`/purchase/supplier-payments/${id}/post`);
-      setMessage(t("purchaseSupplierPaymentPosted"));
-      await load();
-    } catch (reason: unknown) {
-      setError(readApiError(reason, t("purchaseSupplierPaymentPostFailed")));
-    } finally {
-      setSaving(null);
-    }
-  };
+  const postSupplierPayment = (id: string) =>
+    runMutation(
+      "supplierPayment",
+      "purchaseSupplierPaymentPostFailed",
+      "purchaseSupplierPaymentPosted",
+      () => api.post(`/purchase/supplier-payments/${id}/post`),
+    );
 
   const updateOrderLine = (
     index: number,
@@ -528,25 +807,60 @@ export function PurchaseWorkbench() {
     );
   };
 
-  if (loading) {
+  const receiptFieldsDisabled =
+    saving === "receive" && receivingOrderId === selectedOrder?.id;
+
+  const visibleError = errorScopeKey === currentScopeKey ? error : "";
+  const visibleMessage =
+    messageScopeKey === currentScopeKey ? message : "";
+
+  if (!currentCompanyId) return null;
+
+  if (loadedScopeKey !== currentScopeKey) {
     return (
-      <div className="flex items-center text-sm text-slate-500">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        {t("loading")}
+      <div className="space-y-3" aria-live="polite">
+        {loading || !visibleError ? (
+          <div role="status" className="flex items-center text-sm text-slate-500">
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            {t("loading")}
+          </div>
+        ) : null}
+        {visibleMessage ? (
+          <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+            {visibleMessage}
+          </div>
+        ) : null}
+        {!loading && visibleError ? (
+          <>
+            <div
+              role="alert"
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+            >
+              {visibleError}
+            </div>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              {t("commonRefresh")}
+            </button>
+          </>
+        ) : null}
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {error ? (
+      {visibleError ? (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {error}
+          {visibleError}
         </div>
       ) : null}
-      {message ? (
+      {visibleMessage ? (
         <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-          {message}
+          {visibleMessage}
         </div>
       ) : null}
 
@@ -704,7 +1018,7 @@ export function PurchaseWorkbench() {
             <OrderSelector
               orders={orders}
               selectedOrderId={selectedOrderId}
-              onChange={setSelectedOrderId}
+              onChange={changeSelectedOrder}
             />
             {receiveLines.length === 0 ? (
               <p className="text-sm text-slate-500">
@@ -731,6 +1045,7 @@ export function PurchaseWorkbench() {
                         type="number"
                         min="0.0001"
                         step="0.0001"
+                        disabled={receiptFieldsDisabled}
                         value={line.quantity}
                         onChange={(event) =>
                           updateReceiveLine(index, {
@@ -741,6 +1056,7 @@ export function PurchaseWorkbench() {
                       />
                       <select
                         value={line.destLocationId}
+                        disabled={receiptFieldsDisabled}
                         onChange={(event) =>
                           updateReceiveLine(index, {
                             destLocationId: event.target.value,
@@ -758,6 +1074,7 @@ export function PurchaseWorkbench() {
                       </select>
                       <input
                         value={line.batchNo}
+                        disabled={receiptFieldsDisabled}
                         onChange={(event) =>
                           updateReceiveLine(index, {
                             batchNo: event.target.value,
@@ -773,6 +1090,7 @@ export function PurchaseWorkbench() {
             )}
             <textarea
               value={receiveNote}
+              disabled={receiptFieldsDisabled}
               onChange={(event) => setReceiveNote(event.target.value)}
               className="w-full rounded-md border border-slate-300 p-2 text-sm"
               placeholder={t("purchaseReceiveNote")}
@@ -804,7 +1122,7 @@ export function PurchaseWorkbench() {
             <OrderSelector
               orders={orders}
               selectedOrderId={selectedOrderId}
-              onChange={setSelectedOrderId}
+              onChange={changeSelectedOrder}
             />
             <input
               value={invoiceNo}
@@ -922,7 +1240,7 @@ export function PurchaseWorkbench() {
               orders={orders}
               selectedOrderId={selectedOrderId}
               onChange={(next) => {
-                setSelectedOrderId(next);
+                changeSelectedOrder(next);
                 setSelectedReturnDocumentId("");
               }}
             />
@@ -993,7 +1311,7 @@ export function PurchaseWorkbench() {
             <OrderSelector
               orders={orders}
               selectedOrderId={selectedOrderId}
-              onChange={setSelectedOrderId}
+              onChange={changeSelectedOrder}
             />
             <select
               value={supplierPaymentMethod}
