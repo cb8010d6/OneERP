@@ -74,7 +74,9 @@ Deploy workflow 会校验部署变量格式：`DEPLOY_PATH` 必须是无空格�
 
 远端部署目录必须保留生产 `.env`；workflow 会在部署前同步当前 commit 的 `docker-compose.prod.yml`、`scripts/audit-prod-config.sh` 和 `scripts/deploy-check.sh`，并在拉取镜像前审计远端 `.env`。部署完成后会自动执行远端 `scripts/deploy-check.sh`；`scripts/prod-smoke.*` 和 `scripts/business-acceptance.*` 仍需在受控试运行前单独执行并留存报告。
 
-`scripts/deploy-check.*` 不只检查 Docker Compose 命令可执行，还会把 `exited`、`unhealthy`、`restarting`、`dead` 等服务状态视为失败。
+`scripts/deploy-check.*` 会从所选 Compose 配置确认 `api`、`web`、`db`、`redis`、`minio` 五个服务已定义，并逐容器检查它们都在运行；配置了 healthcheck 的容器必须为 `healthy`。检查会等待最多 60 秒（可用 `DEPLOY_CHECK_TIMEOUT_SECONDS` 调整，范围 0–900 秒），`starting` 和尚未创建的容器会在期限内重试；超时、缺失服务、已退出或 unhealthy 容器会失败。若所选配置定义了 `migrate`，还要求其容器以退出码 0 完成；未定义 migrate 时跳过此项。Compose 文件中的 profile-only 服务（例如 `with-nginx` 下的 `nginx`）不会成为必需服务。
+
+Shell 脚本使用 `COMPOSE_FILE`、`ENV_FILE` 环境变量；PowerShell 脚本支持同名环境变量和 `-ComposeFile`、`-EnvFile` 参数。健康探测使用 `docker compose ps --all -q <service>` 和仅包含容器状态、health 状态、退出码的 `docker inspect --format` 输出，不打印渲染后的 Compose 环境值。
 
 ## P1：强烈建议 / Strongly Recommended
 

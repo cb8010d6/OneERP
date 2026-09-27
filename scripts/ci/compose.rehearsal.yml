@@ -1,0 +1,134 @@
+# Disposable GitHub CI only. The production Compose file and MinIO policy are
+# deliberately unchanged; this uses the existing verified-source CI MinIO build.
+# All images are built locally by container-rehearsal.mjs. Never publish this stack.
+x-runtime: &runtime
+  restart: "no"
+  logging:
+    driver: json-file
+    options:
+      max-size: "5m"
+      max-file: "2"
+
+services:
+  db:
+    <<: *runtime
+    image: postgres:15-alpine
+    mem_limit: 512m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:?required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    <<: *runtime
+    image: redis:7-alpine
+    mem_limit: 192m
+    command: redis-server --appendonly yes --save 60 1000
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    <<: *runtime
+    image: ${REHEARSAL_MINIO_IMAGE:?required}
+    pull_policy: never
+    mem_limit: 768m
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?required}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?required}
+    command: server /data
+    volumes:
+      - miniodata:/data
+    # The scratch CI image intentionally has no shell/curl/mc. The orchestrator
+    # probes its HTTP readiness from the API image on this private network.
+
+  migrate:
+    <<: *runtime
+    image: ${REHEARSAL_MIGRATE_IMAGE:?required}
+    pull_policy: never
+    mem_limit: 1g
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL:?required}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD:?required}
+      INIT_ADMIN_NAME: Container Rehearsal
+      INIT_COMPANY_NAME: ${INIT_COMPANY_NAME:?required}
+    command: ["sh", "-c", "npx --no-install prisma migrate deploy --schema=./prisma/schema.prisma && npm run init:prod"]
+
+  api:
+    <<: *runtime
+    image: ${REHEARSAL_API_IMAGE:?required}
+    pull_policy: never
+    mem_limit: 1g
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?required}
+      CORS_ORIGINS: http://127.0.0.1
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: "9000"
+      MINIO_USE_SSL: "false"
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      AI_WRITE_ENABLED: "false"
+      PORT: "8000"
+    ports:
+      - "127.0.0.1::8000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 15s
+
+  web:
+    <<: *runtime
+    image: ${REHEARSAL_WEB_IMAGE:?required}
+    pull_policy: never
+    mem_limit: 512m
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+      NEXT_PUBLIC_API_BASE_URL: /api/proxy
+      API_BASE_URL: http://api:8000
+    ports:
+      - "127.0.0.1::3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
