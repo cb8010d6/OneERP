@@ -17,7 +17,10 @@ import {
 } from './dto/purchase.dto';
 import { AccountingPeriodService } from '../finance/accounting-period.service';
 import { nextDocumentTimestamp } from '../core/utils/document-timestamp';
-import { withUniqueConstraintRetry } from '../core/utils/prisma-unique-retry';
+import {
+  isPrismaUniqueConstraintError,
+  withUniqueConstraintRetry,
+} from '../core/utils/prisma-unique-retry';
 import { EventQueueService } from '../core/events/event-queue.service';
 import { SupplierStatementService } from './supplier-statement.service';
 import { PurchaseQueryService } from './purchase-query.service';
@@ -192,118 +195,160 @@ export class PurchaseService {
     id: string,
     dto: ReceivePurchaseOrderDto,
   ) {
-    const order = await this.prisma.purchaseOrder.findFirst({
-      where: { id, companyId },
-      include: { items: true },
-    });
-    if (!order) {
-      throw new NotFoundException('采购单不存在');
-    }
-    if (['CANCELLED', 'RECEIVED'].includes(order.status)) {
-      throw new BadRequestException('当前采购单状态不允许收货');
-    }
-
-    const lineMap = new Map(order.items.map((line) => [line.id, line]));
-    for (const line of dto.lines) {
-      const orderLine = lineMap.get(line.purchaseOrderLineId);
-      if (!orderLine) {
-        throw new BadRequestException('收货明细不属于当前采购单');
+    // Keep split deliveries to different locations/batches, but validate and
+    // update their shared order line using one exact four-decimal quantity.
+    const requestedByLine = new Map<string, Decimal>();
+    const receiptLines = dto.lines.map((line) => {
+      if (!Number.isFinite(line.quantity) || line.quantity <= 0) {
+        throw new BadRequestException('收货数量必须为正数，且最多保留四位小数');
       }
-      const nextReceived = new Decimal(orderLine.receivedQty).plus(
-        line.quantity,
+      const requestedQuantity = new Decimal(line.quantity);
+      const quantity = requestedQuantity.toDecimalPlaces(4);
+      // Older clients subtract JS numbers for the remaining quantity. Accept
+      // only machine rounding noise (e.g. 0.3 - 0.1), not extra business precision.
+      const numericNoise = new Decimal(Number.EPSILON)
+        .times(Decimal.max(1, requestedQuantity.abs()))
+        .times(2);
+      if (
+        quantity.lte(0) ||
+        requestedQuantity.minus(quantity).abs().gt(numericNoise)
+      ) {
+        throw new BadRequestException('收货数量必须为正数，且最多保留四位小数');
+      }
+      requestedByLine.set(
+        line.purchaseOrderLineId,
+        (requestedByLine.get(line.purchaseOrderLineId) ?? new Decimal(0)).plus(
+          quantity,
+        ),
       );
-      if (nextReceived.gt(orderLine.quantity)) {
-        throw new BadRequestException('收货数量不能超过采购数量');
-      }
-    }
+      return { ...line, quantity: quantity.toNumber() };
+    });
 
-    await withUniqueConstraintRetry(
-      (attempt) =>
-        this.prisma.$transaction(async (tx) => {
-          const created = await tx.purchaseReceipt.create({
-            data: {
-              receiptNo: this.generateDocumentNo('GR', attempt),
-              purchaseOrderId: order.id,
-              companyId,
-              operatorId: userId,
-              note: dto.note,
-              lines: {
-                create: dto.lines.map((line) => {
-                  const orderLine = lineMap.get(line.purchaseOrderLineId);
-                  if (!orderLine) {
-                    throw new BadRequestException('收货明细不属于当前采购单');
-                  }
-                  return {
-                    purchaseOrderLineId: orderLine.id,
-                    materialId: orderLine.materialId,
-                    quantity: line.quantity,
-                    destLocationId: line.destLocationId,
-                    batchNo: line.batchNo,
-                  };
-                }),
-              },
-            },
-            include: { lines: true },
-          });
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.prisma.$transaction(
+          async (tx) => {
+            const order = await tx.purchaseOrder.findFirst({
+              where: { id, companyId },
+              include: { items: true },
+            });
+            if (!order) {
+              throw new NotFoundException('采购单不存在');
+            }
+            if (['CANCELLED', 'RECEIVED'].includes(order.status)) {
+              throw new BadRequestException('当前采购单状态不允许收货');
+            }
 
-          for (const line of dto.lines) {
-            const orderLine = lineMap.get(line.purchaseOrderLineId);
-            if (!orderLine) continue;
-            await tx.purchaseOrderLine.update({
-              where: { id: orderLine.id },
+            const lineMap = new Map(order.items.map((line) => [line.id, line]));
+            for (const [lineId, quantity] of requestedByLine) {
+              const orderLine = lineMap.get(lineId);
+              if (!orderLine) {
+                throw new BadRequestException('收货明细不属于当前采购单');
+              }
+              if (
+                new Decimal(orderLine.receivedQty)
+                  .plus(quantity)
+                  .gt(orderLine.quantity)
+              ) {
+                throw new BadRequestException('收货数量不能超过采购数量');
+              }
+            }
+
+            const created = await tx.purchaseReceipt.create({
               data: {
-                receivedQty: new Decimal(orderLine.receivedQty).plus(
-                  line.quantity,
-                ),
+                receiptNo: this.generateDocumentNo('GR', attempt),
+                purchaseOrderId: order.id,
+                companyId,
+                operatorId: userId,
+                note: dto.note,
+                lines: {
+                  create: receiptLines.map((line) => {
+                    const orderLine = lineMap.get(line.purchaseOrderLineId);
+                    if (!orderLine) {
+                      throw new BadRequestException('收货明细不属于当前采购单');
+                    }
+                    return {
+                      purchaseOrderLineId: orderLine.id,
+                      materialId: orderLine.materialId,
+                      quantity: line.quantity,
+                      destLocationId: line.destLocationId,
+                      batchNo: line.batchNo,
+                    };
+                  }),
+                },
+              },
+              include: { lines: true },
+            });
+
+            for (const [lineId, quantity] of requestedByLine) {
+              const orderLine = lineMap.get(lineId);
+              if (!orderLine) continue;
+              await tx.purchaseOrderLine.update({
+                where: { id: orderLine.id },
+                data: {
+                  receivedQty: new Decimal(orderLine.receivedQty).plus(
+                    quantity,
+                  ),
+                },
+              });
+            }
+
+            const updatedLines = await tx.purchaseOrderLine.findMany({
+              where: { purchaseOrderId: order.id },
+            });
+            const fullyReceived = updatedLines.every((line) =>
+              new Decimal(line.receivedQty).gte(line.quantity),
+            );
+            const partiallyReceived = updatedLines.some((line) =>
+              new Decimal(line.receivedQty).gt(0),
+            );
+            await tx.purchaseOrder.update({
+              where: { id: order.id },
+              data: {
+                status: fullyReceived
+                  ? 'RECEIVED'
+                  : partiallyReceived
+                    ? 'PARTIAL_RECEIVED'
+                    : 'ORDERED',
               },
             });
-          }
 
-          const updatedLines = await tx.purchaseOrderLine.findMany({
-            where: { purchaseOrderId: order.id },
-          });
-          const fullyReceived = updatedLines.every((line) =>
-            new Decimal(line.receivedQty).gte(line.quantity),
-          );
-          const partiallyReceived = updatedLines.some((line) =>
-            new Decimal(line.receivedQty).gt(0),
-          );
-          await tx.purchaseOrder.update({
-            where: { id: order.id },
-            data: {
-              status: fullyReceived
-                ? 'RECEIVED'
-                : partiallyReceived
-                  ? 'PARTIAL_RECEIVED'
-                  : 'ORDERED',
-            },
-          });
-
-          for (const line of created.lines) {
-            const orderLine = lineMap.get(line.purchaseOrderLineId);
-            await this.inventoryService.createStockMoveInTransaction(
-              tx,
-              companyId,
-              {
-                materialId: line.materialId,
-                destLocationId: line.destLocationId ?? undefined,
-                quantity: Number(line.quantity),
-                batchNo: line.batchNo ?? undefined,
-                unitCost:
-                  orderLine?.unitPrice != null
-                    ? Number(orderLine.unitPrice)
-                    : undefined,
-                referenceNo: `PURCHASE-IN-${order.purchaseNo}-${created.receiptNo}`,
-                documentType: 'PURCHASE_RECEIPT',
-                documentId: created.receiptNo,
-                note: dto.note ?? `采购收货：${order.purchaseNo}`,
-              },
-              userId,
-            );
-          }
-        }),
-      { targetFields: ['receiptNo'] },
-    );
+            for (const line of created.lines) {
+              const orderLine = lineMap.get(line.purchaseOrderLineId);
+              await this.inventoryService.createStockMoveInTransaction(
+                tx,
+                companyId,
+                {
+                  materialId: line.materialId,
+                  destLocationId: line.destLocationId ?? undefined,
+                  quantity: Number(line.quantity),
+                  batchNo: line.batchNo ?? undefined,
+                  unitCost:
+                    orderLine?.unitPrice != null
+                      ? Number(orderLine.unitPrice)
+                      : undefined,
+                  referenceNo: `PURCHASE-IN-${order.purchaseNo}-${created.receiptNo}`,
+                  documentType: 'PURCHASE_RECEIPT',
+                  documentId: created.receiptNo,
+                  note: dto.note ?? `采购收货：${order.purchaseNo}`,
+                },
+                userId,
+              );
+            }
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+        break;
+      } catch (error) {
+        // Only rolled-back conflicts restart the complete fresh-read write.
+        // The response read below is deliberately outside this retry boundary.
+        const retryable =
+          (error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2034') ||
+          isPrismaUniqueConstraintError(error, ['receiptNo']);
+        if (!retryable || attempt >= 2) throw error;
+      }
+    }
 
     return this.getPurchaseOrder(companyId, id);
   }
