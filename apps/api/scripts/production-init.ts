@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+import { preflightAdminEmail } from './production-init-email';
 import { ROLE_TEMPLATES } from '../src/core/permissions/permissions';
 
 const prisma = new PrismaClient();
@@ -34,7 +35,12 @@ async function upsertDefaultAccounts(companyId: string) {
   await prisma.journal.upsert({
     where: { companyId_code: { companyId, code: 'GEN' } },
     update: { name: 'General Journal', type: 'GENERAL', isActive: true },
-    create: { companyId, code: 'GEN', name: 'General Journal', type: 'GENERAL' },
+    create: {
+      companyId,
+      code: 'GEN',
+      name: 'General Journal',
+      type: 'GENERAL',
+    },
   });
 
   await prisma.journal.upsert({
@@ -83,8 +89,8 @@ async function upsertDefaultTaxCode(companyId: string) {
   });
 }
 
-async function main() {
-  const email = requireEnv('INIT_ADMIN_EMAIL');
+export async function initializeProduction() {
+  const inputEmail = requireEnv('INIT_ADMIN_EMAIL');
   const password = requireEnv('INIT_ADMIN_PASSWORD');
   const companyName = process.env.INIT_COMPANY_NAME?.trim() || 'OneERP Company';
 
@@ -92,6 +98,7 @@ async function main() {
     throw new Error('INIT_ADMIN_PASSWORD must be at least 12 characters');
   }
 
+  const email = await preflightAdminEmail(prisma.user, inputEmail);
   const passwordHash = await bcrypt.hash(password, 12);
 
   const company =
@@ -149,9 +156,11 @@ async function main() {
   console.log(`Production initialization complete: ${email} / ${company.name}`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(() => prisma.$disconnect());
+if (require.main === module) {
+  initializeProduction()
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    })
+    .finally(() => prisma.$disconnect());
+}

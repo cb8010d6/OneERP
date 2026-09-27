@@ -96,6 +96,8 @@ export class UsersService {
     const existing = await this.findByEmail(dto.email);
     if (existing) throw new ConflictException('该邮箱已被注册');
 
+    const role = await this.resolveRole(dto.roleId);
+    await this.assertCanAssignRole(companyId, operatorId, role);
     const user = await this.createUser(dto.email, dto.password, dto.name);
     if (dto.isActive === false) {
       await this.prisma.user.update({
@@ -103,9 +105,6 @@ export class UsersService {
         data: { isActive: false },
       });
     }
-    const role = await this.resolveRole(dto.roleId);
-    await this.assertCanAssignRole(companyId, operatorId, role);
-
     await this.prisma.userCompanyRole.create({
       data: { userId: user.id, companyId, roleId: role.id },
     });
@@ -255,19 +254,23 @@ export class UsersService {
     operatorId: string,
     dto: CreateInvitationDto,
   ) {
+    const email = dto.email.trim().toLowerCase();
     const role = await this.resolveRole(dto.roleId);
     await this.assertCanAssignRole(companyId, operatorId, role);
     const existingMembership = await this.prisma.userCompanyRole.findFirst({
-      where: { companyId, user: { email: dto.email } },
+      where: {
+        companyId,
+        user: { email: { equals: email, mode: 'insensitive' } },
+      },
       select: { id: true },
     });
     if (existingMembership) {
       throw new ConflictException('该邮箱已是当前企业员工');
     }
-    const existingUser = await this.findByEmail(dto.email);
-    if (existingUser) {
-      throw new ConflictException('该邮箱已注册，请先使用新的员工邮箱');
-    }
+    await this.assertEmailAvailable(
+      email,
+      '该邮箱已注册，请先使用新的员工邮箱',
+    );
 
     const token = randomBytes(32).toString('base64url');
     const tokenHash = this.hashInvitationToken(token);
@@ -276,7 +279,7 @@ export class UsersService {
 
     const invitation = await this.prisma.userInvitation.create({
       data: {
-        email: dto.email,
+        email,
         name: dto.name,
         roleId: role.id,
         companyId,
@@ -295,7 +298,7 @@ export class UsersService {
       invitation.id,
       'USER_INVITE',
       {
-        email: dto.email,
+        email,
         roleId: role.id,
         expiresAt: invitation.expiresAt,
       },
@@ -346,48 +349,60 @@ export class UsersService {
     if (invitation.expiresAt.getTime() < Date.now()) {
       throw new BadRequestException('邀请链接已过期');
     }
-    const existingUser = await this.findByEmail(invitation.email);
-    if (existingUser) {
-      throw new ConflictException('该邮箱已注册，不能通过邀请链接重置已有账号');
-    }
+    const email = invitation.email.trim().toLowerCase();
+    const duplicateMessage = '该邮箱已注册，不能通过邀请链接重置已有账号';
+    await this.assertEmailAvailable(email, duplicateMessage);
 
     assertStrongPassword(password);
     const passwordHash = await bcrypt.hash(password, 10);
     const displayName =
       name?.trim() || invitation.name?.trim() || invitation.email.split('@')[0];
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          email: invitation.email,
-          passwordHash,
-          name: displayName,
-          isActive: true,
-        },
-      });
+    const result = await this.withEmailConflict(duplicateMessage, () =>
+      this.prisma.$transaction(async (tx) => {
+        const acceptedAt = new Date();
+        const claimed = await tx.userInvitation.updateMany({
+          where: {
+            id: invitation.id,
+            acceptedAt: null,
+            expiresAt: { gte: acceptedAt },
+          },
+          data: { acceptedAt },
+        });
+        if (claimed.count !== 1)
+          throw new BadRequestException('邀请链接已使用或已过期');
+        const user = await tx.user.create({
+          data: {
+            email,
+            passwordHash,
+            name: displayName,
+            isActive: true,
+          },
+        });
 
-      await tx.userCompanyRole.create({
-        data: {
-          userId: user.id,
-          companyId: invitation.companyId,
-          roleId: invitation.roleId,
-        },
-      });
+        await tx.userCompanyRole.create({
+          data: {
+            userId: user.id,
+            companyId: invitation.companyId,
+            roleId: invitation.roleId,
+          },
+        });
 
-      await tx.userInvitation.update({
-        where: { id: invitation.id },
-        data: { acceptedAt: new Date(), acceptedById: user.id },
-      });
+        await tx.userInvitation.update({
+          where: { id: invitation.id },
+          data: { acceptedById: user.id },
+        });
 
-      return user;
-    });
+        return user;
+      }),
+    );
 
     await this.logUserAudit(
       invitation.companyId,
       invitation.createdById,
       result.id,
       'USER_INVITE_ACCEPT',
-      { invitationId: invitation.id, email: invitation.email },
+      { invitationId: invitation.id, email },
     );
 
     return this.findByEmail(result.email);
@@ -398,17 +413,46 @@ export class UsersService {
     passwordPlain: string,
     name: string,
   ): Promise<User> {
+    const normalizedEmail = email.trim().toLowerCase();
+    await this.assertEmailAvailable(normalizedEmail, '该邮箱已被注册');
+
     assertStrongPassword(passwordPlain);
     const saltOrRounds = 10;
     const passwordHash = await bcrypt.hash(passwordPlain, saltOrRounds);
 
-    return this.prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        name,
-      },
+    return this.withEmailConflict('该邮箱已被注册', () =>
+      this.prisma.user.create({
+        data: { email: normalizedEmail, passwordHash, name },
+      }),
+    );
+  }
+
+  private async assertEmailAvailable(email: string, message: string) {
+    // Legacy variants are conflicts, never identities to select or modify.
+    const existing = await this.prisma.user.findFirst({
+      where: { email: { equals: email, mode: 'insensitive' } },
+      select: { id: true },
     });
+    if (existing) throw new ConflictException(message);
+  }
+
+  private async withEmailConflict<T>(
+    message: string,
+    write: () => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await write();
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002' &&
+        Array.isArray(error.meta?.target) &&
+        error.meta.target.includes('email')
+      ) {
+        throw new ConflictException(message);
+      }
+      throw error;
+    }
   }
 
   private async resolveRole(roleId?: string) {
