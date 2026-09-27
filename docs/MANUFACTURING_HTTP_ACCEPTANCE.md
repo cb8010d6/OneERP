@@ -28,7 +28,7 @@ The script creates unique `MFG-` master data, a draft sales order, a default sin
 
 The production path verifies:
 
-1. Reporting from an empty component location returns HTTP 400 with no work report, stock movement or progress change.
+1. Reporting from an empty component location returns HTTP 409 with no work report, stock movement or progress change.
 2. Reporting two good units consumes four components, receives two finished units and completes the work order; exactly two new movements exist.
 3. Exact report replay returns the original report/movement IDs; changed-payload replay returns 409 without changes.
 4. Reversal creates two separate compensating movements, preserves original movement contents, restores eight components/zero finished units and returns the work order to `PENDING`.
@@ -52,3 +52,7 @@ These local checks validate syntax and fail-closed configuration/login/upload be
 ## Fixture email normalization correction
 
 PR #44 CI run `36288350341` reached successful login/master-data creation, then received HTTP 401 on its first synthetic engineering actor login; cleanup disabled that actor. Source inspection showed `UsersService.createUser` stores the submitted email unchanged and hashes the supplied password, while `AuthService.validateUser` lowercases the email before exact lookup. The uppercase `MFG-` fixture prefix therefore created an account the normalized login lookup could not find. Actor fixture emails are now lowercased before both creation and login. No password-reset workaround, auth bypass or business-service change is made. The regression test models case-preserving creation and normalized authentication, exercising actor setup with an uppercase/mixed-case fixture prefix. A new real CI run is still required to prove the remaining journey.
+
+## Insufficient-component HTTP status correction
+
+PR #44 CI run `36288627115` passed engineering release, actor cleanup and work-order creation, then failed because the script expected HTTP 400 for an empty component location. The real response was HTTP 409, consistent with `InventoryService.reserveSourceStock`: no candidate with sufficient quantity (or a failed conditional reserve) throws `ConflictException`. The fixture now requires exactly 409 and still verifies unchanged inventory, work reports and progress after rejection. Changed-payload report and reversal replays likewise remain exact 409 checks, matching their production-service `ConflictException` branches. No broad acceptance of arbitrary 4xx responses is introduced; a subsequent real CI report remains required for the downstream steps.

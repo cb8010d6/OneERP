@@ -196,7 +196,7 @@ export async function runJourney(config, step, context) {
   const reportRoute = `/production/orders/${encodeURIComponent(workOrder.id)}/report`;
   await step('insufficient-components-roll-back-report', async () => {
     await state(8, 0, 0, 'PENDING', 1);
-    await api.postExpectStatus(reportRoute, { ...payload, idempotencyKey: randomUUID(), sourceLocationId: fixture.locations.empty.id }, 400);
+    await api.postExpectStatus(reportRoute, { ...payload, idempotencyKey: randomUUID(), sourceLocationId: fixture.locations.empty.id }, 409);
     return state(8, 0, 0, 'PENDING', 1);
   });
   let originalMovements;
