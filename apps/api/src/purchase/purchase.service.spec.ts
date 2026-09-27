@@ -15,6 +15,7 @@ function createService() {
       findMany: jest.fn(),
     },
     purchaseOrder: {
+      findFirst: jest.fn(),
       update: jest.fn(),
     },
     purchaseInvoice: {
@@ -128,7 +129,7 @@ describe('PurchaseService', () => {
 
   it('receives purchase order and posts inventory inbound', async () => {
     const { service, prisma, tx, inventoryService } = createService();
-    prisma.purchaseOrder.findFirst.mockResolvedValue({
+    tx.purchaseOrder.findFirst.mockResolvedValue({
       id: 'po-1',
       purchaseNo: 'PO-001',
       status: 'ORDERED',
@@ -158,22 +159,10 @@ describe('PurchaseService', () => {
     tx.purchaseOrderLine.findMany.mockResolvedValue([
       { receivedQty: new Decimal(3), quantity: new Decimal(5) },
     ]);
-    prisma.purchaseOrder.findFirst
-      .mockResolvedValueOnce({
-        id: 'po-1',
-        purchaseNo: 'PO-001',
-        status: 'ORDERED',
-        items: [
-          {
-            id: 'line-1',
-            materialId: 'm1',
-            quantity: new Decimal(5),
-            receivedQty: new Decimal(1),
-            unitPrice: new Decimal(12),
-          },
-        ],
-      })
-      .mockResolvedValueOnce({ id: 'po-1', status: 'PARTIAL_RECEIVED' });
+    prisma.purchaseOrder.findFirst.mockResolvedValue({
+      id: 'po-1',
+      status: 'PARTIAL_RECEIVED',
+    });
 
     const result = await service.receivePurchaseOrder('c1', 'u1', 'po-1', {
       lines: [
@@ -207,8 +196,8 @@ describe('PurchaseService', () => {
   });
 
   it('rejects over-receiving purchase quantities', async () => {
-    const { service, prisma } = createService();
-    prisma.purchaseOrder.findFirst.mockResolvedValue({
+    const { service, tx } = createService();
+    tx.purchaseOrder.findFirst.mockResolvedValue({
       id: 'po-1',
       status: 'ORDERED',
       items: [
@@ -225,6 +214,202 @@ describe('PurchaseService', () => {
         lines: [{ purchaseOrderLineId: 'line-1', quantity: 2 }],
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  describe('receipt transaction safety', () => {
+    function receiptFixture(quantities = [2, 3]) {
+      const fixture = createService();
+      const { tx, prisma } = fixture;
+      tx.purchaseOrder.findFirst.mockResolvedValue({
+        id: 'po-1',
+        purchaseNo: 'PO-1',
+        status: 'ORDERED',
+        items: [
+          {
+            id: 'line-1',
+            materialId: 'm1',
+            quantity: new Decimal(10),
+            receivedQty: new Decimal(0),
+            unitPrice: new Decimal(2),
+          },
+        ],
+      });
+      tx.purchaseReceipt.create.mockImplementation(
+        ({
+          data,
+        }: {
+          data: { receiptNo: string; lines: { create: unknown[] } };
+        }) => Promise.resolve({ ...data, lines: data.lines.create }),
+      );
+      tx.purchaseOrderLine.findMany.mockResolvedValue([
+        { quantity: new Decimal(10), receivedQty: new Decimal(5) },
+      ]);
+      prisma.purchaseOrder.findFirst.mockResolvedValue({ id: 'po-1' });
+      const dto = {
+        lines: quantities.map((quantity, index) => ({
+          purchaseOrderLineId: 'line-1',
+          quantity,
+          destLocationId: `loc-${index}`,
+          batchNo: `B${index}`,
+        })),
+      };
+      return {
+        ...fixture,
+        dto,
+        receive: () =>
+          fixture.service.receivePurchaseOrder('c1', 'u1', 'po-1', dto),
+      };
+    }
+    const knownError = (code: string, target?: string[]) =>
+      new Prisma.PrismaClientKnownRequestError('synthetic conflict', {
+        code,
+        clientVersion: 'test',
+        meta: target ? { target } : undefined,
+      });
+
+    it('rejects a cumulative duplicate-line excess before creating a receipt', async () => {
+      const fixture = receiptFixture([6, 6]);
+      await expect(fixture.receive()).rejects.toThrow(
+        '收货数量不能超过采购数量',
+      );
+      expect(fixture.tx.purchaseReceipt.create).not.toHaveBeenCalled();
+      expect(
+        fixture.inventoryService.createStockMoveInTransaction,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('retains split location/batch rows and updates the shared order line once', async () => {
+      const fixture = receiptFixture();
+      await fixture.receive();
+      expect(fixture.tx.purchaseOrderLine.update).toHaveBeenCalledTimes(1);
+      expect(fixture.tx.purchaseOrderLine.update).toHaveBeenCalledWith({
+        where: { id: 'line-1' },
+        data: { receivedQty: new Decimal(5) },
+      });
+      expect(fixture.tx.purchaseReceipt.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            lines: {
+              create: fixture.dto.lines.map((line) => ({
+                ...line,
+                materialId: 'm1',
+              })),
+            },
+          }) as unknown,
+        }),
+      );
+      expect(
+        fixture.inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenCalledTimes(2);
+      expect(fixture.prisma.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      expect(
+        fixture.eventQueueService.enqueueInTransaction,
+      ).not.toHaveBeenCalled();
+      expect(fixture.eventQueueService.publish).not.toHaveBeenCalled();
+    });
+
+    it('sums four-decimal quantities without money rounding', async () => {
+      const fixture = receiptFixture([0.0001, 0.0002]);
+      await fixture.receive();
+      expect(fixture.tx.purchaseOrderLine.update).toHaveBeenCalledWith({
+        where: { id: 'line-1' },
+        data: { receivedQty: new Decimal('0.0003') },
+      });
+    });
+
+    it('normalizes binary subtraction noise for every persisted quantity', async () => {
+      const fixture = receiptFixture([0.3 - 0.1]);
+      await fixture.receive();
+      expect(fixture.tx.purchaseOrderLine.update).toHaveBeenCalledWith({
+        where: { id: 'line-1' },
+        data: { receivedQty: new Decimal('0.2') },
+      });
+      expect(
+        fixture.inventoryService.createStockMoveInTransaction,
+      ).toHaveBeenCalledWith(
+        fixture.tx,
+        'c1',
+        expect.objectContaining({ quantity: 0.2 }),
+        'u1',
+      );
+    });
+
+    it.each([0, -1, NaN, Infinity, 0.00001, 0.00005, Number.EPSILON])(
+      'rejects unrepresentable receipt quantity %s',
+      async (quantity) => {
+        const fixture = receiptFixture([quantity]);
+        await expect(fixture.receive()).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(fixture.prisma.$transaction).not.toHaveBeenCalled();
+      },
+    );
+
+    it('revalidates a fresh order after a rolled-back serialization conflict', async () => {
+      const fixture = receiptFixture([6]);
+      fixture.tx.purchaseReceipt.create.mockRejectedValueOnce(
+        knownError('P2034'),
+      );
+      fixture.tx.purchaseOrder.findFirst
+        .mockResolvedValueOnce({
+          id: 'po-1',
+          status: 'ORDERED',
+          items: [{ id: 'line-1', quantity: 10, receivedQty: 0 }],
+        })
+        .mockResolvedValue({
+          id: 'po-1',
+          status: 'PARTIAL_RECEIVED',
+          items: [{ id: 'line-1', quantity: 10, receivedQty: 6 }],
+        });
+      await expect(fixture.receive()).rejects.toThrow(
+        '收货数量不能超过采购数量',
+      );
+      expect(fixture.tx.purchaseOrder.findFirst).toHaveBeenCalledTimes(2);
+      expect(fixture.tx.purchaseReceipt.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('retries receipt number collisions with a fresh transaction and number', async () => {
+      const fixture = receiptFixture();
+      fixture.tx.purchaseReceipt.create.mockRejectedValueOnce(
+        knownError('P2002', ['receiptNo']),
+      );
+      await fixture.receive();
+      expect(fixture.tx.purchaseOrder.findFirst).toHaveBeenCalledTimes(2);
+      const calls = fixture.tx.purchaseReceipt.create.mock.calls as [
+        { data: { receiptNo: string } },
+      ][];
+      const numbers = calls.map((call) => call[0].data.receiptNo);
+      expect(new Set(numbers).size).toBe(2);
+    });
+
+    it('does not retry unrelated unique violations', async () => {
+      const fixture = receiptFixture();
+      fixture.tx.purchaseReceipt.create.mockRejectedValue(
+        knownError('P2002', ['id']),
+      );
+      await expect(fixture.receive()).rejects.toMatchObject({ code: 'P2002' });
+      expect(fixture.prisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('limits rolled-back conflict retries to three attempts', async () => {
+      const fixture = receiptFixture();
+      fixture.tx.purchaseReceipt.create.mockRejectedValue(knownError('P2034'));
+      await expect(fixture.receive()).rejects.toMatchObject({ code: 'P2034' });
+      expect(fixture.prisma.$transaction).toHaveBeenCalledTimes(3);
+    });
+
+    it('never repeats the write when the post-commit response read fails', async () => {
+      const fixture = receiptFixture();
+      fixture.prisma.purchaseOrder.findFirst.mockRejectedValue(
+        knownError('P2034'),
+      );
+      await expect(fixture.receive()).rejects.toMatchObject({ code: 'P2034' });
+      expect(fixture.prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(fixture.tx.purchaseReceipt.create).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('creates payable invoice after receipt', async () => {
