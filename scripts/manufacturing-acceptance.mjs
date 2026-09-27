@@ -43,6 +43,20 @@ export async function login(config, email = config.email, password = config.pass
   return api;
 }
 
+// User creation preserves email case; authentication looks up its lowercase form.
+// Canonicalize the synthetic identity before creation, not just before login.
+export async function createEngineeringActor(config, api, suffix, role, actors) {
+  const email = `${suffix}-${actors.length}@example.test`.toLowerCase();
+  const password = `Mfg!${randomBytes(18).toString('hex')}Aa1`;
+  const user = await api.post('/users', { email, password, name: `${suffix} ${role.name}`, roleId: role.id });
+  check(user?.id, 'Synthetic engineering actor creation did not return an id');
+  const actor = { id: user.id };
+  actors.push(actor); // Keep cleanup identity even if authentication fails.
+  actor.api = await login(config, email, password);
+  check(actor.api.companyId === api.companyId, 'Engineering actor selected a different company');
+  return actor;
+}
+
 export async function uploadDrawing(api, suffix) {
   const content = `%PDF-1.4\nSynthetic manufacturing acceptance drawing ${suffix}\n%%EOF\n`;
   const form = new FormData();
@@ -117,14 +131,7 @@ export async function runJourney(config, step, context) {
       for (const roleName of ['EngineeringDesign', 'EngineeringReview', 'EngineeringApprover']) {
         const matches = roles.filter((role) => role.name === roleName);
         check(matches.length === 1 && matches[0].id, 'Required engineering role template was missing or ambiguous');
-        const email = `${suffix}-${actors.length}@example.test`;
-        const password = `Mfg!${randomBytes(18).toString('hex')}Aa1`;
-        const user = await api.post('/users', { email, password, name: `${suffix} ${roleName}`, roleId: matches[0].id });
-        check(user?.id, 'Synthetic engineering actor creation did not return an id');
-        const actor = { id: user.id };
-        actors.push(actor);
-        actor.api = await login(config, email, password);
-        check(actor.api.companyId === api.companyId, 'Engineering actor selected a different company');
+        await createEngineeringActor(config, api, suffix, matches[0], actors);
       }
       check(new Set(actors.map((actor) => actor.id)).size === 3, 'Engineering actors must be distinct');
       const file = await uploadDrawing(actors[0].api, suffix);

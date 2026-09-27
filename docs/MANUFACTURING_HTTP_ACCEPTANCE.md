@@ -48,3 +48,7 @@ node --test scripts/manufacturing-acceptance.test.mjs
 ```
 
 These local checks validate syntax and fail-closed configuration/login/upload behavior using mocked fetch. They are not real HTTP manufacturing evidence; the latter requires a passing JSON report from the disposable CI services. Graphify was unavailable and `graphify-out/graph.json` absent in the implementation worktree; no graph refresh is claimed.
+
+## Fixture email normalization correction
+
+PR #44 CI run `36288350341` reached successful login/master-data creation, then received HTTP 401 on its first synthetic engineering actor login; cleanup disabled that actor. Source inspection showed `UsersService.createUser` stores the submitted email unchanged and hashes the supplied password, while `AuthService.validateUser` lowercases the email before exact lookup. The uppercase `MFG-` fixture prefix therefore created an account the normalized login lookup could not find. Actor fixture emails are now lowercased before both creation and login. No password-reset workaround, auth bypass or business-service change is made. The regression test models case-preserving creation and normalized authentication, exercising actor setup with an uppercase/mixed-case fixture prefix. A new real CI run is still required to prove the remaining journey.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadConfig, login, uploadDrawing } from './manufacturing-acceptance.mjs';
+import { loadConfig, login, uploadDrawing, createEngineeringActor } from './manufacturing-acceptance.mjs';
 
 const env = {
   MANUFACTURING_ACCEPTANCE: '1', API_BASE_URL: 'http://127.0.0.1:8000/api',
@@ -59,4 +59,37 @@ test('upload rejects redirects, carries a bounded abort signal, and redacts serv
   assert.equal(options.redirect, 'error');
   assert.ok(options.signal instanceof AbortSignal);
   assert.equal(options.headers['x-company-id'], 'synthetic');
+});
+
+
+test('engineering actor creation and normalized login resolve the same case-sensitive account', async (t) => {
+  const config = loadConfig(env, []);
+  const accounts = new Map();
+  const actors = [];
+  const calls = [];
+  const admin = { companyId: 'synthetic', post: async (route, body) => {
+    assert.equal(route, '/users');
+    assert.equal(body.roleId, 'design-role');
+    // Match UsersService.createUser: preserve the supplied email in storage.
+    accounts.set(body.email, { id: 'designer', password: body.password });
+    calls.push('create');
+    return { id: 'designer' };
+  } };
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.ok(url.endsWith('/auth/login'));
+    const body = JSON.parse(options.body);
+    // Match AuthService.validateUser: normalize before the exact email lookup.
+    const account = accounts.get(body.email.trim().toLowerCase());
+    calls.push('login');
+    if (!account || account.password !== body.password) return new Response('{}', { status: 401 });
+    return new Response(JSON.stringify({ accessToken: 'fixture-token', companies: [
+      { id: 'synthetic', name: config.companyName },
+    ] }), { status: 200 });
+  });
+  const actor = await createEngineeringActor(config, admin, 'MFG-MixedCASE-123',
+    { id: 'design-role', name: 'EngineeringDesign' }, actors);
+  assert.deepEqual(calls, ['create', 'login']);
+  assert.equal(actor.id, 'designer');
+  assert.equal(actor.api.companyId, admin.companyId);
+  assert.equal(actors[0], actor);
 });
